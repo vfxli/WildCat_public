@@ -467,6 +467,29 @@ class TaskQueueScheduler:
                     mo_cfg["in_channels"] = w_spec["in_channels"]
                     mo_cfg["out_channels"] = w_spec["out_channels"]
 
+            # Auto-guard against 4-channel config when source/target sequence files only have 3 channels
+            if job_type == "train" and (int(mo_cfg.get("in_channels", 3)) > 3 or int(mo_cfg.get("out_channels", 3)) > 3):
+                from wildcat import color as _wcolor
+
+                try:
+                    s_ch = min(
+                        (1 if im.ndim == 2 else int(im.shape[2]))
+                        for im in (_wcolor.read_image_float(p, is_data_pass=True) for p in (s_files[:1] + s_files[-1:]))
+                    )
+                    t_ch = min(
+                        (1 if im.ndim == 2 else int(im.shape[2]))
+                        for im in (_wcolor.read_image_float(p, is_data_pass=True) for p in (t_files[:1] + t_files[-1:]))
+                    )
+                    if int(mo_cfg.get("out_channels", 3)) == 1:
+                        if s_ch < int(mo_cfg.get("in_channels", 3)):
+                            mo_cfg["in_channels"] = max(3, s_ch)
+                    elif s_ch < int(mo_cfg.get("in_channels", 3)) or t_ch < int(mo_cfg.get("out_channels", 3)):
+                        common_ch = max(3, min(s_ch, t_ch))
+                        mo_cfg["in_channels"] = common_ch
+                        mo_cfg["out_channels"] = common_ch
+                except Exception:
+                    pass
+
             os.makedirs(storage.CONFIG_ROOT, exist_ok=True)
             cfg_rel = f"config/{clean_node}.json"
             cfg_abs = storage.abs_from_root(cfg_rel)

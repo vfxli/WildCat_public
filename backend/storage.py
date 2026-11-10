@@ -239,8 +239,11 @@ def validate_and_save_paired_dataset(
                 )
 
     h0, w0 = int(src_imgs[0][2].shape[0]), int(src_imgs[0][2].shape[1])
-    in_ch = 1 if src_imgs[0][2].ndim == 2 else int(src_imgs[0][2].shape[2])
-    out_ch = 1 if tgt_imgs[0][2].ndim == 2 else int(tgt_imgs[0][2].shape[2])
+    in_ch = min(1 if im.ndim == 2 else int(im.shape[2]) for _, _, im in src_imgs)
+    out_ch = min(1 if im.ndim == 2 else int(im.shape[2]) for _, _, im in tgt_imgs)
+    if in_ch >= 3 and out_ch >= 3 and in_ch != out_ch:
+        in_ch = min(in_ch, out_ch)
+        out_ch = in_ch
 
     maes = []
     worst_mae = -1.0
@@ -377,6 +380,9 @@ def inspect_paired_dirs(source_rel: str, target_rel: str) -> dict:
     h, w = (int(s0.shape[0]), int(s0.shape[1])) if s0 is not None else (0, 0)
     in_ch = (1 if s0.ndim == 2 else int(s0.shape[2])) if s0 is not None else 3
     out_ch = (1 if t0.ndim == 2 else int(t0.shape[2])) if t0 is not None else 3
+    if in_ch >= 3 and out_ch >= 3 and in_ch != out_ch:
+        in_ch = min(in_ch, out_ch)
+        out_ch = in_ch
 
     maes = []
     for sp, tp in zip(s_files[:n], t_files[:n]):

@@ -436,7 +436,15 @@ createApp({
       pathStats.sourceThumb = ds.source_thumb_url || null;
       pathStats.targetThumb = ds.target_thumb_url || null;
       if (!isChannelsLocked.value && ds.in_channels && ds.out_channels) {
-        syncLockedChannels(ds.in_channels, ds.out_channels);
+        const ic = Number(ds.in_channels || 3);
+        const oc = Number(ds.out_channels || 3);
+        if (oc === 1) {
+          syncLockedChannels(ic >= 4 ? 4 : 3, 1);
+        } else if (ic >= 4 && oc >= 4) {
+          syncLockedChannels(4, 4);
+        } else {
+          syncLockedChannels(3, 3);
+        }
       }
     }
 
@@ -677,7 +685,13 @@ createApp({
 
     // ───────── 1. Launch Brand-New Training Task (Starts at Step 0) ─────────
     async function submitNewTrainingTask() {
-      syncFormWithSelectedDataset();
+      if (selectedDataset.value) {
+        form.source = selectedDataset.value.source_path || selectedDataset.value.rel_path || '';
+        form.target = selectedDataset.value.target_path || selectedDataset.value.rel_path || '';
+      }
+      if (!isChannelsLocked.value) {
+        onChannelPresetChange();
+      }
       if (!selectedDataset.value || !form.source || !form.target) {
         notify('请先在第一步选择一个配对训练数据集（或点击右上角新建配对数据集）', 'error');
         return;
