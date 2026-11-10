@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WildCat</title>
   <script src="/static/vendor/tailwind.min.js"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261110" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261110_p7" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -702,6 +702,19 @@
                        :style="{ width: progressPct(activeTask) + '%' }"></div>
                 </div>
               </div>
+
+              <!-- Error Details Banner when task failed -->
+              <div v-if="activeTask.status === 'failed'"
+                   class="mt-2 p-3.5 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="font-bold text-rose-300">✕ 任务运行失败原因：</div>
+                  <button @click="retryFailedTask(activeTask)"
+                          class="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-all">
+                    重新配置并重跑
+                  </button>
+                </div>
+                <pre class="wc-mono text-[11px] text-rose-200 whitespace-pre-wrap break-all bg-slate-950/80 p-2.5 rounded-lg border border-rose-500/30 max-h-44 overflow-y-auto">{{ activeTask.error_msg || (telemetry.tail && telemetry.tail.length ? telemetry.tail.join('\n') : '训练子进程异常退出，请查看下方 train.log 终端输出。') }}</pre>
+              </div>
             </div>
 
             <!-- Viewer + Loss Curve Split -->
@@ -1281,6 +1294,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261110"></script>
+  <script type="module" src="/static/app.js?v=20261110_p7"></script>
 </body>
 </html>

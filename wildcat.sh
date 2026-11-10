@@ -40,7 +40,7 @@ EOF
     ln -sfn python "${venv_dir}/bin/python3" 2>/dev/null || true
     ln -sfn python "${venv_dir}/bin/python3.12" 2>/dev/null || true
     chmod +x "${venv_dir}/cpython-3.12/bin/python3.12" "${venv_dir}/bin/python"* 2>/dev/null || true
-    export PYTHONPATH="${BASE_DIR}:${venv_dir}/lib/python3.12/site-packages:${PYTHONPATH:-}"
+    export PYTHONPATH="${APP_DIR:-${BASE_DIR}}:${BASE_DIR}:${venv_dir}/lib/python3.12/site-packages:${PYTHONPATH:-}"
   fi
 }
 
@@ -121,6 +121,7 @@ do_stop() {
     rm -f "${PID_FILE}"
     echo "[WildCat] 服务未运行"
   fi
+  pkill -f "webui/app.py.*--port ${PORT}" 2>/dev/null || pkill -f "webui/app.py" 2>/dev/null || true
 }
 
 do_status() {
@@ -151,6 +152,10 @@ do_update() {
     tar -xzf "${pkg}" --strip-components=1 -C "${APP_DIR}"
   else
     tar -xzf "${pkg}" -C "${APP_DIR}"
+  fi
+  if [ "${APP_DIR}" != "${BASE_DIR}" ] && [ -f "${APP_DIR}/wildcat.sh" ]; then
+    cp -f "${APP_DIR}/wildcat.sh" "${BASE_DIR}/wildcat.sh"
+    chmod +x "${BASE_DIR}/wildcat.sh" 2>/dev/null || true
   fi
   do_start
   echo "[WildCat] 增量热更新完成！"

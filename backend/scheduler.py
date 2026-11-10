@@ -4,6 +4,7 @@ import collections
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -68,13 +69,26 @@ def parse_latest_log_metrics(run_dir_abs: str) -> dict:
     return out
 
 
+_LOG_PREFIX_RE = re.compile(r"^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] ")
+
+
 class _ActiveJob:
-    def __init__(self, task_id: int, node_name: str, gpu: str, proc: subprocess.Popen):
+    def __init__(
+        self,
+        task_id: int,
+        node_name: str,
+        gpu: str,
+        proc: subprocess.Popen,
+        log_path: str = None,
+        preview_gpu: str = None,
+    ):
         self.task_id = task_id
         self.node_name = node_name
         self.gpu = str(gpu)
+        self.preview_gpu = str(preview_gpu) if preview_gpu is not None else None
         self.proc = proc
-        self.tail = collections.deque(maxlen=150)
+        self.log_path = log_path
+        self.tail = collections.deque(maxlen=200)
         self.stop_requested = False
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
@@ -82,7 +96,15 @@ class _ActiveJob:
     def _read_stdout(self):
         try:
             for line in self.proc.stdout:
-                self.tail.append(line.rstrip("\n"))
+                s = line.rstrip("\n")
+                self.tail.append(s)
+                if self.log_path and not _LOG_PREFIX_RE.match(s):
+                    try:
+                        with open(self.log_path, "a", encoding="utf-8") as f:
+                            f.write(s + "\n")
+                            f.flush()
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -221,6 +243,10 @@ class TaskQueueScheduler:
                             (m.get("last_step"), m.get("total_steps"), m.get("last_loss"), tid),
                         )
                 if not job.alive:
+                    try:
+                        job._reader.join(timeout=2.0)
+                    except Exception:
+                        pass
                     rc = job.proc.poll()
                     if job.stop_requested or rc == -signal.SIGINT or rc == 130:
                         new_status = "stopped"
@@ -230,7 +256,22 @@ class TaskQueueScheduler:
                         err = ""
                     else:
                         new_status = "failed"
-                        err = "\n".join(list(job.tail)[-10:])
+                        err = "\n".join(list(job.tail)[-30:]).strip()
+                        if not err:
+                            err = f"训练子进程异常退出 (exit code={rc})"
+                        sys.stderr.write(
+                            f"[WildCat ERROR] Task '{job.node_name}' (id={tid}, gpu={job.gpu}) failed with exit code {rc}:\n{err}\n"
+                        )
+                        sys.stderr.flush()
+                        if job.log_path:
+                            try:
+                                need_write = not os.path.isfile(job.log_path) or os.path.getsize(job.log_path) == 0
+                                if need_write:
+                                    with open(job.log_path, "a", encoding="utf-8") as lf:
+                                        lf.write(err + "\n")
+                                        lf.flush()
+                            except Exception:
+                                pass
                     db.execute(
                         """
                         UPDATE tasks
@@ -289,17 +330,21 @@ class TaskQueueScheduler:
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         env["PYTHONUNBUFFERED"] = "1"
+        pick = None
         # Preview / validation on a secondary GPU: expose it as cuda:1 to the training process.
-        # Prefer a GPU that is not running another training job; otherwise stay on the same card.
+        # Prefer a GPU that is not running another training job and when no other task is waiting in the queue.
         if jtype != "infer":
             pv = str(((cfg_obj.get("optimizations") or {}).get("lossless") or {}).get("preview_gpu", "auto"))
-            busy = {j.gpu for j in self._active.values() if j.alive}
+            busy = {j.gpu for j in self._active.values() if j.alive} | {
+                j.preview_gpu for j in self._active.values() if j.alive and j.preview_gpu
+            }
+            other_queued = db.query_one("SELECT id FROM tasks WHERE status = 'queued' AND id != ? LIMIT 1", (tid,))
             others = [g[0] for g in GPUS if g[0] != str(gpu_id)]
-            pick = None
             if pv == "auto":
-                idle = [g for g in others if g not in busy]
-                pick = idle[0] if idle else None
-            elif pv not in ("same", "off", "cpu", "") and pv in others:
+                if not other_queued:
+                    idle = [g for g in others if g not in busy]
+                    pick = idle[0] if idle else None
+            elif pv not in ("same", "off", "cpu", "") and pv in others and pv not in busy:
                 pick = pv
             if pick is not None:
                 env["CUDA_VISIBLE_DEVICES"] = "%s,%s" % (gpu_id, pick)
@@ -313,6 +358,10 @@ class TaskQueueScheduler:
         else:
             cmd = [PYTHON_BIN, "-u", "train.py", cfg_rel]
 
+        run_abs = storage.abs_from_root(task_row["run_dir"])
+        os.makedirs(run_abs, exist_ok=True)
+        log_path = os.path.join(run_abs, "train.log")
+
         proc = subprocess.Popen(
             cmd,
             cwd=ROOT,
@@ -322,7 +371,7 @@ class TaskQueueScheduler:
             text=True,
             bufsize=1,
         )
-        job = _ActiveJob(tid, task_row["node_name"], str(gpu_id), proc)
+        job = _ActiveJob(tid, task_row["node_name"], str(gpu_id), proc, log_path=log_path, preview_gpu=pick)
         self._active[tid] = job
         db.execute(
             """
@@ -369,10 +418,30 @@ class TaskQueueScheduler:
             run_abs = storage.abs_from_root(run_rel)
             is_resume = bool(cfg.get("train", {}).get("resume", False))
 
-            if job_type == "train" and not is_resume and os.path.isfile(os.path.join(run_abs, "ckpt", "latest.pt")):
-                raise ValueError(
-                    f"任务名称 '{clean_node}' 已有训练记录。新建任务请更换新的任务名；若要继续训练原任务，请在左侧任务列表点击 '{clean_node}' 后选择『继续训练』。"
-                )
+            if job_type == "train":
+                paths_cfg = cfg.get("paths") or {}
+                src_p = str(paths_cfg.get("source") or "").strip()
+                tgt_p = str(paths_cfg.get("target") or "").strip()
+                s_files = storage.expand_sequence_files(src_p)
+                t_files = storage.expand_sequence_files(tgt_p)
+                if not s_files or not t_files:
+                    raise ValueError(
+                        f"未找到训练序列图像文件 (Source='{src_p}' 共 {len(s_files)} 帧, Target='{tgt_p}' 共 {len(t_files)} 帧)。请先在第一步选择或新建有效的配对训练数据集。"
+                    )
+                if not is_resume:
+                    if os.path.isfile(os.path.join(run_abs, "ckpt", "latest.pt")):
+                        raise ValueError(
+                            f"任务名称 '{clean_node}' 已有训练记录。新建任务请更换新的任务名；若要继续训练原任务，请在左侧任务列表点击 '{clean_node}' 后选择『继续训练』。"
+                        )
+                    ckpt_dir = os.path.join(run_abs, "ckpt")
+                    if os.path.isdir(ckpt_dir):
+                        shutil.rmtree(ckpt_dir, ignore_errors=True)
+                    old_log = os.path.join(run_abs, "train.log")
+                    if os.path.isfile(old_log):
+                        try:
+                            os.remove(old_log)
+                        except OSError:
+                            pass
 
             # Enforce locked model structure when initial_weights or resume checkpoint is specified
             from wildcat import models

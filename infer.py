@@ -8,9 +8,14 @@ import sys
 import time
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
-_VENV_SITE = os.path.join(_ROOT, ".venv", "lib", "python3.12", "site-packages")
-if os.path.isdir(_VENV_SITE) and _VENV_SITE not in sys.path:
-    sys.path.insert(0, _VENV_SITE)
+for _cand in (
+    os.path.join(_ROOT, ".venv", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "runtime", "python", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "..", "runtime", "python", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "..", ".venv", "lib", "python3.12", "site-packages"),
+):
+    if os.path.isdir(_cand) and _cand not in sys.path:
+        sys.path.insert(0, _cand)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
@@ -133,4 +138,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import traceback
+
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BaseException:
+        sys.stderr.write(traceback.format_exc() + "\n")
+        sys.stderr.flush()
+        sys.exit(1)

@@ -37,7 +37,9 @@ async def _no_stale_frontend(request, call_next):
     resp = await call_next(request)
     path = request.url.path
     if path in ("/", "/login", "/admin") or path.startswith("/static/"):
-        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
     return resp
 
 # 2. Mount Static Directories for Preview Cache, Run Artifacts, and Frontend Bundle

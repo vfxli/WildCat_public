@@ -3,6 +3,7 @@
 import glob
 import io
 import os
+from pathlib import Path, PureWindowsPath
 import re
 import shutil
 import time
@@ -40,15 +41,16 @@ def user_asset_dir(username: str, asset_name: str) -> str:
 
 def rel_to_root(abs_path: str) -> str:
     try:
-        return os.path.relpath(os.path.abspath(abs_path), ROOT)
+        return Path(os.path.relpath(os.path.abspath(abs_path), ROOT)).as_posix()
     except ValueError:
-        return abs_path
+        return Path(abs_path).as_posix()
 
 
 def abs_from_root(path_str: str) -> str:
     if not path_str:
         return ROOT
-    return path_str if os.path.isabs(path_str) else os.path.join(ROOT, path_str)
+    p = Path(PureWindowsPath(path_str).as_posix())
+    return str(p if p.is_absolute() else (Path(ROOT) / p))
 
 
 def expand_sequence_files(pattern_or_dir: str) -> list:
@@ -134,16 +136,17 @@ def _extract_upload_images(file_tuples: list, role_label: str) -> list:
                 for zi in sorted(z.infolist(), key=lambda x: x.filename):
                     if zi.is_dir():
                         continue
-                    bn = os.path.basename(zi.filename)
+                    bn = PureWindowsPath(zi.filename).name
                     if bn.startswith(".") or "__MACOSX" in zi.filename:
                         continue
-                    ext = os.path.splitext(bn)[1].lower()
+                    ext = PureWindowsPath(bn).suffix.lower()
                     if ext in valid_exts:
                         raw_items.append((bn, z.read(zi.filename)))
         else:
-            ext = os.path.splitext(fname)[1].lower()
+            bn = PureWindowsPath(fname or "").name
+            ext = PureWindowsPath(bn).suffix.lower()
             if ext in valid_exts:
-                raw_items.append((os.path.basename(fname), content))
+                raw_items.append((bn, content))
 
     if not raw_items:
         raise ValueError(f"{role_label}未检测到有效的图像文件 (.exr / .png / .tif / .jpg / .zip)！")
@@ -155,7 +158,7 @@ def _extract_upload_images(file_tuples: list, role_label: str) -> list:
             img = color.decode_image_bytes(data_bytes, bn)
         except Exception as e:
             raise ValueError(f"{role_label}中的文件 '{bn}' 无法解码为有效图像 ({e})！")
-        stem = sanitize_name(os.path.splitext(bn)[0], f"frame_{idx:04d}")
+        stem = sanitize_name(PureWindowsPath(bn).stem, f"frame_{idx:04d}")
         decoded.append((stem, bn, img))
     return decoded
 
@@ -164,7 +167,7 @@ _FRAME_NUM_RE = re.compile(r"(\d+)(?=\.[^.]+$)")
 
 
 def _extract_frame_num(filename: str) -> int | None:
-    bn = os.path.basename(filename or "")
+    bn = PureWindowsPath(filename or "").name
     m = _FRAME_NUM_RE.search(bn)
     if m:
         try:
@@ -419,30 +422,31 @@ def save_uploaded_files_to_asset(
 
     raw_items = []
     for fname, content in file_tuples:
-        lower = fname.lower()
+        lower = (fname or "").lower()
         if lower.endswith(".zip"):
             with zipfile.ZipFile(io.BytesIO(content), "r") as z:
                 for zi in sorted(z.infolist(), key=lambda x: x.filename):
                     if zi.is_dir():
                         continue
-                    bn = os.path.basename(zi.filename)
+                    bn = PureWindowsPath(zi.filename).name
                     if bn.startswith(".") or "__MACOSX" in zi.filename:
                         continue
-                    ext = os.path.splitext(bn)[1].lower()
+                    ext = PureWindowsPath(bn).suffix.lower()
                     if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr"):
                         raw_items.append((bn, z.read(zi.filename)))
         else:
-            ext = os.path.splitext(fname)[1].lower()
+            bn = PureWindowsPath(fname or "").name
+            ext = PureWindowsPath(bn).suffix.lower()
             if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr"):
-                raw_items.append((os.path.basename(fname), content))
+                raw_items.append((bn, content))
 
     if not raw_items:
         raise ValueError("No valid image files (.png/.jpg/.zip) found in upload.")
 
     saved_count = 0
     for idx, (bn, data_bytes) in enumerate(raw_items, start=1):
-        ext = os.path.splitext(bn)[1].lower()
-        stem = sanitize_name(os.path.splitext(bn)[0], f"frame_{idx:04d}")
+        ext = PureWindowsPath(bn).suffix.lower()
+        stem = sanitize_name(PureWindowsPath(bn).stem, f"frame_{idx:04d}")
         out_png = os.path.join(target_dir, f"{stem}.png")
         if ext == ".png":
             with open(out_png, "wb") as f:

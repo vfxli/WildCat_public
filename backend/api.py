@@ -308,6 +308,9 @@ def api_get_task_telemetry(
     parsed = telemetry.parse_train_log(lp, max_bytes=400_000)
     if not parsed["tail"]:
         parsed["tail"] = scheduler.SCHEDULER.get_live_tail(task_id)
+    err_msg = (t.get("error_msg") or "").strip()
+    if err_msg and not parsed["tail"]:
+        parsed["tail"] = err_msg.splitlines()
 
     viewer = telemetry.get_viewer_frames(t["run_dir"], t.get("config") or {}, mode=mode, pair=pair)
     qstat = scheduler.SCHEDULER.queue_status()

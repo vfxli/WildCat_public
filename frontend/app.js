@@ -779,6 +779,30 @@ createApp({
       }
     }
 
+    function retryFailedTask(t) {
+      if (!t) return;
+      const cfg = t.config || {};
+      const paths = cfg.paths || {};
+      const tr = cfg.train || {};
+      const mo = cfg.model || {};
+      form.run_name = t.node_name || form.run_name;
+      if (paths.source) form.source = paths.source;
+      if (paths.target) form.target = paths.target;
+      const match = assets.value.find(
+        (a) => a.source_path === form.source || a.rel_path === form.source
+      );
+      if (match) {
+        selectedDatasetId.value = match.id;
+        syncFormWithSelectedDataset();
+      } else {
+        inspectFormPaths();
+      }
+      if (tr.epochs) form.epochs = Number(tr.epochs);
+      if (mo.model_size) form.model_size = mo.model_size;
+      topNav.value = 'studio';
+      studioMode.value = 'create';
+    }
+
     function taskEpoch(t) {
       const ep = Number((t && t.config && t.config.train && t.config.train.epochs) || 0);
       if (!t || !ep || !t.total_steps) return 0;
@@ -802,7 +826,18 @@ createApp({
         telemetry.latest = d.latest || {};
 
         const idx = tasks.value.findIndex((x) => x.id === d.task.id);
-        if (idx >= 0) tasks.value[idx] = d.task;
+        if (idx >= 0) {
+          const prevStatus = tasks.value[idx].status;
+          tasks.value[idx] = d.task;
+          if (d.task.status === 'failed' && (prevStatus === 'running' || prevStatus === 'queued')) {
+            const lastLine = String(d.task.error_msg || '')
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+              .slice(-1)[0];
+            notify(`任务 [${d.task.node_name}] 运行失败: ${lastLine || '请查看页面报错详情'}`, 'error');
+          }
+        }
 
         const vw = d.viewer || {};
         viewer.pairs = vw.pairs || [];
@@ -1377,6 +1412,7 @@ createApp({
       submitNewTrainingTask,
       resumeExistingTask,
       extendExistingTask,
+      retryFailedTask,
       switchViewerMode,
       fetchTelemetry,
       drawLossChart,
