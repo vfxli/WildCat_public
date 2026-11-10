@@ -148,7 +148,8 @@ do_update() {
     echo "[WildCat] 已自动备份当前代码至: backups/app_backup_${ts}.tar.gz"
   fi
   do_stop || true
-  if tar -tzf "${pkg}" 2>/dev/null | head -n 5 | grep -q '^WildCat/'; then
+  rm -rf "${BASE_DIR}/WildCat" "${APP_DIR}/WildCat" 2>/dev/null || true
+  if (set +o pipefail; tar -tzf "${pkg}" 2>/dev/null | head -n 5 | grep -q '^WildCat/'); then
     tar -xzf "${pkg}" --strip-components=1 -C "${APP_DIR}"
   else
     tar -xzf "${pkg}" -C "${APP_DIR}"
