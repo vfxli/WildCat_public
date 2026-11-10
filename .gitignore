@@ -1,0 +1,33 @@
+# 训练产出与多用户存储
+run/
+storage/
+backups/
+wildcat.pid
+wildcat.log
+*.tar.gz
+
+# 数据与预置权重:体积大,单独分发
+dataset/
+weights/
+
+# 环境与缓存
+.venv/
+runtime/
+webui/cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 凭据 / 内部信息（不入库）
+*.netrc
+.netrc
+*.secret
+*.local.md
+secrets/
+

@@ -1,0 +1,416 @@
+# -*- coding: utf-8 -*-
+"""Decoupled Business Service Layer for Users, Admin Settings, Assets, and Tasks/Queue."""
+import json
+import os
+import socket
+import subprocess
+import time
+
+from . import db, scheduler, storage, telemetry
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    return db.query_one(
+        "SELECT id, username, role, api_key, is_active, note, created_at FROM users WHERE id = ?",
+        (user_id,),
+    )
+
+
+def get_user_by_api_key(api_key: str) -> dict | None:
+    if not api_key:
+        return None
+    u = db.query_one(
+        "SELECT id, username, role, api_key, is_active, note, created_at FROM users WHERE api_key = ?",
+        (api_key.strip(),),
+    )
+    if u and u["is_active"]:
+        return u
+    return None
+
+
+def resolve_machine_name(raw_machine: str = "", client_ip: str = "") -> str:
+    cand = (raw_machine or "").strip()
+    if not cand:
+        ip = (client_ip or "").strip()
+        if ip in ("", "127.0.0.1", "::1", "localhost", "testclient"):
+            cand = socket.gethostname() or "local_host"
+        else:
+            try:
+                cand = socket.gethostbyaddr(ip)[0].split(".")[0]
+            except Exception:
+                cand = f"host_{ip.replace('.', '_').replace(':', '_')}"
+    mname = storage.sanitize_name(cand, "")
+    return mname if len(mname) >= 2 else "workstation"
+
+
+def get_or_create_machine_user(raw_machine: str = "", client_ip: str = "") -> dict:
+    mname = resolve_machine_name(raw_machine, client_ip)
+    row = db.query_one("SELECT * FROM users WHERE username = ?", (mname,))
+    if row:
+        if not row["is_active"]:
+            raise PermissionError(f"机器 [{mname}] 已被管理员禁用")
+        seed_demo_assets_for_user(row["id"])
+        return get_user_by_id(row["id"])
+
+    uid = db.execute(
+        """
+        INSERT INTO users (username, password_hash, role, api_key, is_active, note, created_at)
+        VALUES (?, 'machine_identity', 'user', ?, 1, ?, ?)
+        """,
+        (mname, db.generate_api_key(), f"IP: {client_ip}" if client_ip else "", time.time()),
+    )
+    storage.user_root(mname)
+    seed_demo_assets_for_user(uid)
+    return get_user_by_id(uid)
+
+
+def seed_demo_assets_for_user(user_id: int):
+    """Register the bundled demo datasets for a user. Off by default (clean production install);
+    set WILDCAT_SEED_DEMO=1 to enable."""
+    if os.environ.get("WILDCAT_SEED_DEMO", "0") != "1":
+        return
+    paired_demos = [
+    ]
+    now = time.time()
+    for dname, s_rel, t_rel in paired_demos:
+        if os.path.isdir(storage.abs_from_root(s_rel)) and os.path.isdir(storage.abs_from_root(t_rel)):
+            st = storage.inspect_paired_dirs(s_rel, t_rel)
+            if st["frame_count"] > 0:
+                db.execute(
+                    """
+                    INSERT OR IGNORE INTO assets (
+                        user_id, name, kind, rel_path, source_path, target_path,
+                        frame_count, width, height, in_channels, out_channels,
+                        avg_mae, max_mae, strategy, size_bytes, created_at
+                    ) VALUES (?, ?, 'paired_dataset', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'standard', ?, ?)
+                    """,
+                    (
+                        user_id,
+                        dname,
+                        s_rel,
+                        s_rel,
+                        t_rel,
+                        st["frame_count"],
+                        st["width"],
+                        st["height"],
+                        st["in_channels"],
+                        st["out_channels"],
+                        st["avg_mae"],
+                        st["max_mae"],
+                        st["size_bytes"],
+                        now,
+                    ),
+                )
+
+
+def create_user_account(
+    username: str,
+    password: str = "",
+    role: str = "user",
+    note: str = "",
+    seed_demos: bool = True,
+) -> dict:
+    uname = storage.sanitize_name(username, "")
+    if not uname or len(uname) < 2:
+        raise ValueError("机器名至少需要 2 位字母/数字/下划线")
+    existing = db.query_one("SELECT id FROM users WHERE username = ?", (uname,))
+    if existing:
+        raise ValueError(f"机器名 '{uname}' 已存在")
+
+    uid = db.execute(
+        """
+        INSERT INTO users (username, password_hash, role, api_key, is_active, note, created_at)
+        VALUES (?, 'machine_identity', 'user', ?, 1, ?, ?)
+        """,
+        (uname, db.generate_api_key(), note or "", time.time()),
+    )
+    storage.user_root(uname)
+    if seed_demos:
+        seed_demo_assets_for_user(uid)
+    return get_user_by_id(uid)
+
+
+def self_register_user(username: str, password: str, note: str = "") -> dict:
+    allow = str(db.get_setting("allow_self_registration", "false")).lower() == "true"
+    if not allow:
+        raise PermissionError("Self-registration is currently disabled by administrator.")
+    return create_user_account(username, password, role="user", note=note or "Self-registered")
+
+
+def admin_update_user(
+    user_id: int,
+    password: str = None,
+    role: str = None,
+    is_active: bool = None,
+    note: str = None,
+) -> dict:
+    u = db.query_one("SELECT * FROM users WHERE id = ?", (user_id,))
+    if not u:
+        raise ValueError("User not found.")
+    if password:
+        if len(password) < 4:
+            raise ValueError("Password must be at least 4 characters.")
+        db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (db.hash_password(password), user_id))
+    if role in ("user", "admin"):
+        db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+    if is_active is not None:
+        db.execute("UPDATE users SET is_active = ? WHERE id = ?", (1 if is_active else 0, user_id))
+    if note is not None:
+        db.execute("UPDATE users SET note = ? WHERE id = ?", (note, user_id))
+    return get_user_by_id(user_id)
+
+
+def regenerate_user_api_key(user_id: int) -> str:
+    new_key = db.generate_api_key()
+    db.execute("UPDATE users SET api_key = ? WHERE id = ?", (new_key, user_id))
+    return new_key
+
+
+def admin_delete_user(user_id: int):
+    u = get_user_by_id(user_id)
+    if not u:
+        return
+    # Stop & delete all tasks belonging to this machine
+    user_tasks = db.query_all("SELECT id FROM tasks WHERE user_id = ?", (user_id,))
+    for t in user_tasks:
+        scheduler.SCHEDULER.delete_task(t["id"])
+    # Delete machine's uploaded assets directory
+    user_assets = db.query_all("SELECT rel_path FROM assets WHERE user_id = ?", (user_id,))
+    for a in user_assets:
+        storage.delete_asset_files(a["rel_path"])
+    db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+def list_all_users_with_stats() -> list:
+    users = db.query_all(
+        "SELECT id, username, role, api_key, is_active, note, created_at FROM users ORDER BY id ASC"
+    )
+    for u in users:
+        uid = u["id"]
+        u["asset_count"] = (
+            db.query_one("SELECT COUNT(*) AS c FROM assets WHERE user_id = ?", (uid,)) or {}
+        ).get("c", 0)
+        u["task_count"] = (
+            db.query_one("SELECT COUNT(*) AS c FROM tasks WHERE user_id = ?", (uid,)) or {}
+        ).get("c", 0)
+    return users
+
+
+# ─────────────────────── Asset Management ───────────────────────
+
+
+def list_assets(user_id: int, all_users: bool = False) -> list:
+    if all_users:
+        rows = db.query_all(
+            """
+            SELECT a.*, u.username
+            FROM assets a
+            JOIN users u ON a.user_id = u.id
+            ORDER BY a.created_at DESC, a.id DESC
+            """
+        )
+    else:
+        rows = db.query_all(
+            """
+            SELECT a.*, u.username
+            FROM assets a
+            JOIN users u ON a.user_id = u.id
+            WHERE a.user_id = ?
+            ORDER BY a.created_at DESC, a.id DESC
+            """,
+            (user_id,),
+        )
+    for r in rows:
+        sp = r.get("source_path") or r.get("rel_path") or ""
+        tp = r.get("target_path") or r.get("rel_path") or ""
+        s_files = storage.expand_sequence_files(sp)
+        t_files = storage.expand_sequence_files(tp)
+        r["frame_count"] = min(len(s_files), len(t_files)) if (s_files and t_files) else len(s_files)
+        ext = os.path.splitext(s_files[0])[1].lower().lstrip(".") if s_files else "exr"
+        r["file_format"] = ext.upper()
+        r["colorspace"] = "ACEScg" if ext == "exr" else "sRGB"
+        r["source_thumb_url"] = telemetry.to_jpg_url(s_files[0]) if s_files else None
+        r["target_thumb_url"] = telemetry.to_jpg_url(t_files[0]) if t_files else None
+        r["thumb_url"] = r["target_thumb_url"] or r["source_thumb_url"]
+    return rows
+
+
+def create_paired_dataset(
+    user_id: int,
+    username: str,
+    dataset_name: str,
+    source_tuples: list,
+    target_tuples: list,
+    max_error_pct: float = 35.0,
+    strategy: str = "standard",
+    enable_check: bool = True,
+    input_colorspace: str = "ACEScg",
+    working_colorspace: str = "ACEScg",
+) -> dict:
+    clean_name = storage.sanitize_name(dataset_name, "dataset")
+    info = storage.validate_and_save_paired_dataset(
+        username=username,
+        dataset_name=clean_name,
+        source_tuples=source_tuples,
+        target_tuples=target_tuples,
+        max_error_pct=max_error_pct,
+        strategy=strategy,
+        enable_check=enable_check,
+        input_colorspace=input_colorspace,
+        working_colorspace=working_colorspace,
+    )
+    now = time.time()
+    existing = db.query_one(
+        "SELECT id FROM assets WHERE user_id = ? AND name = ?", (user_id, clean_name)
+    )
+    if existing:
+        aid = existing["id"]
+        db.execute(
+            """
+            UPDATE assets
+            SET kind = 'paired_dataset', rel_path = ?, source_path = ?, target_path = ?,
+                frame_count = ?, width = ?, height = ?, in_channels = ?, out_channels = ?,
+                avg_mae = ?, max_mae = ?, strategy = ?, size_bytes = ?, created_at = ?
+            WHERE id = ?
+            """,
+            (
+                info["rel_path"],
+                info["source_path"],
+                info["target_path"],
+                info["frame_count"],
+                info["width"],
+                info["height"],
+                info["in_channels"],
+                info["out_channels"],
+                info["avg_mae"],
+                info["max_mae"],
+                info["strategy"],
+                info["size_bytes"],
+                now,
+                aid,
+            ),
+        )
+    else:
+        aid = db.execute(
+            """
+            INSERT INTO assets (
+                user_id, name, kind, rel_path, source_path, target_path,
+                frame_count, width, height, in_channels, out_channels,
+                avg_mae, max_mae, strategy, size_bytes, created_at
+            ) VALUES (?, ?, 'paired_dataset', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                clean_name,
+                info["rel_path"],
+                info["source_path"],
+                info["target_path"],
+                info["frame_count"],
+                info["width"],
+                info["height"],
+                info["in_channels"],
+                info["out_channels"],
+                info["avg_mae"],
+                info["max_mae"],
+                info["strategy"],
+                info["size_bytes"],
+                now,
+            ),
+        )
+    row = db.query_one("SELECT * FROM assets WHERE id = ?", (aid,))
+    s_files = storage.expand_sequence_files(row["source_path"])
+    t_files = storage.expand_sequence_files(row["target_path"])
+    row["source_thumb_url"] = telemetry.to_jpg_url(s_files[0]) if s_files else None
+    row["target_thumb_url"] = telemetry.to_jpg_url(t_files[0]) if t_files else None
+    row["thumb_url"] = row["target_thumb_url"] or row["source_thumb_url"]
+    return row
+
+
+def delete_asset(user_id: int, is_admin: bool, asset_id: int):
+    row = db.query_one("SELECT * FROM assets WHERE id = ?", (asset_id,))
+    if not row:
+        raise ValueError("Asset not found.")
+    if not is_admin and row["user_id"] != user_id:
+        raise PermissionError("You can only delete your own assets.")
+    storage.delete_asset_files(row["rel_path"])
+    db.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+
+
+# ─────────────────────── Task & Queue Management ───────────────────────
+
+
+def list_tasks(user_id: int, all_users: bool = False) -> list:
+    qstat = scheduler.SCHEDULER.queue_status()
+    qpos_map = {q["id"]: q["queue_position"] for q in qstat["queued"]}
+
+    if all_users:
+        rows = db.query_all("SELECT * FROM tasks ORDER BY id DESC")
+    else:
+        rows = db.query_all("SELECT * FROM tasks WHERE user_id = ? ORDER BY id DESC", (user_id,))
+
+    for r in rows:
+        r["queue_position"] = qpos_map.get(r["id"])
+        try:
+            r["config"] = json.loads(r.get("config_json") or "{}")
+        except Exception:
+            r["config"] = {}
+        rdir_abs = storage.abs_from_root(r["run_dir"])
+        r["has_ckpt"] = os.path.isfile(os.path.join(rdir_abs, "ckpt", "latest.pt"))
+        r["has_cat"] = os.path.isfile(os.path.join(rdir_abs, f"{r['node_name']}.cat"))
+        r["size_mb"] = round(storage.dir_total_bytes(r["run_dir"]) / (1024 * 1024), 1)
+    return rows
+
+
+def get_task_for_user(user_id: int, is_admin: bool, task_id: int = None, node_name: str = None) -> dict | None:
+    if task_id is not None:
+        row = db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    else:
+        row = db.query_one("SELECT * FROM tasks WHERE node_name = ?", (node_name,))
+    if not row:
+        return None
+    if not is_admin and row["user_id"] != user_id:
+        return None
+    try:
+        row["config"] = json.loads(row.get("config_json") or "{}")
+    except Exception:
+        row["config"] = {}
+    return row
+
+
+def delete_user_task(user_id: int, is_admin: bool, task_id: int):
+    row = db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    if not row:
+        raise ValueError("Task not found.")
+    if not is_admin and row["user_id"] != user_id:
+        raise PermissionError("You can only delete your own tasks.")
+    scheduler.SCHEDULER.delete_task(task_id)
+
+
+def stop_user_task(user_id: int, is_admin: bool, task_id: int) -> dict:
+    row = db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    if not row:
+        raise ValueError("Task not found.")
+    if not is_admin and row["user_id"] != user_id:
+        raise PermissionError("You can only stop your own tasks.")
+    return scheduler.SCHEDULER.stop_task(task_id)
+
+
+def export_task_cat(user_id: int, is_admin: bool, task_id: int) -> dict:
+    row = get_task_for_user(user_id, is_admin, task_id=task_id)
+    if not row:
+        raise ValueError("Task not found or access denied.")
+    res = subprocess.run(
+        [scheduler.PYTHON_BIN, "export_cat.py", row["config_path"]],
+        cwd=db.ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if res.returncode != 0:
+        raise RuntimeError(res.stderr.strip() or res.stdout.strip() or "Export failed")
+    nname = row["node_name"]
+    return {
+        "node_name": nname,
+        "pt_path": f"run/{nname}/{nname}.pt",
+        "message": res.stdout.strip(),
+    }
