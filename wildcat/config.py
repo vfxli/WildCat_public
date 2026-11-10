@@ -8,7 +8,7 @@ from . import log
 
 
 def load(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -26,7 +26,7 @@ def prepare_run(cfg, cfg_path=None, root="run"):
         if os.path.abspath(cfg_path) != os.path.abspath(dst):
             shutil.copy(cfg_path, dst)
     else:
-        with open(os.path.join(run_dir, cfg["run_name"] + ".json"), "w") as f:
+        with open(os.path.join(run_dir, cfg["run_name"] + ".json"), "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
     log.init(os.path.join(run_dir, "train.log"))
     return run_dir

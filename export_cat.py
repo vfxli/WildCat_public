@@ -1,27 +1,50 @@
 # -*- coding: utf-8 -*-
 """Export a WildCat checkpoint as a TorchScript model (.pt) for Nuke's CatFileCreator.
-Usage: python export_cat.py config/xxx.json [step]"""
+Usage: python export_cat.py config/xxx.json [step] [--out-pt PATH]"""
+import argparse
 import json
 import os
 import sys
+import traceback
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
-_VENV_SITE = os.path.join(_ROOT, ".venv", "lib", "python3.12", "site-packages")
-if os.path.isdir(_VENV_SITE) and _VENV_SITE not in sys.path:
-    sys.path.insert(0, _VENV_SITE)
+for _cand in (
+    os.path.join(_ROOT, ".venv", "Lib", "site-packages"),
+    os.path.join(_ROOT, ".venv", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "runtime", "python", "Lib", "site-packages"),
+    os.path.join(_ROOT, "runtime", "python", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "..", "runtime", "python", "Lib", "site-packages"),
+    os.path.join(_ROOT, "..", "runtime", "python", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "..", ".venv", "Lib", "site-packages"),
+    os.path.join(_ROOT, "..", ".venv", "lib", "python3.12", "site-packages"),
+):
+    if os.path.isdir(_cand) and _cand not in sys.path:
+        sys.path.insert(0, _cand)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
-
-import torch
-
-from wildcat import cat_format
-from wildcat.models import build_generator
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 
 def main():
-    cfg = json.load(open(sys.argv[1]))
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("config_path")
+    parser.add_argument("step", nargs="?", default=None)
+    parser.add_argument("--out-pt", dest="out_pt", default=None)
+    args = parser.parse_args()
+
+    import torch
+    from wildcat import cat_format
+    from wildcat.models import build_generator
+
+    with open(args.config_path, "r", encoding="utf-8") as _f:
+        cfg = json.load(_f)
     run_dir = os.path.join("run", cfg["run_name"])
-    ck_name = "latest.pt" if len(sys.argv) < 3 else "step_%06d.pt" % int(sys.argv[2])
+    ck_name = "latest.pt" if args.step is None else "step_%06d.pt" % int(args.step)
     ck_path = os.path.join(run_dir, "ckpt", ck_name)
     ck = torch.load(ck_path, map_location="cpu", weights_only=False)
 
@@ -34,7 +57,7 @@ def main():
     net.load_state_dict(ck["G"])
     net.eval()
 
-    out_pt = os.path.join(run_dir, cfg["run_name"] + ".pt")
+    out_pt = args.out_pt or os.path.join(run_dir, cfg["run_name"] + ".pt")
     cat_format.export_torchscript(net.state_dict(), out_pt, mo)
     print(
         "Exported TorchScript %s (model=%s, in=%d, out=%d, step=%d)"
@@ -47,4 +70,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BaseException:
+        sys.stderr.write(traceback.format_exc() + "\n")
+        sys.stderr.flush()
+        sys.exit(1)

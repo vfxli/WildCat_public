@@ -272,6 +272,39 @@ def acescg_to_display_srgb(
 # ─────────────────────── OpenEXR (.exr) & General Image I/O ───────────────────────
 
 
+def imread_unicode(path: str, flags: int = cv2.IMREAD_UNCHANGED) -> np.ndarray | None:
+    """Cross-platform cv2.imread supporting non-ASCII (e.g. Chinese) file paths on Windows."""
+    if os.name == "nt" and not path.isascii():
+        try:
+            raw = np.fromfile(path, dtype=np.uint8)
+            return cv2.imdecode(raw, flags) if raw.size > 0 else None
+        except Exception:
+            return None
+    im = cv2.imread(path, flags)
+    if im is None and os.name == "nt" and os.path.isfile(path):
+        try:
+            raw = np.fromfile(path, dtype=np.uint8)
+            return cv2.imdecode(raw, flags) if raw.size > 0 else None
+        except Exception:
+            return None
+    return im
+
+
+def imwrite_unicode(path: str, img: np.ndarray, params=None) -> bool:
+    """Cross-platform cv2.imwrite supporting non-ASCII (e.g. Chinese) file paths on Windows."""
+    if os.name == "nt" and not path.isascii():
+        try:
+            ext = os.path.splitext(path)[1] or ".png"
+            ok, buf = cv2.imencode(ext, img, params or [])
+            if ok:
+                buf.tofile(path)
+                return True
+            return False
+        except Exception:
+            return False
+    return bool(cv2.imwrite(path, img, params) if params is not None else cv2.imwrite(path, img))
+
+
 def read_exr_file(path: str) -> np.ndarray:
     """Read an OpenEXR (.exr) file into a float32 numpy array (H, W, C) in RGB(A) channel order."""
     if HAS_OPENEXR:
@@ -306,7 +339,7 @@ def read_exr_file(path: str) -> np.ndarray:
             pass
 
     # Fallback to OpenCV EXR reader (which returns BGR(A) float32)
-    im = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    im = imread_unicode(path, cv2.IMREAD_UNCHANGED)
     if im is None:
         raise IOError(f"Cannot read EXR file: {path}")
     im = np.nan_to_num(im.astype(np.float32), nan=0.0, posinf=65504.0, neginf=-65504.0)
@@ -329,30 +362,34 @@ def write_exr_file(path: str, img_rgb: np.ndarray, bit_depth: str = "half") -> N
     h, w, c = arr.shape
 
     if HAS_OPENEXR:
-        use_half = bit_depth.lower() in ("half", "fp16", "float16", "16")
-        pt = Imath.PixelType(Imath.PixelType.HALF if use_half else Imath.PixelType.FLOAT)
-        np_dt = np.float16 if use_half else np.float32
+        try:
+            use_half = bit_depth.lower() in ("half", "fp16", "float16", "16")
+            pt = Imath.PixelType(Imath.PixelType.HALF if use_half else Imath.PixelType.FLOAT)
+            np_dt = np.float16 if use_half else np.float32
 
-        hdr = OpenEXR.Header(w, h)
-        hdr["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
+            hdr = OpenEXR.Header(w, h)
+            hdr["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
 
-        if c == 1:
-            ch_names = ["Y"]
-        elif c == 3:
-            ch_names = ["R", "G", "B"]
-        else:
-            ch_names = ["R", "G", "B", "A"][:c]
+            if c == 1:
+                ch_names = ["Y"]
+            elif c == 3:
+                ch_names = ["R", "G", "B"]
+            else:
+                ch_names = ["R", "G", "B", "A"][:c]
 
-        hdr["channels"] = {name: Imath.Channel(pt) for name in ch_names}
-        out = OpenEXR.OutputFile(path, hdr)
-        ch_data = {name: np.ascontiguousarray(arr[..., i], dtype=np_dt).tobytes() for i, name in enumerate(ch_names)}
-        out.writePixels(ch_data)
-        out.close()
-        return
+            hdr["channels"] = {name: Imath.Channel(pt) for name in ch_names}
+            out = OpenEXR.OutputFile(path, hdr)
+            ch_data = {name: np.ascontiguousarray(arr[..., i], dtype=np_dt).tobytes() for i, name in enumerate(ch_names)}
+            out.writePixels(ch_data)
+            out.close()
+            return
+        except Exception:
+            if not os.name == "nt":
+                raise
 
     # Fallback to OpenCV EXR writer (convert RGB(A) -> BGR(A))
     bgr = arr[..., [2, 1, 0, 3][:c]] if c >= 3 else arr[..., 0]
-    cv2.imwrite(path, bgr.astype(np.float32))
+    imwrite_unicode(path, bgr.astype(np.float32))
 
 
 def read_image_float(
@@ -376,7 +413,7 @@ def read_image_float(
             im = transform_colorspace(im, src_cs, working_colorspace, ocio_config_path)
         return im
 
-    im = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    im = imread_unicode(path, cv2.IMREAD_UNCHANGED)
     if im is None:
         raise IOError("cannot read " + path)
     if im.dtype == np.uint16:
@@ -404,10 +441,17 @@ def decode_image_bytes(data_bytes: bytes, filename: str) -> np.ndarray:
     """Decode uploaded image bytes (`.exr`, `.png`, `.jpg`, `.tif`) into `(H, W, C)` float32 RGB(A) array."""
     ext = os.path.splitext(filename or "")[1].lower()
     if ext == ".exr":
-        with tempfile.NamedTemporaryFile(suffix=".exr", delete=True) as tmp:
-            tmp.write(data_bytes)
-            tmp.flush()
-            return read_exr_file(tmp.name)
+        fd, tmp_name = tempfile.mkstemp(suffix=".exr")
+        try:
+            with os.fdopen(fd, "wb") as tmp:
+                tmp.write(data_bytes)
+            return read_exr_file(tmp_name)
+        finally:
+            if os.path.exists(tmp_name):
+                try:
+                    os.remove(tmp_name)
+                except OSError:
+                    pass
 
     arr = np.frombuffer(data_bytes, dtype=np.uint8)
     im = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)

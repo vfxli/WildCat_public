@@ -71,17 +71,17 @@ def main():
     ap.add_argument("--gpu", default=os.environ.get("CUDA_VISIBLE_DEVICES", "1"))
     ap.add_argument("--keep", action="store_true", help="keep run/_smoke_test afterwards")
     a = ap.parse_args()
-    env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(a.gpu))
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(a.gpu), PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
 
     # 1. imports
     r = subprocess.run([sys.executable, "-c", "import backend.server, wildcat.trainer, infer, export_cat"],
-                       cwd=ROOT, capture_output=True, text=True, env=env)
+                       cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     if r.returncode:
         fail("imports:\n" + r.stderr[-2000:])
     ok("imports")
 
     # 1b. CopyCat training invariants (verified against Nuke 17; never change without re-validating)
-    r = subprocess.run([sys.executable, "-c", INVARIANTS], cwd=ROOT, capture_output=True, text=True, env=env)
+    r = subprocess.run([sys.executable, "-c", INVARIANTS], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     if r.returncode:
         fail("CopyCat training invariant broken:\n" + (r.stdout + r.stderr)[-2000:])
     ok("CopyCat training invariants: " + r.stdout.strip())
@@ -92,7 +92,8 @@ def main():
         fail("test data missing: dataset/source and dataset/target (7 EXR frames each)")
 
     # 2. short training with the default config
-    cfg = json.load(open("config/default.json"))
+    with open("config/default.json", "r", encoding="utf-8") as _f:
+        cfg = json.load(_f)
     cfg["run_name"] = RUN
     cfg["paths"] = {"source": src, "target": tgt}
     cfg["train"].update(epochs=1716, batch_size_auto=False, batch_size=4, seed=11, resume=False)
@@ -100,12 +101,13 @@ def main():
     shutil.rmtree(os.path.join("run", RUN), ignore_errors=True)
     os.makedirs("run", exist_ok=True)
     cfg_path = os.path.join("run", RUN + ".json")
-    json.dump(cfg, open(cfg_path, "w"), indent=1)
+    with open(cfg_path, "w", encoding="utf-8") as _f:
+        json.dump(cfg, _f, indent=1)
     t0 = time.time()
-    r = subprocess.run([sys.executable, "train.py", cfg_path], cwd=ROOT, capture_output=True, text=True, env=env)
+    r = subprocess.run([sys.executable, "train.py", cfg_path], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     os.remove(cfg_path)
     rd = os.path.join("run", RUN)
-    log = open(os.path.join(rd, "train.log")).read() if os.path.isfile(os.path.join(rd, "train.log")) else ""
+    log = open(os.path.join(rd, "train.log"), encoding="utf-8", errors="replace").read() if os.path.isfile(os.path.join(rd, "train.log")) else ""
     if r.returncode or "done." not in log:
         fail("training did not finish:\n" + (r.stdout + r.stderr)[-3000:])
     ok("training finished in %.0fs" % (time.time() - t0))
@@ -149,13 +151,13 @@ def main():
 
     # 4. export + reload
     run_cfg = os.path.join(rd, RUN + ".json")
-    r = subprocess.run([sys.executable, "export_cat.py", run_cfg], cwd=ROOT, capture_output=True, text=True, env=env)
+    r = subprocess.run([sys.executable, "export_cat.py", run_cfg], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     pt = os.path.join(rd, RUN + ".pt")
     if r.returncode or not os.path.isfile(pt):
         fail("export_cat.py:\n" + (r.stdout + r.stderr)[-2000:])
     r = subprocess.run([sys.executable, "-c", "import torch,sys; m=torch.jit.load(sys.argv[1]); "
                         "y=m(torch.rand(1,3,256,256)); assert y.shape==(1,3,256,256); print('reload ok')", pt],
-                       cwd=ROOT, capture_output=True, text=True, env=env)
+                       cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     if r.returncode:
         fail("exported TorchScript does not reload:\n" + r.stderr[-2000:])
     ok("export + reload (%s)" % r.stdout.strip())

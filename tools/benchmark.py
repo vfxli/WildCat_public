@@ -41,7 +41,8 @@ def main():
     n = len(data.expand_pattern(a.src))
     stages = 3 if a.multires else 1
     total = a.steps_per_stage * stages
-    c = json.load(open("config/default.json"))
+    with open("config/default.json", "r", encoding="utf-8") as _f:
+        c = json.load(_f)
     c["run_name"] = "_bench"
     shutil.rmtree("run/_bench", ignore_errors=True)
     c["paths"] = {"source": a.src, "target": a.gt}

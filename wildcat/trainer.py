@@ -24,6 +24,7 @@ import os
 import signal
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -215,7 +216,7 @@ class Trainer:
         tr["crop_size"] = self.crop_size
         try:  # authoritative run facts for the web UI / scheduler (progress = step / total_steps)
             import json as _json
-            with open(os.path.join(self.run_dir, "run_info.json"), "w") as f:
+            with open(os.path.join(self.run_dir, "run_info.json"), "w", encoding="utf-8") as f:
                 _json.dump({"total_steps": self.total_steps, "epochs": self.epochs, "batch_size": self.batch_size,
                             "crop_size": self.crop_size, "frames": n_frames}, f)
         except Exception:
@@ -259,6 +260,22 @@ class Trainer:
             prev = sorted(_glob.glob(os.path.join(self.run_dir, "Training_*.summary")))
             if prev:
                 self.nuke_prefix = prev[-1][: -len(".summary")]  # continue the same CopyCat-style run name
+        try:
+            import json as _json
+            with open(os.path.join(self.run_dir, "run_info.json"), "w", encoding="utf-8") as f:
+                _json.dump(
+                    {
+                        "total_steps": self.total_steps,
+                        "epochs": self.epochs,
+                        "batch_size": self.batch_size,
+                        "crop_size": self.crop_size,
+                        "frames": n_frames,
+                        "nuke_prefix": os.path.basename(self.nuke_prefix),
+                    },
+                    f,
+                )
+        except Exception:
+            pass
         self.export_cat_on_checkpoint = _bool(io.get("export_cat", True))
         self.io_pool = ThreadPoolExecutor(max_workers=1) if self.opt_async_io else None
         self.preview_worker = None
@@ -392,18 +409,24 @@ class Trainer:
         model_p = "%s.%d.pt" % (self.nuke_prefix, step)  # TorchScript, convert with Nuke CatFileCreator
 
         def _write():
-            tmp = latest_p + ".tmp"
-            torch.save(ck, tmp)
-            os.replace(tmp, latest_p)
-            torch.save(ck, p)
-            log("checkpoint -> %s" % p)
+            try:
+                tmp = latest_p + ".tmp"
+                torch.save(ck, tmp)
+                os.replace(tmp, latest_p)
+                p_tmp = p + ".tmp"
+                torch.save(ck, p_tmp)
+                os.replace(p_tmp, p)
+                log("checkpoint -> %s" % p)
+            except Exception:
+                log("checkpoint write failed:\n%s" % traceback.format_exc())
+                return
             if self.export_cat_on_checkpoint:
                 try:
                     from . import cat_format
                     cat_format.export_torchscript(sd_cpu, model_p, self.mo)
                     log(" [*] TorchScript model saved at %s" % model_p)
-                except Exception as e:
-                    log("model export failed: %s" % e)
+                except Exception:
+                    log("model export failed:\n%s" % traceback.format_exc())
 
         if self.io_pool is not None:
             self.io_pool.submit(_write)
@@ -420,7 +443,7 @@ class Trainer:
             ev.record()
         return snap, ev
 
-    def _preview(self, step, do_preview, do_val, crops=None):
+    def _preview(self, step, do_preview, do_val, crops=None, scale=1):
         if self.preview_device == "off":
             if do_val:
                 self.validate(step)
@@ -432,7 +455,7 @@ class Trainer:
             return  # skip this preview rather than stall training
         snap, ev = self._snapshot()
         if crops is not None:
-            crops = (crops[0][:3].detach().clone(), crops[1][:3].detach().clone())
+            crops = (crops[0][:3].detach().clone(), crops[1][:3].detach().clone(), int(scale))
         self.preview_worker.submit(step, snap, ev, do_preview, do_val, crops)
 
     @torch.no_grad()
@@ -502,13 +525,21 @@ class Trainer:
         self._log_events = []
         last_ev = [None, None]  # (event, step) of previous log point
         stop = {"flag": False}
+        stop_file = os.path.join(self.run_dir, ".stop")
+        if os.path.exists(stop_file):
+            try:
+                os.remove(stop_file)
+            except OSError:
+                pass
 
         def _sig(*_):
             stop["flag"] = True
 
-        try:  # pause (SIGINT from the scheduler) / stop: finish the current step, then checkpoint
+        try:  # pause (SIGINT/SIGBREAK from the scheduler) / stop: finish the current step, then checkpoint
             signal.signal(signal.SIGTERM, _sig)
             signal.signal(signal.SIGINT, _sig)
+            if hasattr(signal, "SIGBREAK"):
+                signal.signal(signal.SIGBREAK, _sig)
         except Exception:
             pass
 
@@ -535,7 +566,7 @@ class Trainer:
                     self._cpu_last = (time.time(), s)
                 log("step %6d  total %.6f  lr %.2e  scale %d  sps %.1f" % (s, loss_val, lr_v, scl, sps))
                 try:
-                    with open(self.nuke_prefix + ".summary", "a") as sf:
+                    with open(self.nuke_prefix + ".summary", "a", encoding="utf-8") as sf:
                         sf.write("%d,%g," % (s - 1, loss_val))
                 except Exception:
                     pass
@@ -613,6 +644,8 @@ class Trainer:
                     feed(engine)
                     loss = engine.step()
                     if step % log_iv == 0 or step == 1 or step == total:
+                        if os.path.exists(stop_file):
+                            stop["flag"] = True
                         if self.is_cuda:
                             buf = torch.empty((), dtype=torch.float32, pin_memory=True)
                             buf.copy_(loss, non_blocking=True)
@@ -627,7 +660,7 @@ class Trainer:
                     if do_ck:
                         self._save_checkpoint(step)
                     if do_pv or do_ck:
-                        self._preview(step, do_pv, do_ck, (engine.x, engine.y) if do_pv else None)
+                        self._preview(step, do_pv, do_ck, (engine.x, engine.y) if do_pv else None, scale=scale)
 
                 # ---- precision choice ("Adaptive": keep the faster of fp16-AMP / fp32) ----
                 engine = None
@@ -698,6 +731,11 @@ class Trainer:
                 self._save_checkpoint(step)
             log("stopped.")
         finally:
+            if os.path.exists(stop_file):
+                try:
+                    os.remove(stop_file)
+                except OSError:
+                    pass
             if self.preview_worker is not None:
                 self.preview_worker.drain()
             if self.io_pool is not None:

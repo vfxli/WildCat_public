@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Decoupled Business Service Layer for Users, Admin Settings, Assets, and Tasks/Queue."""
+import glob
 import json
 import os
 import socket
 import subprocess
 import time
+import zipfile
 
 from . import db, scheduler, storage, telemetry
 
@@ -363,8 +365,8 @@ def list_tasks(user_id: int, all_users: bool = False) -> list:
         except Exception:
             r["config"] = {}
         rdir_abs = storage.abs_from_root(r["run_dir"])
-        r["has_ckpt"] = os.path.isfile(os.path.join(rdir_abs, "ckpt", "latest.pt"))
-        r["has_cat"] = os.path.isfile(os.path.join(rdir_abs, f"{r['node_name']}.cat"))
+        has_nuke_models = bool(glob.glob(os.path.join(rdir_abs, "Training_*.[0-9]*.pt")))
+        r["has_ckpt"] = os.path.isfile(os.path.join(rdir_abs, "ckpt", "latest.pt")) or has_nuke_models
         r["size_mb"] = round(storage.dir_total_bytes(r["run_dir"]) / (1024 * 1024), 1)
     return rows
 
@@ -403,22 +405,111 @@ def stop_user_task(user_id: int, is_admin: bool, task_id: int) -> dict:
     return scheduler.SCHEDULER.stop_task(task_id)
 
 
-def export_task_cat(user_id: int, is_admin: bool, task_id: int) -> dict:
+def export_task_cat(user_id: int, is_admin: bool, task_id: int, step: int = None) -> dict:
     row = get_task_for_user(user_id, is_admin, task_id=task_id)
     if not row:
         raise ValueError("Task not found or access denied.")
+    rdir_abs = storage.abs_from_root(row["run_dir"])
+    pfx = telemetry.resolve_nuke_prefix(rdir_abs)
+    inv = telemetry.list_task_models(row["run_dir"], row.get("config"))
+    target_step = int(step) if step is not None else (inv["items"][0]["step"] if inv["items"] else int(row.get("last_step") or 0))
+    nuke_pt = os.path.join(rdir_abs, f"{pfx}.{target_step}.pt") if target_step > 0 else os.path.join(rdir_abs, f"{row['node_name']}.pt")
+    cmd = [scheduler.PYTHON_BIN, "export_cat.py", row["config_path"]]
+    if step is not None and os.path.isfile(os.path.join(rdir_abs, "ckpt", f"step_{int(step):06d}.pt")):
+        cmd.append(str(int(step)))
+    cmd.extend(["--out-pt", nuke_pt])
     res = subprocess.run(
-        [scheduler.PYTHON_BIN, "export_cat.py", row["config_path"]],
+        cmd,
         cwd=db.ROOT,
         capture_output=True,
         text=True,
-        timeout=60,
+        encoding="utf-8",
+        errors="replace",
+        timeout=90,
     )
     if res.returncode != 0:
-        raise RuntimeError(res.stderr.strip() or res.stdout.strip() or "Export failed")
+        raise RuntimeError((res.stderr or "") + "\n" + (res.stdout or "") or "Export failed")
     nname = row["node_name"]
     return {
         "node_name": nname,
-        "pt_path": f"run/{nname}/{nname}.pt",
+        "step": target_step,
+        "nuke_prefix": pfx,
+        "pt_path": storage.rel_to_root(nuke_pt),
+        "pt_filename": os.path.basename(nuke_pt),
         "message": res.stdout.strip(),
     }
+
+
+def ensure_nuke_model_file(
+    user_id: int,
+    is_admin: bool,
+    task_id: int,
+    ext: str,
+    step: int = None,
+) -> tuple[str, str]:
+    """Ensure the Nuke-named model file (Training_YYMMDD_HHMMSS.<step>.cat/.pt) exists on disk
+    for the requested step (or latest step when step is None) and return (abs_path, download_filename)."""
+    row = get_task_for_user(user_id, is_admin, task_id=task_id)
+    if not row:
+        raise ValueError("任务不存在或无权访问。")
+    rdir_abs = storage.abs_from_root(row["run_dir"])
+    inv = telemetry.list_task_models(row["run_dir"], row.get("config"))
+    if not inv["items"]:
+        raise ValueError("当前任务尚未保存任何模型检查点，请等待到达 Checkpoint Interval 或先暂停任务保存进度。")
+
+    if step is None:
+        item = inv["items"][0]
+    else:
+        st_req = int(step)
+        item = next((x for x in inv["items"] if x["step"] == st_req), None)
+        if not item:
+            raise ValueError(f"未找到 Step {st_req} 对应的模型版本。")
+
+    st = int(item["step"])
+    target_fn = item["pt_filename"]
+    target_abs = os.path.join(rdir_abs, target_fn)
+    if os.path.isfile(target_abs) and os.path.getsize(target_abs) > 0:
+        return target_abs, target_fn
+
+    export_task_cat(user_id, is_admin, task_id, step=st)
+    if not os.path.isfile(target_abs) or os.path.getsize(target_abs) == 0:
+        raise FileNotFoundError(f"模型文件导出后未找到: {target_fn}")
+    return target_abs, target_fn
+
+
+def build_all_models_zip(user_id: int, is_admin: bool, task_id: int, ext: str) -> tuple[str, str]:
+    """Bundle all checkpoint step models of this task (strictly Nuke-named) into a fast ZIP_STORED archive."""
+    row = get_task_for_user(user_id, is_admin, task_id=task_id)
+    if not row:
+        raise ValueError("任务不存在或无权访问。")
+    rdir_abs = storage.abs_from_root(row["run_dir"])
+    inv = telemetry.list_task_models(row["run_dir"], row.get("config"))
+    if not inv["items"]:
+        raise ValueError("当前任务尚未生成任何可下载的模型版本。")
+
+    ordered_items = sorted(inv["items"], key=lambda x: x["step"])
+    files_to_pack = []
+    for it in ordered_items:
+        f_abs, f_name = ensure_nuke_model_file(user_id, is_admin, task_id, ext, step=it["step"])
+        files_to_pack.append((f_abs, f_name))
+
+    pfx = inv["nuke_prefix"]
+    latest_st = ordered_items[-1]["step"]
+    bundle_name = f".bundle_{pfx}_{ext}_{len(files_to_pack)}_{latest_st}.zip"
+    bundle_abs = os.path.join(rdir_abs, bundle_name)
+    dl_name = f"{pfx}.zip"
+
+    if not os.path.isfile(bundle_abs) or os.path.getsize(bundle_abs) == 0:
+        for old_b in glob.glob(os.path.join(rdir_abs, f".bundle_{pfx}_{ext}_*.zip")):
+            if old_b != bundle_abs:
+                try:
+                    os.remove(old_b)
+                except OSError:
+                    pass
+        tmp_zip = f"{bundle_abs}.tmp.{os.getpid()}"
+        with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_STORED) as zf:
+            for f_abs, f_name in files_to_pack:
+                zf.write(f_abs, arcname=f_name)
+        os.replace(tmp_zip, bundle_abs)
+
+    return bundle_abs, dl_name

@@ -4,10 +4,22 @@ import os
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-_VENV_SITE = os.path.join(ROOT, ".venv", "lib", "python3.12", "site-packages")
-if os.path.isdir(_VENV_SITE) and _VENV_SITE not in sys.path:
-    sys.path.insert(0, _VENV_SITE)
-sys.path.insert(0, ROOT)
+for _cand in (
+    os.path.join(ROOT, ".venv", "Lib", "site-packages"),
+    os.path.join(ROOT, ".venv", "lib", "python3.12", "site-packages"),
+    os.path.join(ROOT, "runtime", "python", "Lib", "site-packages"),
+    os.path.join(ROOT, "runtime", "python", "lib", "python3.12", "site-packages"),
+):
+    if os.path.isdir(_cand) and _cand not in sys.path:
+        sys.path.insert(0, _cand)
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 from backend.server import app  # noqa: E402,F401
 

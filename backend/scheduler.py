@@ -10,11 +10,67 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 
 from . import db, storage, telemetry
 
 ROOT = db.ROOT
-PYTHON_BIN = sys.executable if (sys.executable and os.path.isfile(sys.executable)) else os.path.join(ROOT, ".venv", "bin", "python")
+
+
+def _resolve_python_bin() -> str:
+    if sys.executable and os.path.isfile(sys.executable):
+        return sys.executable
+    for cand in (
+        os.path.join(ROOT, ".venv", "Scripts", "python.exe"),
+        os.path.join(ROOT, "runtime", "python", "python.exe"),
+        os.path.join(ROOT, "runtime", "python", "cpython-3.12", "python.exe"),
+        os.path.join(ROOT, ".venv", "bin", "python"),
+        os.path.join(ROOT, ".venv", "cpython-3.12", "bin", "python3.12"),
+        os.path.join(ROOT, "runtime", "python", "cpython-3.12", "bin", "python3.12"),
+    ):
+        if os.path.isfile(cand):
+            return cand
+    return "python" if os.name == "nt" else "python3"
+
+
+PYTHON_BIN = _resolve_python_bin()
+
+
+def _is_pid_alive(pid) -> bool:
+    """Cross-platform check if a process PID is currently alive (never calls os.kill(pid, 0) on Windows)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return exit_code.value == STILL_ACTIVE
+                return False
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
 
 
 def detect_gpus():
@@ -24,6 +80,8 @@ def detect_gpus():
             ["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         ).stdout
         gpus = []
@@ -60,7 +118,7 @@ def parse_latest_log_metrics(run_dir_abs: str) -> dict:
     info_p = os.path.join(run_dir_abs, "run_info.json")
     if os.path.isfile(info_p):  # written by the trainer: real total steps for this run
         try:
-            with open(info_p) as f:
+            with open(info_p, encoding="utf-8") as f:
                 info = json.load(f)
             if info.get("total_steps"):
                 out["total_steps"] = int(info["total_steps"])
@@ -88,7 +146,7 @@ class _ActiveJob:
         self.preview_gpu = str(preview_gpu) if preview_gpu is not None else None
         self.proc = proc
         self.log_path = log_path
-        self.tail = collections.deque(maxlen=200)
+        self.tail = collections.deque(maxlen=300)
         self.stop_requested = False
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
@@ -162,7 +220,7 @@ class TaskQueueScheduler:
                 cfg_obj = {}
                 if os.path.isfile(cfg_file):
                     try:
-                        with open(cfg_file, "r") as f:
+                        with open(cfg_file, "r", encoding="utf-8") as f:
                             cfg_obj = json.load(f)
                     except Exception:
                         cfg_obj = {}
@@ -200,13 +258,7 @@ class TaskQueueScheduler:
         running_rows = db.query_all("SELECT id, pid, run_dir FROM tasks WHERE status = 'running'")
         for r in running_rows:
             pid = r.get("pid")
-            alive = False
-            if pid:
-                try:
-                    os.kill(int(pid), 0)
-                    alive = True
-                except OSError:
-                    alive = False
+            alive = _is_pid_alive(pid)
             if not alive:
                 db.execute(
                     "UPDATE tasks SET status = 'stopped', pid = NULL, assigned_gpu = NULL WHERE id = ?",
@@ -218,7 +270,8 @@ class TaskQueueScheduler:
             try:
                 self.tick()
             except Exception:
-                pass
+                sys.stderr.write(f"[WildCat ERROR] Scheduler tick exception:\n{traceback.format_exc()}\n")
+                sys.stderr.flush()
             time.sleep(1.0)
 
     def tick(self):
@@ -256,7 +309,7 @@ class TaskQueueScheduler:
                         err = ""
                     else:
                         new_status = "failed"
-                        err = "\n".join(list(job.tail)[-30:]).strip()
+                        err = "\n".join(list(job.tail)[-100:]).strip()
                         if not err:
                             err = f"训练子进程异常退出 (exit code={rc})"
                         sys.stderr.write(
@@ -265,10 +318,14 @@ class TaskQueueScheduler:
                         sys.stderr.flush()
                         if job.log_path:
                             try:
-                                need_write = not os.path.isfile(job.log_path) or os.path.getsize(job.log_path) == 0
-                                if need_write:
+                                existing_tail = ""
+                                if os.path.isfile(job.log_path):
+                                    with open(job.log_path, "r", encoding="utf-8", errors="replace") as rf:
+                                        existing_tail = rf.read()[-4096:]
+                                last_err_line = err.splitlines()[-1] if err.splitlines() else err
+                                if not existing_tail or last_err_line not in existing_tail:
                                     with open(job.log_path, "a", encoding="utf-8") as lf:
-                                        lf.write(err + "\n")
+                                        lf.write("\n" + err + "\n")
                                         lf.flush()
                             except Exception:
                                 pass
@@ -314,8 +371,26 @@ class TaskQueueScheduler:
                         chosen_gpu = pref
 
                 if chosen_gpu is not None:
-                    self._launch_queued_task(q, chosen_gpu)
-                    gpu_counts[chosen_gpu] = gpu_counts.get(chosen_gpu, 0) + 1
+                    try:
+                        self._launch_queued_task(q, chosen_gpu)
+                        gpu_counts[chosen_gpu] = gpu_counts.get(chosen_gpu, 0) + 1
+                    except Exception:
+                        tb = traceback.format_exc()
+                        sys.stderr.write(
+                            f"[WildCat ERROR] Failed to launch task '{q.get('node_name')}' (id={q.get('id')}):\n{tb}\n"
+                        )
+                        sys.stderr.flush()
+                        try:
+                            r_abs = storage.abs_from_root(q["run_dir"])
+                            os.makedirs(r_abs, exist_ok=True)
+                            with open(os.path.join(r_abs, "train.log"), "a", encoding="utf-8") as lf:
+                                lf.write(tb + "\n")
+                        except Exception:
+                            pass
+                        db.execute(
+                            "UPDATE tasks SET status = 'failed', pid = NULL, assigned_gpu = NULL, finished_at = ?, error_msg = ? WHERE id = ?",
+                            (time.time(), tb, q["id"]),
+                        )
 
     def _launch_queued_task(self, task_row: dict, gpu_id: str):
         tid = task_row["id"]
@@ -330,6 +405,8 @@ class TaskQueueScheduler:
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         pick = None
         # Preview / validation on a secondary GPU: expose it as cuda:1 to the training process.
         # Prefer a GPU that is not running another training job and when no other task is waiting in the queue.
@@ -360,17 +437,28 @@ class TaskQueueScheduler:
 
         run_abs = storage.abs_from_root(task_row["run_dir"])
         os.makedirs(run_abs, exist_ok=True)
+        stop_file = os.path.join(run_abs, ".stop")
+        if os.path.exists(stop_file):
+            try:
+                os.remove(stop_file)
+            except OSError:
+                pass
         log_path = os.path.join(run_abs, "train.log")
 
-        proc = subprocess.Popen(
-            cmd,
+        popen_kwargs = dict(
             cwd=ROOT,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+        proc = subprocess.Popen(cmd, **popen_kwargs)
         job = _ActiveJob(tid, task_row["node_name"], str(gpu_id), proc, log_path=log_path, preview_gpu=pick)
         self._active[tid] = job
         db.execute(
@@ -493,11 +581,11 @@ class TaskQueueScheduler:
             os.makedirs(storage.CONFIG_ROOT, exist_ok=True)
             cfg_rel = f"config/{clean_node}.json"
             cfg_abs = storage.abs_from_root(cfg_rel)
-            with open(cfg_abs, "w") as f:
+            with open(cfg_abs, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2)
 
             os.makedirs(run_abs, exist_ok=True)
-            with open(os.path.join(run_abs, f"{clean_node}.json"), "w") as f:
+            with open(os.path.join(run_abs, f"{clean_node}.json"), "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2)
 
             tot_steps = int(cfg.get("train", {}).get("total_steps", 10000))
@@ -570,12 +658,12 @@ class TaskQueueScheduler:
             cfg["run_name"] = clean_node
             os.makedirs(storage.CONFIG_ROOT, exist_ok=True)
             cfg_rel = f"config/{clean_node}.json"
-            with open(storage.abs_from_root(cfg_rel), "w") as f:
+            with open(storage.abs_from_root(cfg_rel), "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2)
             run_rel = f"run/{clean_node}"
             run_abs = storage.abs_from_root(run_rel)
             if os.path.isdir(run_abs):
-                with open(os.path.join(run_abs, f"{clean_node}.json"), "w") as f:
+                with open(os.path.join(run_abs, f"{clean_node}.json"), "w", encoding="utf-8") as f:
                     json.dump(cfg, f, indent=2)
 
             tot_steps = int(cfg.get("train", {}).get("total_steps", 10000))
@@ -612,16 +700,25 @@ class TaskQueueScheduler:
                 )
                 return db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
 
+            rdir_abs = storage.abs_from_root(row["run_dir"]) if row.get("run_dir") else ""
+            if rdir_abs and os.path.isdir(rdir_abs):
+                try:
+                    with open(os.path.join(rdir_abs, ".stop"), "w", encoding="utf-8") as sf:
+                        sf.write("stop\n")
+                except OSError:
+                    pass
+
+            stop_sig = getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM) if os.name == "nt" else signal.SIGINT
             job = self._active.get(task_id)
             if job and job.alive:
                 job.stop_requested = True
                 try:
-                    job.proc.send_signal(signal.SIGINT)
+                    job.proc.send_signal(stop_sig)
                 except Exception:
                     pass
             elif row.get("pid"):
                 try:
-                    os.kill(int(row["pid"]), signal.SIGINT)
+                    os.kill(int(row["pid"]), stop_sig)
                 except OSError:
                     pass
                 db.execute(
@@ -646,7 +743,7 @@ class TaskQueueScheduler:
                     pass
             elif row.get("pid"):
                 try:
-                    os.kill(int(row["pid"]), signal.SIGKILL)
+                    os.kill(int(row["pid"]), getattr(signal, "SIGKILL", signal.SIGTERM))
                 except OSError:
                     pass
             storage.delete_task_files(row.get("run_dir"), row.get("config_path"))

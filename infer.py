@@ -9,15 +9,25 @@ import time
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 for _cand in (
+    os.path.join(_ROOT, ".venv", "Lib", "site-packages"),
     os.path.join(_ROOT, ".venv", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "runtime", "python", "Lib", "site-packages"),
     os.path.join(_ROOT, "runtime", "python", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "..", "runtime", "python", "Lib", "site-packages"),
     os.path.join(_ROOT, "..", "runtime", "python", "lib", "python3.12", "site-packages"),
+    os.path.join(_ROOT, "..", ".venv", "Lib", "site-packages"),
     os.path.join(_ROOT, "..", ".venv", "lib", "python3.12", "site-packages"),
 ):
     if os.path.isdir(_cand) and _cand not in sys.path:
         sys.path.insert(0, _cand)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 import cv2
 import numpy as np
@@ -32,7 +42,8 @@ from wildcat.preview import infer_image
 
 @torch.no_grad()
 def main():
-    cfg = json.load(open(sys.argv[1]))
+    with open(sys.argv[1], "r", encoding="utf-8") as _f:
+        cfg = json.load(_f)
     args = sys.argv[2:]
     step_arg = None
     if args and args[-1].isdigit():
@@ -106,7 +117,7 @@ def main():
             if clipped.shape[2] >= 3:
                 clipped = clipped[..., [2, 1, 0] + list(range(3, clipped.shape[2]))]
             u16 = (clipped * 65535.0).astype(np.uint16)
-            cv2.imwrite(out_path, u16)
+            color.imwrite_unicode(out_path, u16)
         print(out_path)
 
     for path, img in zip(files, frames):
@@ -145,6 +156,18 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         sys.exit(130)
     except BaseException:
-        sys.stderr.write(traceback.format_exc() + "\n")
+        tb = traceback.format_exc()
+        sys.stderr.write(tb + "\n")
         sys.stderr.flush()
+        try:
+            if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
+                with open(sys.argv[1], "r", encoding="utf-8") as _f:
+                    _c = json.load(_f)
+                if isinstance(_c, dict) and _c.get("run_name"):
+                    _rd = os.path.join(_ROOT, "run", str(_c["run_name"]))
+                    os.makedirs(_rd, exist_ok=True)
+                    with open(os.path.join(_rd, "train.log"), "a", encoding="utf-8") as _lf:
+                        _lf.write(tb + "\n")
+        except Exception:
+            pass
         sys.exit(1)

@@ -41,19 +41,53 @@ def _read(p, input_colorspace="auto", working_colorspace="ACEScg", ocio_config_p
     return im
 
 
+def _dedup_sorted(paths):
+    seen = set()
+    out = []
+    for f in sorted(paths):
+        k = os.path.normcase(os.path.abspath(f))
+        if k not in seen:
+            seen.add(k)
+            out.append(f)
+    return out
+
+
 def expand_pattern(pattern):
     if os.path.isdir(pattern):
-        exr_files = sorted(glob.glob(os.path.join(pattern, "*.exr")) + glob.glob(os.path.join(pattern, "*.EXR")))
+        exr_files = _dedup_sorted(glob.glob(os.path.join(pattern, "*.exr")) + glob.glob(os.path.join(pattern, "*.EXR")))
         if exr_files:
             return exr_files
         files = []
         for ext in ("*.png", "*.tif", "*.tiff", "*.jpg", "*.jpeg"):
             files.extend(glob.glob(os.path.join(pattern, ext)))
-        return sorted(files)
-    return sorted(glob.glob(pattern.replace("####", "*")))
+        return _dedup_sorted(files)
+    return _dedup_sorted(glob.glob(pattern.replace("####", "*")))
 
 
 def mem_available_bytes():
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return int(stat.ullAvailPhys)
+        except Exception:
+            pass
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -66,7 +100,7 @@ def mem_available_bytes():
 
 def _probe_frame_bytes(path, channels):
     try:
-        im = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        im = color.imread_unicode(path, cv2.IMREAD_UNCHANGED)
         if im is not None:
             return int(im.shape[0]) * int(im.shape[1]) * int(channels)
     except Exception:

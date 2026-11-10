@@ -4,7 +4,7 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
 [![PyTorch 2.8–2.11](https://img.shields.io/badge/PyTorch-2.8%E2%80%932.11-EE4C2C.svg)](https://pytorch.org/)
 
-WildCat 是一个用于 VFX 序列帧的神经网络训练与推理工具，以服务形式运行在 Linux 服务器上，通过浏览器访问。训练流程参考 Nuke **CopyCat**，与 CopyCat 兼容：
+WildCat 是一个用于 VFX 序列帧的神经网络训练与推理工具，支持在 **Linux** 与 **Windows** 上以服务形式运行，通过浏览器访问。训练流程参考 Nuke **CopyCat**，与 CopyCat 兼容：
 
 - 训练参数、单位与默认值与 CopyCat 相同（Epochs / Batch Size / Crop Size / Model Size / Multi-Resolution / Initial Weights / Checkpoint Interval / Contact Sheet Interval）；
 - 训练得到的模型以 TorchScript（`.pt`）导出，经 Nuke 自带的 **CatFileCreator** 节点转换为 `.cat` 后，可在 **Inference** 节点中使用；
@@ -33,12 +33,13 @@ WildCat 是一个用于 VFX 序列帧的神经网络训练与推理工具，以�
 
 ```text
 run/<任务名>/
-├── Training_261110_041929.1000.pt      # 每个 Checkpoint Interval 一个 TorchScript 模型
+├── Training_261110_041929.1000.pt      # 每个 Checkpoint Interval 一个 TorchScript 模型（网页支持单版本或一键打包下载）
 ├── Training_261110_041929.100.png      # contact sheet
 ├── Training_261110_041929.summary      # step,loss,step,loss,...
 ├── ckpt/step_001000.pt  latest.pt      # 断点续训用（含优化器状态）
+├── contact_sup/step_000100.png         # 3×3 局部块实时预览（对齐 CopyCat Viewer 左下角 Contact Sheet：crop 1..3 × input|groundtruth|output）
 ├── preview_sup/<帧名>/step_000100.png  # 整帧预览（Web 端播放器使用）
-└── train.log
+└── train.log                           # 实时训练日志与完整异常堆栈
 ```
 
 ---
@@ -86,6 +87,12 @@ Nuke 17.0v2 CopyCat 与 WildCat（默认设置）在同一台机器、同一张 
 | RTX 5090 | Large | 4 | 256 | 27.8 · 27.1 · 20.2 | 174.2 · 116.4 · 52.1 | 3.7 |
 | RTX 5090 | Large | 8 | 256 | 29.5 · 23.3 · 15.2 | 141.4 · 76.7 · 29.5 | 2.6 |
 
+### 20 万 Epochs（35 万步）训练精度对照
+
+在相同参数（7 帧 772×855 半精度 EXR，Medium 模型，Batch 4，Crop 256，开启 Multi-Resolution，Seed 0）下运行 200,000 Epochs（共 350,000 步），1/4 → 1/2 → 1/1 三阶段训练 Loss 收敛曲线与 Nuke 17.0v2 CopyCat 全程重合；各检查点在 Nuke Inference 节点中评测的整帧输出 MSE 完全处于同一水平（35 万步最终 MSE：CopyCat `0.000126`，WildCat `0.000109`）：
+
+![200k-Epoch Loss Parity](docs/loss_parity_200k.png)
+
 ### 显存
 
 不同显存容量使用同一套自动策略：
@@ -107,7 +114,9 @@ Nuke 17.0v2 CopyCat 与 WildCat（默认设置）在同一台机器、同一张 
 
 ## 安装与启动
 
-Linux（Ubuntu 22.04+ / Rocky Linux 9），NVIDIA 驱动 ≥ 570，Python 3.12：
+支持 **Linux**（Ubuntu 22.04+ / Rocky Linux 9）与 **Windows**（Windows 10 / 11 / Server 2022），NVIDIA 驱动 ≥ 570，Python 3.12。
+
+Linux：
 
 ```bash
 git clone https://github.com/vfxli/WildCat_public.git WildCat && cd WildCat
@@ -117,15 +126,37 @@ pip install -r requirements.txt
 ./wildcat.sh start
 ```
 
+Windows（CMD / PowerShell）：
+
+```bat
+git clone https://github.com/vfxli/WildCat_public.git WildCat && cd WildCat
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
+wildcat.bat start
+```
+
 浏览器打开 `http://<服务器IP>:8765`。
 
-管理后台密码：首次启动前可通过环境变量 `WC_PASSWORD` 指定；未指定时，首次启动会随机生成一个初始密码并写入 `wildcat.log`，登录管理后台后请修改。
+管理后台密码：首次启动前可通过环境变量 `WC_PASSWORD` 指定；未指定时，首次启动会随机生成一个初始密码并写入 `wildcat.log`，登录管理后台后请修改（也可随时运行 `bash set_admin_password.sh` 或 `set_admin_password.bat` 修改）。
+
+Linux 服务管理：
 
 ```bash
 ./wildcat.sh start | stop | restart | status
-./wildcat.sh pack-patch                     # 打包代码更新包
-./wildcat.sh update WildCat_patch.tar.gz    # 更新代码（保留环境与数据）
+./wildcat.sh pack-patch                     # 打包代码更新包（默认输出到 update/ 目录）
+./wildcat.sh update                         # 将更新包放入 update/ 目录后一键更新（保留环境与数据）
 ./wildcat.sh rollback                       # 回滚到上一个版本
+```
+
+Windows 服务管理：
+
+```bat
+wildcat.bat start | stop | restart | status
+wildcat.bat pack-patch                      # 打包代码更新包（默认输出到 update\ 目录）
+wildcat.bat update                          # 将更新包放入 update\ 目录后一键更新（保留环境与数据）
+wildcat.bat rollback                        # 回滚到上一个版本
 ```
 
 ### 命令行
@@ -147,16 +178,19 @@ WildCat/
 ├── frontend/       # Vue 3 + Tailwind 工作台
 ├── webui/          # Web 服务入口
 ├── wildcat/
+│   ├── version.py  # 版本号与构建标识
 │   ├── models.py   # Small / Medium / Large 模型与权重加载
 │   ├── data.py     # EXR 序列加载、多分辨率、取帧与裁剪、显存常驻 / 内存预取
 │   ├── engine.py   # 单步训练（混合精度、损失缩放、Adam），CUDA Graph 捕获
 │   ├── trainer.py  # 训练流程、检查点、TorchScript 导出
-│   ├── preview.py  # 异步预览 / 验证 / contact sheet
+│   ├── preview.py  # 异步预览 / 验证 / 3×3 contact sheet
 │   ├── color.py    # OpenEXR 读写与 OCIO
 │   └── cat_format.py  # TorchScript 读取与导出
+├── update/         # 热更新包目录（放入 .tar.gz 后执行 update 一键升级）
 ├── tools/benchmark.py
 ├── config/default.json
-└── wildcat.sh
+├── wildcat.sh
+└── wildcat.bat
 ```
 
 Nuke 与 CopyCat 为 Foundry 的产品。

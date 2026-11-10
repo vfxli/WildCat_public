@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """WildCat Decoupled FastAPI Server (REST API v1 + Multi-User Queue Scheduler + Vue 3 SPA Hosting)."""
 import os
+import sys
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from wildcat.version import BUILD_VERSION
 
 from . import api, db, scheduler, storage, telemetry
 
@@ -22,13 +26,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="WildCat",
-    version="2.0.0",
+    version=BUILD_VERSION,
     description="WildCat API",
     lifespan=lifespan,
 )
 
 # 1. Mount Core REST API v1
 app.include_router(api.router)
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """Ensure every unhandled server exception logs a full Python traceback to wildcat.log and returns clear details."""
+    tb = traceback.format_exc()
+    sys.stderr.write(f"[WildCat API 500 ERROR] {request.method} {request.url.path}\n{tb}\n")
+    sys.stderr.flush()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}\n\n{tb}"},
+    )
 
 
 @app.middleware("http")
@@ -41,6 +57,7 @@ async def _no_stale_frontend(request, call_next):
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
     return resp
+
 
 # 2. Mount Static Directories for Preview Cache, Run Artifacts, and Frontend Bundle
 os.makedirs(telemetry.CACHE_DIR, exist_ok=True)

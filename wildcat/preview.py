@@ -9,6 +9,7 @@ is due, that preview is skipped instead of stalling training.
 import os
 import queue
 import threading
+import traceback
 
 import cv2
 import numpy as np
@@ -121,8 +122,8 @@ class PreviewWorker:
             try:
                 with self.t.gpu_lock:
                     self._do(*job)
-            except Exception as e:  # never kill training because of a preview
-                log("preview worker error: %s" % e)
+            except Exception:  # never kill training because of a preview, but always log full stack
+                log("preview worker error:\n%s" % traceback.format_exc())
             finally:
                 self.busy.clear()
 
@@ -156,32 +157,89 @@ class PreviewWorker:
             with (torch.cuda.stream(self._stream) if self._stream is not None else _Null()):
                 self._write_contact_sheet(step, crops)
 
+    def _pad_crops_to_three(self, x, y, step, scale):
+        """Ensure at least 3 crop pairs for a complete 3x3 Nuke-style Contact Sheet without touching global RNG."""
+        if x.shape[0] >= 3 or not self.t.src_full:
+            return x[:3], y[:3]
+        rng = np.random.RandomState((int(step) * 2654435761 + 17) & 0xFFFFFFFF)
+        ch, cw = int(x.shape[-2]), int(x.shape[-1])
+        xs, ys = [x], [y]
+        need = 3 - int(x.shape[0])
+        n_frames = len(self.t.src_full)
+        sc = max(1, int(scale))
+        for _ in range(need):
+            fi = int(rng.randint(0, n_frames))
+            sf = torch.from_numpy(np.asarray(self.t.src_full[fi], dtype=np.float32)).to(self.device).permute(2, 0, 1)[None]
+            tf = torch.from_numpy(np.asarray(self.t.tgt_full[fi], dtype=np.float32)).to(self.device).permute(2, 0, 1)[None]
+            if sc > 1:
+                sh = max(1, sf.shape[-2] // sc)
+                sw = max(1, sf.shape[-1] // sc)
+                sf = F.interpolate(sf, size=(sh, sw), mode="bicubic", align_corners=True)
+                tf = F.interpolate(tf, size=(sh, sw), mode="bicubic", align_corners=True)
+            pad_h = max(0, ch - sf.shape[-2])
+            pad_w = max(0, cw - sf.shape[-1])
+            if pad_h or pad_w:
+                sf = F.pad(sf, (0, pad_w, 0, pad_h), mode="replicate")
+                tf = F.pad(tf, (0, pad_w, 0, pad_h), mode="replicate")
+            y0 = int(rng.randint(0, max(1, sf.shape[-2] - ch + 1)))
+            x0 = int(rng.randint(0, max(1, sf.shape[-1] - cw + 1)))
+            xs.append(sf[:, :, y0 : y0 + ch, x0 : x0 + cw])
+            ys.append(tf[:, :, y0 : y0 + ch, x0 : x0 + cw])
+        return torch.cat(xs, dim=0)[:3], torch.cat(ys, dim=0)[:3]
+
     def _write_contact_sheet(self, step, crops):
-        """CopyCat-style contact sheet of the current training crops: rows = crops, columns =
-        input | ground truth | output, plain sRGB encoding, 16-bit PNG."""
-        x, y = crops
-        x = x.to(self.device).float()
-        y = y.to(self.device).float()
+        """CopyCat-style 3x3 contact sheet of training crops: 3 rows = crops, 3 columns =
+        input | ground truth | output. Writes both Nuke's raw Training_*.<step>.png and an
+        OCIO display-referred sheet under contact_sup/ for accurate HDR Web UI viewing."""
+        if len(crops) == 3:
+            x_raw, y_raw, scale = crops
+        else:
+            x_raw, y_raw, scale = crops[0], crops[1], 1
+        x = x_raw.to(self.device).float()
+        y = y_raw.to(self.device).float()
+        x, y = self._pad_crops_to_three(x, y, step, scale)
+        ch, cw = int(x.shape[-2]), int(x.shape[-1])
+        ph, pw = (16 - ch % 16) % 16, (16 - cw % 16) % 16
+        x_in = F.pad(x, (0, pw, 0, ph), mode="replicate") if (ph or pw) else x
         is_cuda = self.device.type == "cuda"
         with torch.no_grad(), torch.autocast("cuda" if is_cuda else "cpu", dtype=self.amp_dtype or torch.float32,
                                              enabled=self.amp_dtype is not None and is_cuda):
-            o = self.net(x).float()
+            o = self.net(x_in)[:, :, :ch, :cw].float()
+
         side = int(self.t.crop_size)
-        rows = []
+        rows_raw = []
+        rows_disp = []
         for i in range(x.shape[0]):
-            tiles = []
-            for t in (x[i], y[i], o[i]):
-                t = t[:3] if t.shape[0] >= 3 else t[:1].repeat(3, 1, 1)
-                if t.shape[-1] != side:
-                    t = F.interpolate(t[None], size=(side, side), mode="nearest")[0]
-                tiles.append(t)
-            rows.append(torch.cat(tiles, dim=2))
-        sheet = torch.cat(rows, dim=1).clamp(0, 1).permute(1, 2, 0).cpu().numpy()
+            tiles_raw = []
+            tiles_disp = []
+            for t_chw in (x[i], y[i], o[i]):
+                if t_chw.shape[-2] != side or t_chw.shape[-1] != side:
+                    t_up = F.interpolate(t_chw[None], size=(side, side), mode="nearest")[0]
+                else:
+                    t_up = t_chw
+                t_rgb = t_up[:3] if t_up.shape[0] >= 3 else t_up[:1].repeat(3, 1, 1)
+                tiles_raw.append(t_rgb)
+                hwc = t_up.permute(1, 2, 0).cpu().numpy()
+                tiles_disp.append(self._to_disp(hwc))
+            rows_raw.append(torch.cat(tiles_raw, dim=2))
+            rows_disp.append(np.concatenate(tiles_disp, axis=1))
+
+        # 1. Nuke-compatible Training_YYMMDD_HHMMSS.<step>.png in run_dir
+        sheet = torch.cat(rows_raw, dim=1).clamp(0, 1).permute(1, 2, 0).cpu().numpy()
         enc = np.where(sheet <= 0.0031308, sheet * 12.92, 1.055 * np.power(sheet, 1 / 2.4) - 0.055)
         path = "%s.%d.png" % (self.t.nuke_prefix, step)
         tmp = path + ".tmp.png"
-        cv2.imwrite(tmp, cv2.cvtColor((np.clip(enc, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
+        color.imwrite_unicode(tmp, cv2.cvtColor((np.clip(enc, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
         os.replace(tmp, path)
+
+        # 2. OCIO display-managed 3x3 Contact Sheet for Web UI live preview
+        disp_sheet = np.concatenate(rows_disp, axis=0)
+        cdir = os.path.join(self.t.run_dir, "contact_sup")
+        os.makedirs(cdir, exist_ok=True)
+        cpath = os.path.join(cdir, "step_%06d_s%d.png" % (step, max(1, int(scale))))
+        ctmp = cpath + ".tmp.png"
+        color.imwrite_unicode(ctmp, cv2.cvtColor((np.clip(disp_sheet, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
+        os.replace(ctmp, cpath)
 
     def _infer(self, fr):
         if isinstance(fr, torch.Tensor):
@@ -216,7 +274,7 @@ class PreviewWorker:
             os.makedirs(pdir, exist_ok=True)
             path = os.path.join(pdir, "step_%06d.png" % step)
             tmp = path + ".tmp.png"
-            cv2.imwrite(tmp, cv2.cvtColor((np.clip(trip, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
+            color.imwrite_unicode(tmp, cv2.cvtColor((np.clip(trip, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
             os.replace(tmp, path)
 
 

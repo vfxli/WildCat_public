@@ -53,24 +53,35 @@ def abs_from_root(path_str: str) -> str:
     return str(p if p.is_absolute() else (Path(ROOT) / p))
 
 
+def _dedup_sorted(paths: list) -> list:
+    seen = set()
+    out = []
+    for p in sorted(paths):
+        key = os.path.normcase(os.path.abspath(p))
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
 def expand_sequence_files(pattern_or_dir: str) -> list:
     if not pattern_or_dir:
         return []
     p = abs_from_root(pattern_or_dir)
     if os.path.isdir(p):
-        exr_files = sorted(glob.glob(os.path.join(p, "*.exr")) + glob.glob(os.path.join(p, "*.EXR")))
+        exr_files = _dedup_sorted(glob.glob(os.path.join(p, "*.exr")) + glob.glob(os.path.join(p, "*.EXR")))
         if exr_files:
             return exr_files
-        files = sorted(glob.glob(os.path.join(p, "*.png")))
+        files = _dedup_sorted(glob.glob(os.path.join(p, "*.png")))
         if not files:
-            files = sorted(
+            files = _dedup_sorted(
                 glob.glob(os.path.join(p, "*.tif"))
                 + glob.glob(os.path.join(p, "*.tiff"))
                 + glob.glob(os.path.join(p, "*.jpg"))
                 + glob.glob(os.path.join(p, "*.jpeg"))
             )
         return files
-    return sorted(glob.glob(p.replace("####", "*")))
+    return _dedup_sorted(glob.glob(p.replace("####", "*")))
 
 
 def dir_stats(pattern_or_dir: str) -> tuple:
@@ -462,7 +473,7 @@ def save_uploaded_files_to_asset(
             arr = np.frombuffer(data_bytes, dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
             if img is not None:
-                cv2.imwrite(out_png, img)
+                color.imwrite_unicode(out_png, img)
                 saved_count += 1
 
     rel_p = rel_to_root(target_dir)
@@ -474,7 +485,7 @@ def delete_asset_files(rel_path: str):
     """Safely delete asset directory if it resides inside STORAGE_ROOT/users."""
     abs_p = os.path.abspath(abs_from_root(rel_path))
     users_abs = os.path.abspath(USERS_STORAGE)
-    if abs_p.startswith(users_abs + os.sep) and os.path.exists(abs_p):
+    if os.path.normcase(abs_p).startswith(os.path.normcase(users_abs + os.sep)) and os.path.exists(abs_p):
         shutil.rmtree(abs_p, ignore_errors=True)
 
 
@@ -484,7 +495,7 @@ def delete_task_files(run_dir_rel: str, config_path_rel: str):
         abs_run = os.path.abspath(abs_from_root(run_dir_rel))
         run_root_abs = os.path.abspath(RUN_ROOT)
         if (
-            abs_run.startswith(run_root_abs + os.sep)
+            os.path.normcase(abs_run).startswith(os.path.normcase(run_root_abs + os.sep))
             and os.path.basename(abs_run) != "verification_report"
             and os.path.exists(abs_run)
         ):
@@ -493,7 +504,7 @@ def delete_task_files(run_dir_rel: str, config_path_rel: str):
         abs_cfg = os.path.abspath(abs_from_root(config_path_rel))
         cfg_root_abs = os.path.abspath(CONFIG_ROOT)
         if (
-            abs_cfg.startswith(cfg_root_abs + os.sep)
+            os.path.normcase(abs_cfg).startswith(os.path.normcase(cfg_root_abs + os.sep))
             and os.path.basename(abs_cfg) != "default.json"
             and os.path.isfile(abs_cfg)
         ):

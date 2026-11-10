@@ -2,8 +2,11 @@
 run/
 storage/
 backups/
+update/applied/
+update/*.tar.gz
 wildcat.pid
 wildcat.log
+wildcat.log.old
 *.tar.gz
 
 # 数据与预置权重:体积大,单独分发

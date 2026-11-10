@@ -17,6 +17,7 @@ createApp({
 
     // ───────── Machine Identity & Admin Auth State ─────────
     const user = ref(null);
+    const buildLabel = ref('v2.2.0');
     const savedMachine = (localStorage.getItem('wc_machine_name') || '')
       .replace(/[^A-Za-z0-9._-]/g, '_')
       .replace(/^[._]+|[._]+$/g, '');
@@ -115,7 +116,7 @@ createApp({
       targetThumb: null,
     });
 
-    // ───────── Monitor & Sequence Viewer State ─────────
+    // ───────── Monitor, 3x3 Contact Sheet & Model Versions State ─────────
     const telemetry = reactive({
       steps: [],
       vals: [],
@@ -124,7 +125,6 @@ createApp({
     });
     const viewerModes = [
       { id: 'preview', label: '训练预览' },
-      { id: 'infer', label: '推理结果' },
       { id: 'source', label: 'Source' },
       { id: 'target', label: 'Target' },
     ];
@@ -143,9 +143,32 @@ createApp({
       dragStartX: 0,
       dragStartY: 0,
     });
+    const contactViewer = reactive({
+      frames: [],
+      index: 0,
+      playing: false,
+      fps: 8,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      dragging: false,
+      dragStartX: 0,
+      dragStartY: 0,
+      showOverlay: true,
+      pixelated: true,
+      cropSize: 256,
+      nukePrefix: '',
+    });
+    const taskModels = reactive({
+      nuke_prefix: '',
+      zip_filename: '',
+      count: 0,
+      items: [],
+    });
     const chartCfg = reactive({ logScale: true, smooth: 0.6 });
     const lossCanvas = ref(null);
-    const inferSeqPath = ref('dataset/eval');
+    const logPreRef = ref(null);
+    const logAutoScroll = ref(true);
 
     // ───────── Paired Dataset Upload Modal State ─────────
     const uploadModal = reactive({
@@ -209,6 +232,12 @@ createApp({
       if (!viewer.frames.length) return null;
       const idx = Math.min(Math.max(0, viewer.index), viewer.frames.length - 1);
       return viewer.frames[idx];
+    });
+
+    const currentContactFrame = computed(() => {
+      if (!contactViewer.frames.length) return null;
+      const idx = Math.min(Math.max(0, contactViewer.index), contactViewer.frames.length - 1);
+      return contactViewer.frames[idx];
     });
 
     const latestValMse = computed(() => {
@@ -276,6 +305,9 @@ createApp({
       try {
         const d = await apiFetch('/api/v1/auth/me');
         user.value = d.user;
+        if (d.version && d.version.build_label) {
+          buildLabel.value = d.version.build_label;
+        }
         machineName.value = d.user.username;
         machineNameInput.value = d.user.username;
         apiKey.value = d.user.api_key || '';
@@ -484,6 +516,10 @@ createApp({
       topNav.value = 'studio';
       studioMode.value = 'monitor';
       viewer.selectedPair = null;
+      viewer.playing = false;
+      contactViewer.playing = false;
+      resetViewerZoom();
+      resetContactZoom();
       fetchTelemetry(true);
     }
 
@@ -512,10 +548,12 @@ createApp({
     function applyCkptPaths() {
       const meta = selectedCkptMeta.value;
       if (!meta) return;
+      const norm = (s) => String(s || '').replace(/\\/g, '/');
+      const mSrc = norm(meta.source);
       const match = assets.value.find(
         (a) =>
-          meta.source &&
-          (meta.source.startsWith(a.source_path) || a.source_path.startsWith(meta.source.replace('/source.####.png', '')))
+          mSrc &&
+          (mSrc.startsWith(norm(a.source_path)) || norm(a.source_path).startsWith(mSrc.replace('/source.####.png', '')))
       );
       if (match) {
         selectedDatasetId.value = match.id;
@@ -802,8 +840,10 @@ createApp({
       form.run_name = t.node_name || form.run_name;
       if (paths.source) form.source = paths.source;
       if (paths.target) form.target = paths.target;
+      const norm = (s) => String(s || '').replace(/\\/g, '/');
+      const fSrc = norm(form.source);
       const match = assets.value.find(
-        (a) => a.source_path === form.source || a.rel_path === form.source
+        (a) => norm(a.source_path) === fSrc || norm(a.rel_path) === fSrc
       );
       if (match) {
         selectedDatasetId.value = match.id;
@@ -834,10 +874,14 @@ createApp({
       try {
         const pairParam = viewer.selectedPair ? `&pair=${encodeURIComponent(viewer.selectedPair)}` : '';
         const d = await apiFetch(`/api/v1/tasks/${selectedTaskId.value}/telemetry?mode=${viewer.mode}${pairParam}`);
+        const prevTailLen = telemetry.tail.length;
+        const prevLastLine = prevTailLen ? telemetry.tail[prevTailLen - 1] : '';
         telemetry.steps = d.steps || [];
         telemetry.vals = d.vals || [];
         telemetry.tail = d.tail || [];
         telemetry.latest = d.latest || {};
+        const newLastLine = telemetry.tail.length ? telemetry.tail[telemetry.tail.length - 1] : '';
+        const tailChanged = telemetry.tail.length !== prevTailLen || newLastLine !== prevLastLine;
 
         const idx = tasks.value.findIndex((x) => x.id === d.task.id);
         if (idx >= 0) {
@@ -853,18 +897,44 @@ createApp({
           }
         }
 
+        // 1. Full-Frame Sequence Viewer
         const vw = d.viewer || {};
         viewer.pairs = vw.pairs || [];
         viewer.selectedPair = vw.selected_pair || null;
         const prevLen = viewer.frames.length;
+        const wasAtViewerEnd = prevLen === 0 || viewer.index >= prevLen - 1;
         viewer.frames = vw.frames || [];
-        if (resetToLatest || (viewer.mode === 'preview' && viewer.frames.length > prevLen && !viewer.playing)) {
+        if (resetToLatest || (viewer.mode === 'preview' && viewer.frames.length > prevLen && !viewer.playing && wasAtViewerEnd)) {
           viewer.index = Math.max(0, viewer.frames.length - 1);
         } else if (viewer.index >= viewer.frames.length) {
           viewer.index = Math.max(0, viewer.frames.length - 1);
         }
+
+        // 2. Nuke 3x3 Contact Sheet Viewer
+        const cs = d.contact_sheet || {};
+        const prevCsLen = contactViewer.frames.length;
+        const wasAtCsEnd = prevCsLen === 0 || contactViewer.index >= prevCsLen - 1;
+        contactViewer.cropSize = Number(cs.crop_size || 256);
+        contactViewer.nukePrefix = cs.nuke_prefix || '';
+        contactViewer.frames = cs.frames || [];
+        if (resetToLatest || (contactViewer.frames.length > prevCsLen && !contactViewer.playing && wasAtCsEnd)) {
+          contactViewer.index = Math.max(0, contactViewer.frames.length - 1);
+        } else if (contactViewer.index >= contactViewer.frames.length) {
+          contactViewer.index = Math.max(0, contactViewer.frames.length - 1);
+        }
+
+        // 3. Task Model Versions Inventory (Nuke Naming)
+        const md = d.models || {};
+        taskModels.nuke_prefix = md.nuke_prefix || '';
+        taskModels.zip_filename = md.zip_filename || (md.nuke_prefix ? `${md.nuke_prefix}.zip` : '');
+        taskModels.count = Number(md.count || 0);
+        taskModels.items = md.items || [];
+
         await nextTick();
         drawLossChart();
+        if (logAutoScroll.value && logPreRef.value && (resetToLatest || tailChanged)) {
+          logPreRef.value.scrollTop = logPreRef.value.scrollHeight;
+        }
       } catch (_) {}
     }
 
@@ -874,12 +944,12 @@ createApp({
       const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.max(300, rect.width) * dpr;
-      canvas.height = Math.max(160, rect.height) * dpr;
+      canvas.height = Math.max(200, rect.height) * dpr;
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
 
       const W = Math.max(300, rect.width);
-      const H = Math.max(160, rect.height);
+      const H = Math.max(200, rect.height);
       ctx.clearRect(0, 0, W, H);
 
       const pts = (telemetry.steps || []).filter((s) => s.total != null && s.total > 0);
@@ -891,7 +961,7 @@ createApp({
         return;
       }
 
-      const padL = 52, padR = 16, padT = 16, padB = 26;
+      const padL = 62, padR = 24, padT = 18, padB = 30;
       const plotW = W - padL - padR;
       const plotH = H - padT - padB;
 
@@ -920,27 +990,65 @@ createApp({
       const toX = (x) => padL + ((x - minX) / (maxX - minX)) * plotW;
       const toY = (y) => padT + (1 - (y - minY) / (maxY - minY)) * plotH;
 
-      // Grid lines
+      // Horizontal Y Grid lines (5 intervals)
       ctx.strokeStyle = '#1e293b';
       ctx.lineWidth = 1;
       ctx.fillStyle = '#64748b';
-      ctx.font = '10px monospace';
+      ctx.font = '11px monospace';
       ctx.textAlign = 'right';
-      for (let i = 0; i <= 4; i++) {
-        const gy = padT + (i / 4) * plotH;
-        const val = maxY - (i / 4) * (maxY - minY);
-        const disp = chartCfg.logScale ? Math.pow(10, val).toExponential(1) : val.toFixed(4);
+      for (let i = 0; i <= 5; i++) {
+        const gy = padT + (i / 5) * plotH;
+        const val = maxY - (i / 5) * (maxY - minY);
+        const disp = chartCfg.logScale ? Math.pow(10, val).toExponential(1) : val.toFixed(5);
         ctx.beginPath();
         ctx.moveTo(padL, gy);
         ctx.lineTo(W - padR, gy);
         ctx.stroke();
-        ctx.fillText(disp, padL - 6, gy + 3);
+        ctx.fillText(disp, padL - 8, gy + 4);
       }
 
-      // X-axis labels
+      // Vertical X Grid lines & Step Ticks
       ctx.textAlign = 'center';
-      ctx.fillText(`Step ${minX}`, padL + 20, H - 6);
-      ctx.fillText(`Step ${maxX}`, W - padR - 25, H - 6);
+      const xTicks = 5;
+      for (let i = 0; i <= xTicks; i++) {
+        const stVal = Math.round(minX + (i / xTicks) * (maxX - minX));
+        const gx = padL + (i / xTicks) * plotW;
+        ctx.strokeStyle = 'rgba(30, 41, 59, 0.55)';
+        ctx.beginPath();
+        ctx.moveTo(gx, padT);
+        ctx.lineTo(gx, padT + plotH);
+        ctx.stroke();
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(`Step ${stVal}`, gx, H - 8);
+      }
+
+      // Multi-Resolution Stage Boundary Markers (1/4 -> 1/2 -> 1/1)
+      const tCfg = (activeTask.value && activeTask.value.config && activeTask.value.config.train) || {};
+      const totSt = Number((activeTask.value && activeTask.value.total_steps) || tCfg.total_steps || 0);
+      if (tCfg.multi_resolution !== false && totSt >= 9) {
+        const s1 = Math.floor((totSt + 2) / 3);
+        const s2 = s1 * 2;
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
+        ctx.fillStyle = 'rgba(251, 191, 36, 0.85)';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        [
+          { step: s1, label: '1/4 → 1/2' },
+          { step: s2, label: '1/2 → 1/1' },
+        ].forEach((b) => {
+          if (b.step > minX && b.step < maxX) {
+            const bx = toX(b.step);
+            ctx.beginPath();
+            ctx.moveTo(bx, padT);
+            ctx.lineTo(bx, padT + plotH);
+            ctx.stroke();
+            ctx.fillText(b.label, bx + 4, padT + 12);
+          }
+        });
+        ctx.restore();
+      }
 
       // Raw Loss Line (faint)
       ctx.strokeStyle = 'rgba(99, 102, 241, 0.28)';
@@ -985,7 +1093,7 @@ createApp({
       }
     }
 
-    // ───────── Viewer Controls ─────────
+    // ───────── Full-Frame Viewer Controls ─────────
     function stepFrame(delta) {
       if (!viewer.frames.length) return;
       viewer.index = (viewer.index + delta + viewer.frames.length) % viewer.frames.length;
@@ -1002,8 +1110,8 @@ createApp({
     }
 
     function onViewerWheel(e) {
-      const factor = e.deltaY < 0 ? 1.12 : 0.89;
-      viewer.zoom = Math.min(8, Math.max(0.25, viewer.zoom * factor));
+      const factor = e.deltaY < 0 ? 1.14 : 0.88;
+      viewer.zoom = Math.min(12, Math.max(0.25, viewer.zoom * factor));
     }
 
     function onViewerMouseDown(e) {
@@ -1022,7 +1130,44 @@ createApp({
       viewer.dragging = false;
     }
 
-    // ───────── Task & Asset Operations ─────────
+    // ───────── Nuke 3x3 Contact Sheet Viewer Controls ─────────
+    function stepContactFrame(delta) {
+      if (!contactViewer.frames.length) return;
+      contactViewer.index = (contactViewer.index + delta + contactViewer.frames.length) % contactViewer.frames.length;
+    }
+
+    function toggleContactPlay() {
+      contactViewer.playing = !contactViewer.playing;
+    }
+
+    function resetContactZoom() {
+      contactViewer.zoom = 1;
+      contactViewer.panX = 0;
+      contactViewer.panY = 0;
+    }
+
+    function onContactWheel(e) {
+      const factor = e.deltaY < 0 ? 1.14 : 0.88;
+      contactViewer.zoom = Math.min(16, Math.max(0.4, contactViewer.zoom * factor));
+    }
+
+    function onContactMouseDown(e) {
+      contactViewer.dragging = true;
+      contactViewer.dragStartX = e.clientX - contactViewer.panX;
+      contactViewer.dragStartY = e.clientY - contactViewer.panY;
+    }
+
+    function onContactMouseMove(e) {
+      if (!contactViewer.dragging) return;
+      contactViewer.panX = e.clientX - contactViewer.dragStartX;
+      contactViewer.panY = e.clientY - contactViewer.dragStartY;
+    }
+
+    function onContactMouseUp() {
+      contactViewer.dragging = false;
+    }
+
+    // ───────── Task, Model Downloads & Log Operations ─────────
     async function stopTask(taskId) {
       try {
         await apiFetch(`/api/v1/tasks/${taskId}/stop`, { method: 'POST' });
@@ -1052,41 +1197,85 @@ createApp({
       }
     }
 
-    async function exportAndDownloadCat(taskId, ext = 'cat') {
+    function triggerBrowserDownload(url, filename = '') {
+      const a = document.createElement('a');
+      a.href = url;
+      if (filename) a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        if (a.parentNode) a.parentNode.removeChild(a);
+      }, 1500);
+    }
+
+    async function downloadModel(taskId, ext = 'pt', step = null) {
       try {
-        notify(`正在导出 .${ext} 模型文件...`, 'info');
-        await apiFetch(`/api/v1/tasks/${taskId}/export-cat`, { method: 'POST' });
-        const url = `/api/v1/tasks/${taskId}/download/${ext}?api_key=${encodeURIComponent(apiKey.value)}`;
-        window.open(url, '_blank');
-        notify(`已开始下载 .${ext} 模型文件`, 'success');
+        const item = step != null
+          ? taskModels.items.find((x) => x.step === step)
+          : (taskModels.items[0] || null);
+        let alreadyReady = false;
+        let dlFilename = '';
+        if (item) {
+          {
+            alreadyReady = !!item.has_pt;
+            dlFilename = item.pt_filename || '';
+          }
+        }
+        if (!alreadyReady) {
+          const stLabel = step != null ? `Step ${step}` : '最新';
+          notify(`正在准备 Nuke 标准命名模型 (${stLabel})...`, 'info');
+          const q = step != null ? `?step=${encodeURIComponent(step)}` : '';
+          const expRes = await apiFetch(`/api/v1/tasks/${taskId}/export-cat${q}`, { method: 'POST' });
+          if (ext === 'pt' && expRes.pt_filename) dlFilename = expRes.pt_filename;
+          await fetchTelemetry(false);
+        }
+        const stepParam = step != null ? `&step=${encodeURIComponent(step)}` : '';
+        const url = `/api/v1/tasks/${taskId}/download/${encodeURIComponent(ext)}?api_key=${encodeURIComponent(apiKey.value)}${stepParam}`;
+        triggerBrowserDownload(url, dlFilename);
+        notify(`开始下载模型: ${dlFilename || ('.' + ext)}`, 'success');
       } catch (e) {
         notify(e.message, 'error');
       }
     }
 
-    async function runInferenceOnActiveTask() {
-      if (!activeTask.value) return;
+    async function downloadAllModels(taskId, ext = 'pt') {
+      if (!taskModels.count && !(activeTask.value && activeTask.value.has_ckpt)) {
+        notify('当前任务尚未保存任何模型版本', 'warning');
+        return;
+      }
       try {
-        const seq = (inferSeqPath.value || '').trim();
-        if (!seq) {
-          notify('请输入或选择待推理的序列路径', 'error');
-          return;
-        }
-        const res = await apiFetch('/api/v1/tasks', {
-          method: 'POST',
-          body: JSON.stringify({
-            node_name: activeTask.value.node_name,
-            job_type: 'infer',
-            preferred_gpu: form.preferred_gpu || 'auto',
-            infer_seq: seq,
-            config: activeTask.value.config || buildConfigPayload(false),
-          }),
-        });
-        viewer.mode = 'infer';
-        notify(`推理任务已提交 (${res.task.status === 'running' ? '正在执行' : '排队中'})`, 'success');
-        await fetchQueueAndTasks();
+        const zipName = taskModels.zip_filename || `${taskModels.nuke_prefix || 'Training'}.zip`;
+        notify(`正在打包本任务全部模型 (${zipName})，即将开始下载...`, 'info');
+        const url = `/api/v1/tasks/${taskId}/download-all/${encodeURIComponent(ext)}?api_key=${encodeURIComponent(apiKey.value)}`;
+        triggerBrowserDownload(url, zipName);
       } catch (e) {
         notify(e.message, 'error');
+      }
+    }
+
+    async function copyTrainLog() {
+      const errBlock = activeTask.value && activeTask.value.error_msg ? activeTask.value.error_msg + '\n\n' : '';
+      const logBlock = (telemetry.tail && telemetry.tail.length) ? telemetry.tail.join('\n') : '';
+      const text = (errBlock + logBlock).trim();
+      if (!text) {
+        notify('当前暂无日志内容可复制', 'warning');
+        return;
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        notify('已复制完整日志与报错堆栈到剪贴板', 'success');
+      } catch (_) {
+        notify('浏览器剪贴板受限，请直接在日志框中选中文字复制', 'warning');
       }
     }
 
@@ -1343,12 +1532,27 @@ createApp({
         }
       }, 1800);
 
-      // Sequence player loop
+      // Sequence & 3x3 Contact Sheet player loop (honoring individual FPS controls)
+      let lastViewerTick = 0;
+      let lastContactTick = 0;
       setInterval(() => {
-        if (viewer.playing && topNav.value === 'studio' && studioMode.value === 'monitor' && viewer.frames.length > 1) {
-          viewer.index = (viewer.index + 1) % viewer.frames.length;
+        if (topNav.value !== 'studio' || studioMode.value !== 'monitor') return;
+        const now = performance.now();
+        if (viewer.playing && viewer.frames.length > 1) {
+          const intervalMs = 1000 / Math.min(60, Math.max(1, Number(viewer.fps) || 12));
+          if (now - lastViewerTick >= intervalMs) {
+            viewer.index = (viewer.index + 1) % viewer.frames.length;
+            lastViewerTick = now;
+          }
         }
-      }, 85);
+        if (contactViewer.playing && contactViewer.frames.length > 1) {
+          const intervalMs = 1000 / Math.min(60, Math.max(1, Number(contactViewer.fps) || 8));
+          if (now - lastContactTick >= intervalMs) {
+            contactViewer.index = (contactViewer.index + 1) % contactViewer.frames.length;
+            lastContactTick = now;
+          }
+        }
+      }, 30);
 
       window.addEventListener('resize', () => {
         if (topNav.value === 'studio' && studioMode.value === 'monitor') drawLossChart();
@@ -1358,6 +1562,7 @@ createApp({
     return {
       toasts,
       user,
+      buildLabel,
       machineName,
       machineNameInput,
       applyMachineName,
@@ -1403,10 +1608,14 @@ createApp({
       viewerModes,
       viewer,
       currentFrame,
+      contactViewer,
+      currentContactFrame,
+      taskModels,
       latestValMse,
       chartCfg,
       lossCanvas,
-      inferSeqPath,
+      logPreRef,
+      logAutoScroll,
       uploadModal,
       adminSettings,
       adminUsers,
@@ -1437,10 +1646,19 @@ createApp({
       onViewerMouseDown,
       onViewerMouseMove,
       onViewerMouseUp,
+      stepContactFrame,
+      toggleContactPlay,
+      resetContactZoom,
+      onContactWheel,
+      onContactMouseDown,
+      onContactMouseMove,
+      onContactMouseUp,
       stopTask,
       deleteTask,
-      exportAndDownloadCat,
-      runInferenceOnActiveTask,
+      downloadModel,
+      downloadAllModels,
+      exportAndDownloadCat: downloadModel,
+      copyTrainLog,
       openDatasetModal,
       onUploadStrategyChange,
       onPairFilesSelected,

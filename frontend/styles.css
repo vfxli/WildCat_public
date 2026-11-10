@@ -245,3 +245,78 @@ input[type="range"] {
 .wc-switch:focus-visible {
   box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
 }
+
+/* ───────── Nuke CopyCat 3x3 Local Crop Contact Sheet Viewer ───────── */
+.wc-cs-box {
+  position: relative;
+  width: min(644px, calc(100% - 24px));
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
+  transition: transform 75ms ease-out;
+  pointer-events: none;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
+}
+
+.wc-cs-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.wc-pixelated {
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+.wc-cs-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  pointer-events: none;
+}
+
+.wc-cs-cell {
+  position: relative;
+  border-right: 1px solid rgba(255, 255, 255, 0.68);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.68);
+  overflow: hidden;
+}
+
+.wc-cs-cell:nth-child(3n) {
+  border-right: none;
+}
+
+.wc-cs-cell:nth-child(n + 7) {
+  border-bottom: none;
+}
+
+.wc-cs-tag-top,
+.wc-cs-tag-bot {
+  position: absolute;
+  left: 7px;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, Monaco, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.96);
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.92),
+     1px -1px 0 rgba(0, 0, 0, 0.92),
+    -1px  1px 0 rgba(0, 0, 0, 0.92),
+     1px  1px 0 rgba(0, 0, 0, 0.92),
+     0    2px 4px rgba(0, 0, 0, 0.85);
+  letter-spacing: 0.01em;
+}
+
+.wc-cs-tag-top {
+  top: 6px;
+}
+
+.wc-cs-tag-bot {
+  bottom: 6px;
+}

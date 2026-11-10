@@ -1,17 +1,30 @@
 # -*- coding: utf-8 -*-
 """Decoupled REST API v1 for WildCat Core Service, Multi-User Queue, and Future Plugin Integration."""
-import json
 import os
 import subprocess
+import sys
+import traceback
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from wildcat.version import BUILD_DATE, BUILD_ID, BUILD_LABEL, BUILD_VERSION
+
 from . import db, scheduler, service, storage, telemetry
 
 router = APIRouter(prefix="/api/v1", tags=["WildCat API v1"])
+
+
+def _log_api_exc(where: str, exc: Exception) -> str:
+    """Always write full Python traceback to wildcat.log (stderr) and format detail message."""
+    tb = traceback.format_exc()
+    sys.stderr.write(f"[WildCat API ERROR] {where}: {type(exc).__name__}: {exc}\n{tb}\n")
+    sys.stderr.flush()
+    if isinstance(exc, (ValueError, PermissionError)):
+        return str(exc) or f"{type(exc).__name__}"
+    return f"{type(exc).__name__}: {exc}\n\n{tb}"
 
 
 # ─────────────────────── Machine Identity & Admin Dependencies ───────────────────────
@@ -87,10 +100,9 @@ class AdminSettingsRequest(BaseModel):
 
 class TaskSubmitRequest(BaseModel):
     node_name: str = "WildCat1"
-    job_type: str = "train"  # train | infer
+    job_type: str = "train"
     preferred_gpu: str = "auto"  # auto | 0 | 1
     priority: int = 0
-    infer_seq: Optional[str] = None
     config: dict
 
 
@@ -110,6 +122,10 @@ def api_health():
     return {
         "status": "ok",
         "service": "WildCat",
+        "version": BUILD_VERSION,
+        "build_date": BUILD_DATE,
+        "build_id": BUILD_ID,
+        "build_label": BUILD_LABEL,
         "queue": {
             "running_count": q["running_count"],
             "queued_count": q["queued_count"],
@@ -119,7 +135,16 @@ def api_health():
 
 @router.get("/auth/me")
 def api_me(user: dict = Depends(get_current_user)):
-    return {"status": "ok", "user": user}
+    return {
+        "status": "ok",
+        "user": user,
+        "version": {
+            "version": BUILD_VERSION,
+            "build_date": BUILD_DATE,
+            "build_id": BUILD_ID,
+            "build_label": BUILD_LABEL,
+        },
+    }
 
 
 @router.post("/auth/regenerate-key")
@@ -157,8 +182,8 @@ def api_inspect_asset_path(path: str = "", user: dict = Depends(get_current_user
             im = color.read_image_float(files[0], input_colorspace="auto", working_colorspace="ACEScg")
             height, width = int(im.shape[0]), int(im.shape[1])
             channels = 1 if im.ndim == 2 else int(im.shape[2])
-        except Exception:
-            pass
+        except Exception as e:
+            _log_api_exc("assets/inspect", e)
     return {
         "status": "ok",
         "path": path.strip(),
@@ -204,7 +229,7 @@ async def api_upload_paired_dataset(
         )
         return {"status": "ok", "asset": asset}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_log_api_exc("assets/upload-pair", e))
 
 
 @router.post("/assets/import-demos")
@@ -264,25 +289,29 @@ def api_save_draft_task(req: TaskDraftRequest, user: dict = Depends(get_current_
         )
         return {"status": "ok", "task": t}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_log_api_exc("tasks/draft", e))
 
 
 @router.post("/tasks")
 def api_submit_task(req: TaskSubmitRequest, user: dict = Depends(get_current_user)):
+    if req.job_type != "train":
+        raise HTTPException(
+            status_code=400,
+            detail="网页端序列推理功能已移除；请下载 Nuke 标准命名模型在 Nuke Inference 节点中使用。",
+        )
     try:
         t = scheduler.SCHEDULER.submit_task(
             user_id=user["id"],
             username=user["username"],
             node_name=req.node_name,
-            job_type=req.job_type,
+            job_type="train",
             cfg=req.config,
             preferred_gpu=req.preferred_gpu,
-            infer_seq=req.infer_seq,
             priority=req.priority,
         )
         return {"status": "ok", "task": t}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_log_api_exc("tasks/submit", e))
 
 
 @router.get("/tasks/{task_id}")
@@ -309,15 +338,21 @@ def api_get_task_telemetry(
     if not parsed["tail"]:
         parsed["tail"] = scheduler.SCHEDULER.get_live_tail(task_id)
     err_msg = (t.get("error_msg") or "").strip()
-    if err_msg and not parsed["tail"]:
-        parsed["tail"] = err_msg.splitlines()
+    if err_msg:
+        tail_joined = "\n".join(parsed["tail"][-40:]) if parsed["tail"] else ""
+        err_last = err_msg.splitlines()[-1] if err_msg.splitlines() else err_msg
+        if err_last not in tail_joined:
+            parsed["tail"] = (parsed["tail"] or []) + err_msg.splitlines()
 
-    viewer = telemetry.get_viewer_frames(t["run_dir"], t.get("config") or {}, mode=mode, pair=pair)
+    cfg = t.get("config") or {}
+    viewer = telemetry.get_viewer_frames(t["run_dir"], cfg, mode=mode, pair=pair)
+    contact_sheet = telemetry.get_contact_sheet_frames(t["run_dir"], cfg)
+    models_inv = telemetry.list_task_models(t["run_dir"], cfg, parsed_log=parsed)
+
     qstat = scheduler.SCHEDULER.queue_status()
     qpos = next((q["queue_position"] for q in qstat["queued"] if q["id"] == task_id), None)
     t["queue_position"] = qpos
-    t["has_ckpt"] = os.path.isfile(os.path.join(rdir_abs, "ckpt", "latest.pt"))
-    t["has_cat"] = os.path.isfile(os.path.join(rdir_abs, f"{t['node_name']}.cat"))
+    t["has_ckpt"] = os.path.isfile(os.path.join(rdir_abs, "ckpt", "latest.pt")) or (models_inv["count"] > 0)
 
     return {
         "status": "ok",
@@ -327,6 +362,21 @@ def api_get_task_telemetry(
         "tail": parsed["tail"],
         "latest": parsed["latest"],
         "viewer": viewer,
+        "contact_sheet": contact_sheet,
+        "models": models_inv,
+    }
+
+
+@router.get("/tasks/{task_id}/models")
+def api_list_task_models(task_id: int, user: dict = Depends(get_current_user)):
+    t = service.get_task_for_user(user["id"], bool(user.get("is_admin")), task_id=task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    rdir_abs = storage.abs_from_root(t["run_dir"])
+    parsed = telemetry.parse_train_log(os.path.join(rdir_abs, "train.log"), max_bytes=400_000)
+    return {
+        "status": "ok",
+        "models": telemetry.list_task_models(t["run_dir"], t.get("config") or {}, parsed_log=parsed),
     }
 
 
@@ -353,28 +403,55 @@ def api_delete_task(task_id: int, user: dict = Depends(get_current_user)):
 
 
 @router.post("/tasks/{task_id}/export-cat")
-def api_export_task_cat(task_id: int, user: dict = Depends(get_current_user)):
+def api_export_task_cat(
+    task_id: int,
+    step: Optional[int] = Query(default=None),
+    user: dict = Depends(get_current_user),
+):
     try:
-        res = service.export_task_cat(user["id"], bool(user.get("is_admin")), task_id)
+        res = service.export_task_cat(user["id"], bool(user.get("is_admin")), task_id, step=step)
         return {"status": "ok", **res}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_log_api_exc("tasks/export-cat", e))
 
 
 @router.get("/tasks/{task_id}/download/{ext}")
-def api_download_model(task_id: int, ext: str, user: dict = Depends(get_current_user)):
+def api_download_model(
+    task_id: int,
+    ext: str,
+    step: Optional[int] = Query(default=None),
+    user: dict = Depends(get_current_user),
+):
     if ext != "pt":
         raise HTTPException(status_code=400, detail="ext must be 'pt' (convert to .cat with Nuke's CatFileCreator)")
-    t = service.get_task_for_user(user["id"], bool(user.get("is_admin")), task_id=task_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Task not found.")
-    nname = t["node_name"]
-    fpath = storage.abs_from_root(f"run/{nname}/{nname}.{ext}")
-    if not os.path.isfile(fpath):
-        service.export_task_cat(user["id"], bool(user.get("is_admin")), task_id)
-    if not os.path.isfile(fpath):
-        raise HTTPException(status_code=404, detail=f"{nname}.{ext} not found.")
-    return FileResponse(fpath, filename=f"{nname}.{ext}", media_type="application/octet-stream")
+    try:
+        fpath, dl_name = service.ensure_nuke_model_file(
+            user["id"], bool(user.get("is_admin")), task_id, ext, step=step
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=_log_api_exc("tasks/download", e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("tasks/download", e))
+    return FileResponse(fpath, filename=dl_name, media_type="application/octet-stream")
+
+
+@router.get("/tasks/{task_id}/download-all/{ext}")
+def api_download_all_models(
+    task_id: int,
+    ext: str,
+    user: dict = Depends(get_current_user),
+):
+    if ext != "pt":
+        raise HTTPException(status_code=400, detail="ext must be 'pt' (convert to .cat with Nuke's CatFileCreator)")
+    try:
+        zip_abs, dl_name = service.build_all_models_zip(
+            user["id"], bool(user.get("is_admin")), task_id, ext
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=_log_api_exc("tasks/download-all", e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("tasks/download-all", e))
+    return FileResponse(zip_abs, filename=dl_name, media_type="application/zip")
 
 
 
@@ -391,25 +468,35 @@ def api_admin_login(req: AdminLoginRequest):
 
 @router.put("/admin/password")
 def api_admin_change_password(req: AdminPasswordChangeRequest, admin: dict = Depends(require_admin)):
-    if req.old_password and not db.verify_admin_password(req.old_password):
-        raise HTTPException(status_code=400, detail="原管理员密码不正确")
-    try:
-        db.update_admin_password(req.new_password)
-        return {"status": "ok", "admin_token": db.issue_admin_token()}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if not db.verify_admin_password(req.old_password):
+        raise HTTPException(status_code=401, detail="原管理员密码验证失败")
+    if len(req.new_password) < 4:
+        raise HTTPException(status_code=400, detail="新密码长度不能少于 4 位")
+    db.set_admin_password(req.new_password)
+    return {
+        "status": "ok",
+        "message": "管理员密码已加密更新",
+        "admin_token": db.issue_admin_token(),
+    }
 
 
 @router.get("/admin/settings")
 def api_admin_get_settings(admin: dict = Depends(require_admin)):
-    return {"status": "ok", "settings": db.get_all_settings()}
+    return {
+        "status": "ok",
+        "settings": {
+            "allow_self_registration": db.get_setting("allow_self_registration", "false"),
+            "max_jobs_per_gpu": int(db.get_setting("max_jobs_per_gpu", "1") or 1),
+        },
+    }
 
 
 @router.put("/admin/settings")
-def api_admin_update_settings(req: AdminSettingsRequest, admin: dict = Depends(require_admin)):
+def api_admin_put_settings(req: AdminSettingsRequest, admin: dict = Depends(require_admin)):
     if req.max_jobs_per_gpu is not None:
-        db.set_setting("max_jobs_per_gpu", str(max(1, int(req.max_jobs_per_gpu))))
-    return {"status": "ok", "settings": db.get_all_settings()}
+        db.set_setting("max_jobs_per_gpu", str(max(1, min(4, req.max_jobs_per_gpu))))
+    scheduler.SCHEDULER.tick()
+    return api_admin_get_settings(admin)
 
 
 @router.get("/admin/users")
@@ -420,27 +507,31 @@ def api_admin_list_users(admin: dict = Depends(require_admin)):
 @router.post("/admin/users")
 def api_admin_create_user(req: AdminCreateMachineRequest, admin: dict = Depends(require_admin)):
     try:
-        u = service.create_user_account(req.username, note=req.note)
+        u = service.create_user_account(req.username, role="user", note=req.note)
         return {"status": "ok", "user": u}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("admin/users/create", e))
 
 
-@router.put("/admin/users/{user_id}")
-def api_admin_update_user(user_id: int, req: AdminUpdateUserRequest, admin: dict = Depends(require_admin)):
+@router.put("/admin/users/{target_uid}")
+def api_admin_update_user(
+    target_uid: int, req: AdminUpdateUserRequest, admin: dict = Depends(require_admin)
+):
     try:
         u = service.admin_update_user(
-            user_id, is_active=req.is_active, note=req.note
+            target_uid,
+            is_active=req.is_active,
+            note=req.note,
         )
         return {"status": "ok", "user": u}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("admin/users/update", e))
 
 
-@router.delete("/admin/users/{user_id}")
-def api_admin_delete_user(user_id: int, admin: dict = Depends(require_admin)):
+@router.delete("/admin/users/{target_uid}")
+def api_admin_delete_user(target_uid: int, admin: dict = Depends(require_admin)):
     try:
-        service.admin_delete_user(user_id)
-        return {"status": "ok", "deleted_user_id": user_id}
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        service.admin_delete_user(target_uid)
+        return {"status": "ok", "deleted_user_id": target_uid}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("admin/users/delete", e))

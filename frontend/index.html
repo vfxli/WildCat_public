@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WildCat</title>
   <script src="/static/vendor/tailwind.min.js"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=20261110_p9" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261111_p11" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -40,6 +40,9 @@
               W
             </div>
             <span class="font-bold text-sm text-white tracking-tight">WildCat</span>
+            <span v-if="buildLabel" class="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-[10px] font-semibold text-indigo-300 wc-mono" title="当前服务端运行版本">
+              {{ buildLabel }}
+            </span>
           </div>
 
           <!-- Clear Top Bar -->
@@ -591,14 +594,14 @@
             </section>
           </div>
 
-          <!-- ══════════ STAGE B: SELECTED TASK LIVE MONITOR & CONTROLS ══════════ -->
-          <div v-else-if="activeTask" class="max-w-7xl mx-auto space-y-5">
+          <!-- ══════════ STAGE B: SELECTED TASK LIVE MONITOR & CONTROLS (FULL RIGHT-SIDE WIDTH) ══════════ -->
+          <div v-else-if="activeTask" class="w-full space-y-6">
 
-            <!-- Contextual Task Status & Action Header (Buttons strictly match current task state!) -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+            <!-- Contextual Task Status & Action Header (100% Width) -->
+            <div class="w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
               <div class="flex flex-wrap items-center justify-between gap-4">
                 <div class="space-y-1">
-                  <div class="flex items-center gap-3">
+                  <div class="flex flex-wrap items-center gap-3">
                     <h2 class="text-lg font-bold text-white wc-mono">{{ activeTask.node_name }}</h2>
                     <span class="px-3 py-1 rounded-full text-xs font-bold wc-mono"
                           :class="{
@@ -609,6 +612,10 @@
                             'bg-slate-800 text-slate-300 border border-slate-700': !['running','queued','completed','failed'].includes(activeTask.status)
                           }">
                       {{ statusLabel(activeTask) }}
+                    </span>
+                    <span v-if="taskModels.nuke_prefix"
+                          class="px-2.5 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-indigo-300 wc-mono">
+                      Nuke 命名: {{ taskModels.nuke_prefix }}
                     </span>
                   </div>
                   <div class="text-xs text-slate-400 wc-mono">
@@ -659,12 +666,17 @@
                     </div>
                   </template>
 
-                  <!-- Export & Download Model Buttons (whenever task has trained weights) -->
-                  <template v-if="activeTask.has_ckpt">
-                    <button @click="exportAndDownloadCat(activeTask.id, 'pt')"
-                            title="TorchScript 模型。在 Nuke 中用 CatFileCreator 节点转换为 .cat 后，即可在 Inference 节点使用。"
+                  <!-- Quick Download Latest & One-Click Download All Models (Nuke Naming) -->
+                  <template v-if="activeTask.has_ckpt || taskModels.count > 0">
+                    <button @click="downloadModel(activeTask.id, 'pt', null)"
+                            :title="taskModels.items.length ? ('下载最新: ' + taskModels.items[0].pt_filename) : 'TorchScript 模型，在 Nuke 中经 CatFileCreator 转换为 .cat 使用'"
                             class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">
-                      下载模型 (.pt)
+                      下载最新模型 (.pt)
+                    </button>
+                    <button @click="downloadAllModels(activeTask.id, 'pt')"
+                            :title="'打包下载本任务全部模型 (' + (taskModels.zip_filename || 'Training.zip') + ')'"
+                            class="px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white text-xs font-bold border border-emerald-500/40 transition-all">
+                      一键下载全部模型 ({{ taskModels.count || 1 }})
                     </button>
                   </template>
 
@@ -703,147 +715,316 @@
                 </div>
               </div>
 
-              <!-- Error Details Banner when task failed -->
+              <!-- Error Details Banner when task failed (Full Python Traceback) -->
               <div v-if="activeTask.status === 'failed'"
-                   class="mt-2 p-3.5 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 space-y-2">
+                   class="mt-2 p-4 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 space-y-2">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="font-bold text-rose-300">✕ 任务运行失败原因：</div>
-                  <button @click="retryFailedTask(activeTask)"
-                          class="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-all">
-                    重新配置并重跑
-                  </button>
-                </div>
-                <pre class="wc-mono text-[11px] text-rose-200 whitespace-pre-wrap break-all bg-slate-950/80 p-2.5 rounded-lg border border-rose-500/30 max-h-44 overflow-y-auto">{{ activeTask.error_msg || (telemetry.tail && telemetry.tail.length ? telemetry.tail.join('\n') : '训练子进程异常退出，请查看下方 train.log 终端输出。') }}</pre>
-              </div>
-            </div>
-
-            <!-- Viewer + Loss Curve Split -->
-            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
-
-              <!-- Left: Sequence Viewer (7 cols) -->
-              <div class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-3">
-                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="font-bold text-rose-300">✕ 任务运行失败原因与异常堆栈 (Python Traceback)：</div>
                   <div class="flex items-center gap-2">
-                    <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                      <button v-for="m in viewerModes" :key="m.id"
-                              @click="switchViewerMode(m.id)"
-                              class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all"
-                              :class="viewer.mode === m.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
-                        {{ m.label }}
-                      </button>
-                    </div>
-                    <span class="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-[10px] font-semibold text-indigo-300 wc-mono">
-                      数据: ACEScg (EXR) · 预览: sRGB (OCIO)
-                    </span>
-                  </div>
-
-                  <div class="flex items-center gap-2">
-                    <select v-if="viewer.mode === 'preview' && viewer.pairs.length"
-                            v-model="viewer.selectedPair"
-                            @change="fetchTelemetry(true)"
-                            class="wc-select !w-36 text-xs">
-                      <option v-for="p in viewer.pairs" :key="p" :value="p">{{ p }}</option>
-                    </select>
-                    <button @click="resetViewerZoom" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300">
-                      重置缩放
+                    <button @click="copyTrainLog"
+                            class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-all">
+                      复制报错堆栈
+                    </button>
+                    <button @click="retryFailedTask(activeTask)"
+                            class="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-all">
+                      重新配置并重跑
                     </button>
                   </div>
                 </div>
+                <pre class="wc-mono text-[11px] text-rose-200 whitespace-pre-wrap break-all bg-slate-950/85 p-3 rounded-lg border border-rose-500/30 max-h-64 overflow-y-auto select-text">{{ activeTask.error_msg || (telemetry.tail && telemetry.tail.length ? telemetry.tail.join('\n') : '训练子进程异常退出，请查看下方 train.log 终端输出。') }}</pre>
+              </div>
+            </div>
 
-                <!-- Image Stage -->
-                <div class="relative h-[420px] bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center select-none"
-                     @wheel.prevent="onViewerWheel"
-                     @mousedown="onViewerMouseDown"
-                     @mousemove="onViewerMouseMove"
-                     @mouseup="onViewerMouseUp"
-                     @mouseleave="onViewerMouseUp">
-                  <template v-if="currentFrame">
-                    <img :src="currentFrame.url"
-                         class="max-h-full max-w-full object-contain transition-transform duration-75 pointer-events-none"
-                         :style="{ transform: `translate(${viewer.panX}px, ${viewer.panY}px) scale(${viewer.zoom})` }" />
-                    <div class="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-xs wc-mono text-slate-200">
-                      {{ currentFrame.label }} ({{ viewer.index + 1 }} / {{ viewer.frames.length }})
-                    </div>
-                    <div v-if="viewer.mode === 'preview'" class="absolute bottom-3 inset-x-10 flex justify-between text-[11px] font-bold text-slate-300/90 pointer-events-none">
-                      <span class="bg-slate-900/85 px-2.5 py-0.5 rounded border border-slate-700">Input</span>
-                      <span class="bg-slate-900/85 px-2.5 py-0.5 rounded border border-indigo-500/40 text-indigo-300">Output</span>
-                      <span class="bg-slate-900/85 px-2.5 py-0.5 rounded border border-emerald-500/40 text-emerald-300">Target</span>
-                    </div>
-                  </template>
-                  <div v-else class="text-center text-slate-500 text-xs space-y-1">
-                    <div>暂无预览图</div>
+            <!-- ─────────────── 1. FULL-FRAME SEQUENCE PREVIEW (100% WIDTH) ─────────────── -->
+            <section class="w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3.5">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-2.5">
+                  <h3 class="text-sm font-bold text-white">整帧序列预览</h3>
+                  <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button v-for="m in viewerModes" :key="m.id"
+                            @click="switchViewerMode(m.id)"
+                            class="px-3 py-1 rounded-lg text-xs font-medium transition-all"
+                            :class="viewer.mode === m.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
+                      {{ m.label }}
+                    </button>
                   </div>
+                  <span class="px-2.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-[11px] font-semibold text-indigo-300 wc-mono">
+                    数据: ACEScg (EXR) · 预览: sRGB (OCIO)
+                  </span>
                 </div>
 
-                <!-- Playback Scrubber -->
-                <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
-                  <button @click="stepFrame(-1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏮</button>
-                  <button @click="togglePlay" class="px-3.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold">
-                    {{ viewer.playing ? '⏸ 暂停' : '▶ 播放' }}
+                <div class="flex items-center gap-2.5">
+                  <select v-if="viewer.mode === 'preview' && viewer.pairs.length"
+                          v-model="viewer.selectedPair"
+                          @change="fetchTelemetry(true)"
+                          class="wc-select !w-40 text-xs">
+                    <option v-for="p in viewer.pairs" :key="p" :value="p">{{ p }}</option>
+                  </select>
+                  <span class="text-xs text-slate-400 wc-mono">{{ Math.round(viewer.zoom * 100) }}%</span>
+                  <button @click="resetViewerZoom" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">
+                    重置缩放
                   </button>
-                  <button @click="stepFrame(1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏭</button>
-
-                  <input type="range"
-                         :min="0"
-                         :max="Math.max(0, viewer.frames.length - 1)"
-                         v-model.number="viewer.index"
-                         class="flex-1 accent-indigo-500 cursor-pointer" />
-
-                  <div class="flex items-center gap-1.5 text-xs text-slate-400">
-                    <span>FPS:</span>
-                    <input v-model.number="viewer.fps" type="number" min="1" max="60" class="wc-input !w-14 !py-1 text-xs wc-mono text-center" />
-                  </div>
                 </div>
               </div>
 
-              <!-- Right: Loss Curve + Sequence Inference + Log (5 cols) -->
-              <div class="lg:col-span-5 flex flex-col gap-5">
-                <!-- Loss Chart -->
-                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                  <div class="flex items-center justify-between">
-                    <h4 class="text-xs font-bold text-white">Loss 曲线</h4>
-                    <div class="flex items-center gap-3 text-xs">
-                      <label class="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                        <input v-model="chartCfg.logScale" @change="drawLossChart" type="checkbox" class="wc-check" />
-                        <span>对数坐标</span>
-                      </label>
-                      <div class="flex items-center gap-1.5 text-slate-400">
-                        <span>平滑:</span>
-                        <input v-model.number="chartCfg.smooth" @input="drawLossChart" type="range" min="0" max="0.95" step="0.05" class="w-16 accent-indigo-500" />
+              <!-- Large Full-Width Image Stage -->
+              <div class="relative h-[560px] w-full bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center select-none cursor-grab active:cursor-grabbing"
+                   @wheel.prevent="onViewerWheel"
+                   @mousedown="onViewerMouseDown"
+                   @mousemove="onViewerMouseMove"
+                   @mouseup="onViewerMouseUp"
+                   @mouseleave="onViewerMouseUp">
+                <template v-if="currentFrame">
+                  <img :src="currentFrame.url"
+                       class="max-h-full max-w-full object-contain transition-transform duration-75 pointer-events-none"
+                       :style="{ transform: `translate(${viewer.panX}px, ${viewer.panY}px) scale(${viewer.zoom})` }" />
+                  <div class="absolute top-3 left-3 px-3 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-xs wc-mono text-slate-200 pointer-events-none">
+                    {{ currentFrame.label }} ({{ viewer.index + 1 }} / {{ viewer.frames.length }})
+                  </div>
+                  <div v-if="viewer.mode === 'preview'" class="absolute bottom-3 inset-x-12 flex justify-between text-xs font-bold text-slate-300/95 pointer-events-none">
+                    <span class="bg-slate-900/85 px-3 py-0.5 rounded border border-slate-700">Input</span>
+                    <span class="bg-slate-900/85 px-3 py-0.5 rounded border border-indigo-500/40 text-indigo-300">Output</span>
+                    <span class="bg-slate-900/85 px-3 py-0.5 rounded border border-emerald-500/40 text-emerald-300">Target</span>
+                  </div>
+                </template>
+                <div v-else class="text-center text-slate-500 text-xs space-y-1">
+                  <div>暂无整帧预览图（等待到达 Contact Sheet Interval 生成）</div>
+                </div>
+              </div>
+
+              <!-- Playback Scrubber -->
+              <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
+                <button @click="stepFrame(-1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏮</button>
+                <button @click="togglePlay" class="px-3.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold">
+                  {{ viewer.playing ? '⏸ 暂停' : '▶ 播放' }}
+                </button>
+                <button @click="stepFrame(1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏭</button>
+
+                <input type="range"
+                       :min="0"
+                       :max="Math.max(0, viewer.frames.length - 1)"
+                       v-model.number="viewer.index"
+                       class="flex-1 accent-indigo-500 cursor-pointer" />
+
+                <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                  <span>FPS:</span>
+                  <input v-model.number="viewer.fps" type="number" min="1" max="60" class="wc-input !w-14 !py-1 text-xs wc-mono text-center" />
+                </div>
+              </div>
+            </section>
+
+            <!-- ─────────────── 2. NUKE COPYCAT 3x3 LOCAL CROP LIVE PREVIEW (100% WIDTH) ─────────────── -->
+            <section class="w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3.5">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-2.5">
+                  <h3 class="text-sm font-bold text-white">3×3 局部块实时预览 · Nuke Contact Sheet</h3>
+                  <span class="px-2.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[11px] font-semibold text-emerald-300 wc-mono">
+                    3行 (crop 1~3) × 3列 (input | groundtruth | output)
+                  </span>
+                  <span v-if="currentContactFrame"
+                        class="px-2.5 py-0.5 rounded bg-slate-950 border border-slate-700 text-[11px] font-semibold text-amber-300 wc-mono">
+                    阶段 1/{{ currentContactFrame.scale }} · Crop {{ contactViewer.cropSize }}×{{ contactViewer.cropSize }}
+                  </span>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 text-xs">
+                  <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 select-none">
+                    <input v-model="contactViewer.showOverlay" type="checkbox" class="wc-check" />
+                    <span>显示 Nuke 格线与标签</span>
+                  </label>
+                  <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 select-none">
+                    <input v-model="contactViewer.pixelated" type="checkbox" class="wc-check" />
+                    <span>像素锐化</span>
+                  </label>
+                  <span class="text-slate-400 wc-mono">{{ Math.round(contactViewer.zoom * 100) }}%</span>
+                  <button @click="resetContactZoom" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">
+                    重置缩放
+                  </button>
+                </div>
+              </div>
+
+              <!-- Large 3x3 Square Contact Sheet Stage -->
+              <div class="relative h-[680px] w-full bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center select-none cursor-grab active:cursor-grabbing"
+                   @wheel.prevent="onContactWheel"
+                   @mousedown="onContactMouseDown"
+                   @mousemove="onContactMouseMove"
+                   @mouseup="onContactMouseUp"
+                   @mouseleave="onContactMouseUp">
+                <template v-if="currentContactFrame">
+                  <div class="wc-cs-box"
+                       :style="{ transform: `translate(${contactViewer.panX}px, ${contactViewer.panY}px) scale(${contactViewer.zoom})` }">
+                    <img :src="currentContactFrame.url"
+                         class="wc-cs-img"
+                         :class="{ 'wc-pixelated': contactViewer.pixelated }" />
+                    <!-- Exact Nuke 17 CopyCat Viewer 3x3 Gridlines & Crop Labels -->
+                    <div v-if="contactViewer.showOverlay" class="wc-cs-overlay">
+                      <div v-for="idx in 9" :key="'cs-' + idx" class="wc-cs-cell">
+                        <span v-if="((idx - 1) % 3) === 0" class="wc-cs-tag-top">
+                          crop {{ Math.ceil(idx / 3) }}
+                        </span>
+                        <span v-if="idx >= 7" class="wc-cs-tag-bot">
+                          {{ idx === 7 ? 'input' : (idx === 8 ? 'groundtruth' : 'output') }}
+                        </span>
                       </div>
                     </div>
                   </div>
-                  <div class="relative h-48 bg-slate-950 rounded-xl border border-slate-800 p-2">
-                    <canvas ref="lossCanvas" class="w-full h-full"></canvas>
-                  </div>
-                </div>
 
-                <!-- Run Sequence Inference with this trained model -->
-                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                  <h4 class="text-xs font-bold text-white">序列推理</h4>
-                  <div class="flex gap-2">
-                    <select @change="inferSeqPath = $event.target.value" class="wc-select !w-44 text-xs">
-                      <option value="">-- 选择数据集 --</option>
-                      <option v-for="a in assets" :key="a.id" :value="a.source_path">{{ a.name }} ({{ a.frame_count }}帧)</option>
-                    </select>
-                    <input v-model="inferSeqPath" type="text" class="wc-input wc-mono text-xs flex-1" placeholder="例如 dataset/eval" />
-                    <button @click="runInferenceOnActiveTask"
-                            class="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shrink-0">
-                      开始推理
-                    </button>
+                  <div class="absolute top-3 left-3 px-3 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-xs wc-mono text-slate-200 pointer-events-none">
+                    {{ currentContactFrame.label }} ({{ contactViewer.index + 1 }} / {{ contactViewer.frames.length }})
                   </div>
-                </div>
-
-                <!-- Live Log -->
-                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex-1 flex flex-col space-y-2">
-                  <div class="flex items-center justify-between">
-                    <h4 class="text-xs font-bold text-slate-300">日志 (train.log)</h4>
-                    <button @click="fetchTelemetry(true)" class="text-[11px] text-indigo-400 hover:underline">刷新</button>
+                  <div class="absolute top-3 right-3 px-3 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-[11px] wc-mono text-indigo-300 pointer-events-none">
+                    {{ currentContactFrame.nuke_file }}
                   </div>
-                  <pre class="h-36 overflow-y-auto bg-slate-950 border border-slate-800 rounded-xl p-3 text-[11px] leading-relaxed text-slate-300 wc-mono whitespace-pre-wrap">{{ (telemetry.tail && telemetry.tail.length) ? telemetry.tail.join('\n') : '暂无日志输出。' }}</pre>
+                </template>
+                <div v-else class="text-center text-slate-500 text-xs space-y-1.5">
+                  <div>暂无 3×3 局部块实时预览图</div>
+                  <div class="text-[11px] text-slate-600">训练到达 Contact Sheet Interval 后自动实时更新（滚轮可放大对比局部细节与边缘锐度）</div>
                 </div>
               </div>
-            </div>
+
+              <!-- 3x3 Contact Sheet Step Scrubber -->
+              <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
+                <button @click="stepContactFrame(-1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏮</button>
+                <button @click="toggleContactPlay" class="px-3.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold">
+                  {{ contactViewer.playing ? '⏸ 暂停' : '▶ 播放' }}
+                </button>
+                <button @click="stepContactFrame(1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏭</button>
+
+                <input type="range"
+                       :min="0"
+                       :max="Math.max(0, contactViewer.frames.length - 1)"
+                       v-model.number="contactViewer.index"
+                       class="flex-1 accent-indigo-500 cursor-pointer" />
+
+                <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                  <span>FPS:</span>
+                  <input v-model.number="contactViewer.fps" type="number" min="1" max="60" class="wc-input !w-14 !py-1 text-xs wc-mono text-center" />
+                </div>
+              </div>
+            </section>
+
+            <!-- ─────────────── 3. FULL-WIDTH LOSS CURVE (100% WIDTH) ─────────────── -->
+            <section class="w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3.5">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-3">
+                  <h3 class="text-sm font-bold text-white">Loss 损失曲线</h3>
+                  <div class="flex items-center gap-3 text-[11px] text-slate-400 wc-mono">
+                    <span class="flex items-center gap-1.5">
+                      <span class="inline-block w-3 h-0.5 bg-indigo-400"></span>平滑 Loss
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                      <span class="inline-block w-3 h-0.5 bg-indigo-500/40"></span>原始步 Loss
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                      <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>验证 Val MSE
+                    </span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-4 text-xs">
+                  <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 select-none">
+                    <input v-model="chartCfg.logScale" @change="drawLossChart" type="checkbox" class="wc-check" />
+                    <span>对数坐标 (Log10)</span>
+                  </label>
+                  <div class="flex items-center gap-2 text-slate-400">
+                    <span>平滑系数:</span>
+                    <input v-model.number="chartCfg.smooth" @input="drawLossChart" type="range" min="0" max="0.95" step="0.05" class="w-24 accent-indigo-500" />
+                    <span class="wc-mono text-slate-300 w-8">{{ chartCfg.smooth.toFixed(2) }}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="relative h-[320px] w-full bg-slate-950 rounded-xl border border-slate-800 p-3">
+                <canvas ref="lossCanvas" class="w-full h-full"></canvas>
+              </div>
+            </section>
+
+            <!-- ─────────────── 4. TASK MODEL VERSIONS & NUKE-ALIGNED DOWNLOADS (100% WIDTH) ─────────────── -->
+            <section class="w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+              <div class="px-5 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-2.5">
+                  <h3 class="text-sm font-bold text-white">本任务所有模型版本 ({{ taskModels.count }})</h3>
+                  <span class="px-2.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-[11px] font-semibold text-indigo-300 wc-mono">
+                    严格对齐 Nuke 命名: {{ taskModels.nuke_prefix || 'Training_YYMMDD_HHMMSS' }}.&lt;step&gt;.pt
+                  </span>
+                </div>
+
+                <div v-if="taskModels.count > 0" class="flex flex-wrap items-center gap-2">
+                  <button @click="downloadAllModels(activeTask.id, 'pt')"
+                          class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
+                    📦 一键下载所有模型 .pt ({{ taskModels.zip_filename }})
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="!taskModels.items.length" class="p-8 text-center text-xs text-slate-500 space-y-1">
+                <div>当前任务尚未保存模型检查点</div>
+                <div class="text-[11px] text-slate-600">训练每到达 Checkpoint Interval 步数（或暂停 / 完成时）将自动按 Nuke 标准命名归档模型版本</div>
+              </div>
+
+              <div v-else class="max-h-[380px] overflow-y-auto">
+                <table class="w-full text-left border-collapse text-xs">
+                  <thead class="sticky top-0 bg-slate-950 text-slate-400 border-b border-slate-800 z-10">
+                    <tr>
+                      <th class="py-3 px-5">版本步数 (Step / Epoch)</th>
+                      <th class="py-3 px-4">Nuke 标准文件名</th>
+                      <th class="py-3 px-4">训练 Loss</th>
+                      <th class="py-3 px-4">验证误差 (Val MSE)</th>
+                      <th class="py-3 px-4">大小 / 保存时间</th>
+                      <th class="py-3 px-5 text-right">下载指定版本</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/70">
+                    <tr v-for="m in taskModels.items" :key="m.step" class="hover:bg-slate-800/40 transition-colors">
+                      <td class="py-2.5 px-5 wc-mono">
+                        <div class="flex items-center gap-2">
+                          <span class="font-bold text-white">Step {{ m.step }}</span>
+                          <span v-if="m.epoch" class="text-slate-400 text-[11px]">(Epoch {{ m.epoch }})</span>
+                          <span v-if="m.is_latest" class="px-1.5 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-[10px] font-bold text-indigo-300">最新</span>
+                          <span v-if="m.is_best" class="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-bold text-emerald-300">最低误差</span>
+                        </div>
+                      </td>
+                      <td class="py-2.5 px-4 wc-mono text-indigo-200 select-text">{{ m.filename }}</td>
+                      <td class="py-2.5 px-4 wc-mono text-amber-300">{{ m.loss != null ? m.loss.toFixed(6) : '—' }}</td>
+                      <td class="py-2.5 px-4 wc-mono text-sky-400">{{ m.val_mse != null ? m.val_mse.toFixed(6) : '—' }}</td>
+                      <td class="py-2.5 px-4 wc-mono text-slate-400">
+                        {{ m.size_mb > 0 ? (m.size_mb.toFixed(2) + ' MB') : '按需导出' }}
+                        <span v-if="m.created_time"> · {{ m.created_time }}</span>
+                      </td>
+                      <td class="py-2.5 px-5 text-right space-x-2">
+                        <button @click="downloadModel(activeTask.id, 'pt', m.step)"
+                                :title="'下载 ' + m.pt_filename"
+                                class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all">
+                          下载模型 (.pt)
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <!-- ─────────────── 5. FULL-WIDTH LIVE LOG & TRACEBACKS (100% WIDTH) ─────────────── -->
+            <section class="w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5">
+                  <h3 class="text-sm font-bold text-white">训练实时日志与异常堆栈 (train.log)</h3>
+                  <span class="text-[11px] text-slate-400 wc-mono">异常报错时自动追加完整 Python Traceback</span>
+                </div>
+                <div class="flex items-center gap-3 text-xs">
+                  <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 select-none">
+                    <input v-model="logAutoScroll" type="checkbox" class="wc-check" />
+                    <span>自动滚到底部</span>
+                  </label>
+                  <button @click="copyTrainLog" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700">
+                    复制日志
+                  </button>
+                  <button @click="fetchTelemetry(false)" class="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30">
+                    刷新
+                  </button>
+                </div>
+              </div>
+              <pre ref="logPreRef" class="h-[360px] w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs leading-relaxed text-slate-200 wc-mono whitespace-pre-wrap select-text">{{ (telemetry.tail && telemetry.tail.length) ? telemetry.tail.join('\n') : '暂无日志输出。' }}</pre>
+            </section>
+
           </div>
 
         </main>
@@ -919,7 +1100,7 @@
         </div>
       </main>
 
-      <!-- ═════════════════════ MODULE 3: API KEY & .CAT <-> .PT CONVERTER ═════════════════════ -->
+      <!-- ═════════════════════ MODULE 3: API KEY & TOOLS ═════════════════════ -->
       <main v-else-if="topNav === 'api'" class="flex-1 overflow-y-auto p-6">
         <div class="max-w-5xl mx-auto space-y-6">
           <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
@@ -1294,6 +1475,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261110_p9"></script>
+  <script type="module" src="/static/app.js?v=20261111_p11"></script>
 </body>
 </html>
