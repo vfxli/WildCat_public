@@ -194,13 +194,19 @@ def inspect_ckpt_cached(abs_path: str) -> dict:
     return _CKPT_META_CACHE[key]
 
 
-def list_all_checkpoints() -> list:
-    """Return list of checkpoints across all runs with their locked architecture metadata."""
+def list_all_checkpoints(user_id: int = None, all_users: bool = True) -> list:
+    """Return list of checkpoints across runs with their locked architecture metadata."""
     out = []
     if not os.path.isdir(storage.RUN_ROOT):
         return out
+    allowed_nodes = None
+    if user_id is not None and not all_users:
+        rows = db.query_all("SELECT node_name FROM tasks WHERE user_id = ?", (user_id,))
+        allowed_nodes = {r["node_name"] for r in rows}
     for d in sorted(os.listdir(storage.RUN_ROOT)):
         if d.startswith(".") or d == "verification_report":
+            continue
+        if allowed_nodes is not None and d not in allowed_nodes:
             continue
         rdir = os.path.join(storage.RUN_ROOT, d)
         if not os.path.isdir(rdir):

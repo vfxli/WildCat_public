@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WildCat</title>
   <script src="/static/vendor/tailwind.min.js"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1d6842a2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261110" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -227,6 +227,9 @@
                     <span class="wc-tip" data-tip="选择一对已配对的输入原片序列 (Source) 与目标效果图序列 (Target)。">?</span>
                   </label>
                   <select v-model="selectedDatasetId" @change="onSelectDataset" class="wc-select">
+                    <option v-if="!assets.length" :value="null" disabled>
+                      -- 暂无数据集，请点击右上角「+ 新建数据集」或到数据集页恢复示例 --
+                    </option>
                     <option v-for="a in assets" :key="a.id" :value="a.id">
                       {{ a.name }} ({{ a.frame_count }} 帧 · {{ a.width }}×{{ a.height }})
                     </option>
@@ -1278,6 +1281,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=1d6842a2"></script>
+  <script type="module" src="/static/app.js?v=20261110"></script>
 </body>
 </html>

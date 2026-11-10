@@ -28,19 +28,23 @@ def get_user_by_api_key(api_key: str) -> dict | None:
     return None
 
 
-def resolve_machine_name(raw_machine: str = "", client_ip: str = "") -> str:
-    cand = (raw_machine or "").strip()
-    if not cand:
-        ip = (client_ip or "").strip()
-        if ip in ("", "127.0.0.1", "::1", "localhost", "testclient"):
-            cand = socket.gethostname() or "local_host"
-        else:
-            try:
-                cand = socket.gethostbyaddr(ip)[0].split(".")[0]
-            except Exception:
-                cand = f"host_{ip.replace('.', '_').replace(':', '_')}"
+def _ip_machine_name(client_ip: str = "") -> str:
+    ip = (client_ip or "").strip()
+    if ip in ("", "127.0.0.1", "::1", "localhost", "testclient"):
+        cand = socket.gethostname() or "local_host"
+    else:
+        cand = f"host_{ip.replace('.', '_').replace(':', '_')}"
     mname = storage.sanitize_name(cand, "")
     return mname if len(mname) >= 2 else "workstation"
+
+
+def resolve_machine_name(raw_machine: str = "", client_ip: str = "") -> str:
+    cand = (raw_machine or "").strip()
+    if cand:
+        mname = storage.sanitize_name(cand, "")
+        if len(mname) >= 2:
+            return mname
+    return _ip_machine_name(client_ip)
 
 
 def get_or_create_machine_user(raw_machine: str = "", client_ip: str = "") -> dict:
@@ -49,25 +53,29 @@ def get_or_create_machine_user(raw_machine: str = "", client_ip: str = "") -> di
     if row:
         if not row["is_active"]:
             raise PermissionError(f"机器 [{mname}] 已被管理员禁用")
-        seed_demo_assets_for_user(row["id"])
         return get_user_by_id(row["id"])
 
-    uid = db.execute(
+    db.execute(
         """
-        INSERT INTO users (username, password_hash, role, api_key, is_active, note, created_at)
+        INSERT OR IGNORE INTO users (username, password_hash, role, api_key, is_active, note, created_at)
         VALUES (?, 'machine_identity', 'user', ?, 1, ?, ?)
         """,
         (mname, db.generate_api_key(), f"IP: {client_ip}" if client_ip else "", time.time()),
     )
+    row = db.query_one("SELECT * FROM users WHERE username = ?", (mname,))
+    if not row:
+        raise RuntimeError(f"无法创建或读取机器账户: {mname}")
+    if not row["is_active"]:
+        raise PermissionError(f"机器 [{mname}] 已被管理员禁用")
     storage.user_root(mname)
-    seed_demo_assets_for_user(uid)
-    return get_user_by_id(uid)
+    seed_demo_assets_for_user(row["id"])
+    return get_user_by_id(row["id"])
 
 
-def seed_demo_assets_for_user(user_id: int):
+def seed_demo_assets_for_user(user_id: int, force: bool = False):
     """Register the bundled demo datasets for a user. Off by default (clean production install);
-    set WILDCAT_SEED_DEMO=1 to enable."""
-    if os.environ.get("WILDCAT_SEED_DEMO", "0") != "1":
+    set WILDCAT_SEED_DEMO=1 to enable, or pass force=True when triggered explicitly by user."""
+    if not force and os.environ.get("WILDCAT_SEED_DEMO", "0") != "1":
         return
     paired_demos = [
     ]

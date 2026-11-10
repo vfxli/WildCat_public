@@ -347,11 +347,15 @@ class TaskQueueScheduler:
         """Create or update a task node and place it into the Multi-User Task Queue."""
         with self._lock:
             clean_node = storage.sanitize_name(node_name, "WildCat1")
-            # Ensure non-admin node names are isolated if another user owns the same node_name
-            existing = db.query_one("SELECT * FROM tasks WHERE node_name = ?", (clean_node,))
-            if existing and existing["user_id"] != user_id:
-                clean_node = f"{storage.sanitize_name(username)}_{clean_node}"
-                existing = db.query_one("SELECT * FROM tasks WHERE node_name = ?", (clean_node,))
+            # Ensure node names are isolated per user if another user or untracked run directory owns clean_node
+            own = db.query_one("SELECT * FROM tasks WHERE user_id = ? AND node_name = ?", (user_id, clean_node))
+            if own:
+                existing = own
+            else:
+                other = db.query_one("SELECT * FROM tasks WHERE node_name = ? AND user_id != ?", (clean_node, user_id))
+                if other or os.path.exists(storage.abs_from_root(f"run/{clean_node}")):
+                    clean_node = f"{storage.sanitize_name(username)}_{clean_node}"
+                existing = db.query_one("SELECT * FROM tasks WHERE user_id = ? AND node_name = ?", (user_id, clean_node))
 
             if existing and existing["status"] in ("running", "queued"):
                 raise RuntimeError(f"任务 '{clean_node}' 当前已在运行或排队中。")
@@ -461,10 +465,14 @@ class TaskQueueScheduler:
         """Save or update a node configuration without queuing execution."""
         with self._lock:
             clean_node = storage.sanitize_name(node_name, "WildCat1")
-            existing = db.query_one("SELECT * FROM tasks WHERE node_name = ?", (clean_node,))
-            if existing and existing["user_id"] != user_id:
-                clean_node = f"{storage.sanitize_name(username)}_{clean_node}"
-                existing = db.query_one("SELECT * FROM tasks WHERE node_name = ?", (clean_node,))
+            own = db.query_one("SELECT * FROM tasks WHERE user_id = ? AND node_name = ?", (user_id, clean_node))
+            if own:
+                existing = own
+            else:
+                other = db.query_one("SELECT * FROM tasks WHERE node_name = ? AND user_id != ?", (clean_node, user_id))
+                if other or os.path.exists(storage.abs_from_root(f"run/{clean_node}")):
+                    clean_node = f"{storage.sanitize_name(username)}_{clean_node}"
+                existing = db.query_one("SELECT * FROM tasks WHERE user_id = ? AND node_name = ?", (user_id, clean_node))
 
             cfg = dict(cfg)
             cfg["run_name"] = clean_node

@@ -209,7 +209,7 @@ async def api_upload_paired_dataset(
 
 @router.post("/assets/import-demos")
 def api_import_demos(user: dict = Depends(get_current_user)):
-    service.seed_demo_assets_for_user(user["id"])
+    service.seed_demo_assets_for_user(user["id"], force=True)
     return {"status": "ok", "assets": service.list_assets(user["id"])}
 
 
@@ -234,7 +234,10 @@ def api_queue_status(user: dict = Depends(get_current_user)):
 
 @router.get("/checkpoints")
 def api_checkpoints(user: dict = Depends(get_current_user)):
-    return {"status": "ok", "checkpoints": telemetry.list_all_checkpoints()}
+    return {
+        "status": "ok",
+        "checkpoints": telemetry.list_all_checkpoints(user_id=user["id"], all_users=bool(user.get("is_admin"))),
+    }
 
 
 @router.get("/checkpoints/inspect")

@@ -17,8 +17,12 @@ createApp({
 
     // ───────── Machine Identity & Admin Auth State ─────────
     const user = ref(null);
-    const machineName = ref(localStorage.getItem('wc_machine_name') || '');
-    const machineNameInput = ref(localStorage.getItem('wc_machine_name') || '');
+    const savedMachine = (localStorage.getItem('wc_machine_name') || '')
+      .replace(/[^A-Za-z0-9._-]/g, '_')
+      .replace(/^[._]+|[._]+$/g, '');
+    const initMachine = /[A-Za-z0-9]{2,}/.test(savedMachine) ? savedMachine : '';
+    const machineName = ref(initMachine);
+    const machineNameInput = ref(initMachine);
     const apiKey = ref('');
     const adminToken = ref(sessionStorage.getItem('wc_admin_token') || '');
     const adminPwdInput = ref('');
@@ -237,8 +241,9 @@ createApp({
     // ───────── HTTP Helper ─────────
     async function apiFetch(url, options = {}) {
       const headers = Object.assign({}, options.headers || {});
-      if (machineName.value) {
-        headers['X-Machine-Name'] = machineName.value;
+      const safeMachine = (machineName.value || '').replace(/[^\x20-\x7E]/g, '').trim();
+      if (safeMachine) {
+        headers['X-Machine-Name'] = safeMachine;
       }
       if (adminToken.value) {
         headers['X-Admin-Token'] = adminToken.value;
@@ -256,7 +261,12 @@ createApp({
           adminToken.value = '';
           sessionStorage.removeItem('wc_admin_token');
         }
-        throw new Error(data.detail || `请求失败 (${res.status})`);
+        const errMsg = Array.isArray(data.detail)
+          ? data.detail.map((x) => x.msg || JSON.stringify(x)).join('; ')
+          : typeof data.detail === 'object' && data.detail !== null
+          ? JSON.stringify(data.detail)
+          : data.detail;
+        throw new Error(errMsg || `请求失败 (${res.status})`);
       }
       return data;
     }
@@ -277,7 +287,12 @@ createApp({
     }
 
     async function applyMachineName() {
-      const clean = (machineNameInput.value || '').trim().replace(/[^A-Za-z0-9._-]/g, '_');
+      const raw = (machineNameInput.value || '').trim();
+      const clean = raw.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[._]+|[._]+$/g, '');
+      if (raw && !/[A-Za-z0-9]{2,}/.test(clean)) {
+        notify('机器名请使用至少 2 位英文字母或数字（可含下划线/连字符）', 'error');
+        return;
+      }
       machineName.value = clean;
       if (clean) {
         localStorage.setItem('wc_machine_name', clean);
@@ -395,7 +410,19 @@ createApp({
 
     function syncFormWithSelectedDataset() {
       const ds = selectedDataset.value;
-      if (!ds) return;
+      if (!ds) {
+        form.source = '';
+        form.target = '';
+        pathStats.sourceCount = 0;
+        pathStats.targetCount = 0;
+        pathStats.sourceW = 0;
+        pathStats.sourceH = 0;
+        pathStats.targetW = 0;
+        pathStats.targetH = 0;
+        pathStats.sourceThumb = null;
+        pathStats.targetThumb = null;
+        return;
+      }
       form.source = ds.source_path || ds.rel_path || '';
       form.target = ds.target_path || ds.rel_path || '';
       pathStats.sourceCount = ds.frame_count || 0;
@@ -511,6 +538,17 @@ createApp({
     // ───────── Form & Hyperparameter Logic ─────────
     async function inspectFormPaths() {
       if (!user.value) return;
+      if (!form.source || !form.target) {
+        pathStats.sourceCount = 0;
+        pathStats.targetCount = 0;
+        pathStats.sourceW = 0;
+        pathStats.sourceH = 0;
+        pathStats.targetW = 0;
+        pathStats.targetH = 0;
+        pathStats.sourceThumb = null;
+        pathStats.targetThumb = null;
+        return;
+      }
       try {
         const [sRes, tRes] = await Promise.all([
           apiFetch(`/api/v1/assets/inspect?path=${encodeURIComponent(form.source || '')}`),
