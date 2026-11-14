@@ -1,4 +1,8 @@
 /* WildCat Modern Cloud AI Studio Styles */
+[v-cloak] {
+  display: none !important;
+}
+
 :root {
   color-scheme: dark;
 }
@@ -83,6 +87,14 @@ body {
   visibility: visible;
   transform: translateX(-50%) translateY(0);
 }
+.wc-tip-down::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-4px);
+}
+.wc-tip-down:hover::after {
+  transform: translateX(-50%) translateY(0);
+}
 
 /* Form Controls */
 .wc-input,
@@ -96,7 +108,8 @@ body {
   padding: 0 0.75rem;
   color: #f8fafc;
   font-size: 0.8125rem;
-  line-height: 36px;
+  line-height: 1.25;
+  vertical-align: middle;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -135,6 +148,80 @@ body {
 .wc-select option {
   background-color: #0f172a;
   color: #f8fafc;
+}
+
+/* Compact Form Control Size Modifiers (keeps CJK & Latin glyphs vertically dead-centred) */
+.wc-input-sm,
+.wc-select-sm {
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.wc-select-sm {
+  padding-left: 0.625rem;
+  padding-right: 1.85rem;
+  background-position: right 0.55rem center;
+  background-size: 14px 14px;
+}
+
+.wc-input-xs,
+.wc-select-xs {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.wc-select-xs {
+  padding-left: 0.6rem;
+  padding-right: 1.7rem;
+  background-position: right 0.45rem center;
+  background-size: 13px 13px;
+}
+
+/* Dataset & Timeline Frame Scrubber Slider */
+.wc-scrubber-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 9999px;
+  background: #1e293b;
+  outline: none;
+  cursor: pointer;
+}
+.wc-scrubber-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #818cf8;
+  border: 2px solid #eef2ff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+  transition: transform 0.1s ease, background-color 0.1s ease;
+}
+.wc-scrubber-range::-webkit-slider-thumb:hover {
+  background: #6366f1;
+  transform: scale(1.12);
+}
+.wc-scrubber-range::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.18);
+}
+.wc-scrubber-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #818cf8;
+  border: 2px solid #eef2ff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+}
+.wc-select option:disabled {
+  color: #64748b;
 }
 .wc-select-sm {
   width: 9.5rem;
@@ -245,6 +332,11 @@ input[type="range"] {
 .wc-switch:focus-visible {
   box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
 }
+.wc-check:disabled,
+.wc-switch:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
 
 /* ───────── Nuke CopyCat 3x3 Local Crop Contact Sheet Viewer ───────── */
 .wc-cs-box {
@@ -320,3 +412,64 @@ input[type="range"] {
 .wc-cs-tag-bot {
   bottom: 6px;
 }
+
+/* ───────── Advanced Hyperparameters Lab & Offline KaTeX Styling (Obsidian Grade) ───────── */
+.wc-switch-violet:checked {
+  background: #8b5cf6;
+}
+.wc-switch-violet:focus-visible {
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+.wc-math-box {
+  background: linear-gradient(180deg, rgba(13, 19, 35, 0.96) 0%, rgba(9, 14, 26, 0.98) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  border-radius: 0.85rem;
+  padding: 1.05rem 1.35rem;
+  overflow-x: auto;
+  color: #f8fafc;
+  /* Escape parent text-xs (12px) so KaTeX renders at crisp Obsidian 16px base (~19px math) */
+  font-size: 15.5px;
+  line-height: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.wc-math-box .wc-math-caption {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #94a3b8;
+  margin-bottom: 0.35rem;
+}
+.wc-math-box .katex-display {
+  margin: 0.65rem 0;
+  padding: 0.2rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.wc-math-box .katex {
+  font-size: 1.16em;
+  line-height: 1.25;
+  color: #f8fafc;
+}
+/* Ensure Tailwind preflight never strips KaTeX fraction or rule lines */
+.wc-math-box .katex .mfrac .frac-line,
+.wc-math-box .katex .overline .overline-line,
+.wc-math-box .katex .underline .underline-line,
+.wc-math-box .katex .hline {
+  border-bottom-style: solid;
+  border-color: currentColor;
+}
+/* Give circumflex / tilde accents comfortable Obsidian-style breathing room above glyphs */
+.wc-math-box .katex .accent .accent-body {
+  transform: translateY(-0.045em);
+}
+.wc-math-inline {
+  font-size: 14px;
+  line-height: normal;
+}
+.wc-math-inline .katex {
+  font-size: 1.06em;
+  color: #e2e8f0;
+}
+

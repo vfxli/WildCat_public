@@ -2,6 +2,8 @@
 run/
 storage/
 backups/
+config/*.json
+!config/default.json
 update/applied/
 update/*.tar.gz
 wildcat.pid

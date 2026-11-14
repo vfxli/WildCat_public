@@ -6,6 +6,7 @@ inference, OCIO display transform and PNG encoding run in this worker, preferabl
 (e.g. 5090 trains, 4090/4060 renders previews).  If the worker is still busy when the next preview
 is due, that preview is skipped instead of stalling training.
 """
+import gc
 import os
 import queue
 import threading
@@ -76,6 +77,7 @@ class PreviewWorker:
         self._stream = torch.cuda.Stream(device=self.device) if self.device.type == "cuda" else None
         self._frames_dev = None
         self._disp_cache = {}
+        self._yield_flag = os.path.join(self.t.run_dir, ".yield_preview_gpu")
         self.th.start()
 
     # --------------------------------------------------------------- API (training thread)
@@ -113,14 +115,52 @@ class PreviewWorker:
             self._frames_dev = frames
         return self._frames_dev
 
+    def _maybe_yield_preview_gpu(self):
+        """Release the secondary preview GPU back to the training GPU when another task needs that card."""
+        train_dev = torch.device(self.t.device)
+        if self.device == train_dev or not os.path.isfile(self._yield_flag):
+            return
+        old_dev = self.device
+        try:
+            if self._stream is not None:
+                self._stream.synchronize()
+        except Exception:
+            pass
+        self._frames_dev = None
+        self.net = self.net.to(train_dev).eval()
+        self.device = train_dev
+        self._stream = torch.cuda.Stream(device=self.device) if self.device.type == "cuda" else None
+        if old_dev.type == "cuda":
+            gc.collect()
+            try:
+                with torch.cuda.device(old_dev):
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+        try:
+            os.remove(self._yield_flag)
+        except OSError:
+            pass
+        log("secondary GPU needed by another training task; preview/val switched to %s" % self.device)
+
     def _run(self):
         while True:
-            job = self.q.get()
+            try:
+                job = self.q.get(timeout=0.5)
+            except queue.Empty:
+                if self.device != torch.device(self.t.device) and os.path.isfile(self._yield_flag):
+                    try:
+                        with self.t.gpu_lock:
+                            self._maybe_yield_preview_gpu()
+                    except Exception:
+                        log("preview worker yield error:\n%s" % traceback.format_exc())
+                continue
             if job is None:
                 return
             self.busy.set()
             try:
                 with self.t.gpu_lock:
+                    self._maybe_yield_preview_gpu()
                     self._do(*job)
             except Exception:  # never kill training because of a preview, but always log full stack
                 log("preview worker error:\n%s" % traceback.format_exc())
@@ -150,7 +190,7 @@ class PreviewWorker:
                 if do_preview:
                     rendered.append((name, i, o.cpu().numpy()))
         if do_val:
-            log("val(MSE): " + "  ".join("f%d %.6f" % (i + 1, m) for i, m in enumerate(mses)))
+            log("@step %d val(MSE): %s" % (step, "  ".join("f%d %.6f" % (i + 1, m) for i, m in enumerate(mses))))
         if do_preview:
             self._write_previews(step, rendered)
         if crops is not None:

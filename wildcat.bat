@@ -135,6 +135,8 @@ def _code_items():
         "webui",
         "wildcat",
         "tools",
+        "data/open_experiments.db",
+        "data/gpu_benchmarks.db",
         "train.py",
         "infer.py",
         "export_cat.py",

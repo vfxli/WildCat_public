@@ -3,9 +3,7 @@
 import io
 import os
 import pickle
-import shutil
 import struct
-import subprocess
 import tempfile
 import zipfile
 from collections import OrderedDict

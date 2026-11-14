@@ -41,7 +41,8 @@ def _fallback_log_path(cfg_arg, cfg_dict):
         except Exception:
             pass
     if run_name:
-        rdir = os.path.join(_ROOT, "run", run_name)
+        run_root = os.environ.get("WC_RUN_ROOT") or os.path.join(_ROOT, "run")
+        rdir = os.path.join(run_root, run_name)
         os.makedirs(rdir, exist_ok=True)
         return os.path.join(rdir, "train.log")
     return None

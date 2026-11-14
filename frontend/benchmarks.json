@@ -1,6 +1,5 @@
 {
- "updated": "实测于 2026-11-10",
- "setup": "Nuke 17.0v2 CopyCat 与 WildCat（无损加速，默认设置）在同一台机器、同一张 GPU 上分别训练；数据 40 帧 772×855 半精度 EXR，Multi-Resolution 开启，Mixed Precision = Adaptive。表中为三个阶段稳定段的 steps/s；整个训练提速按三段等长计算。",
+ "date": "2026-11-10",
  "gpus": [
   "RTX 4090 (24 GB)",
   "RTX 5090 (32 GB)"
@@ -230,11 +229,5 @@
     29.5
    ]
   }
- ],
- "notes": [
-  "低分辨率阶段（1/4、1/2）提速最多：CopyCat 每步有固定的调度开销，WildCat 把整步做成一张 CUDA Graph 后几乎没有这部分开销。",
-  "全分辨率阶段两边都接近显卡算力上限，提速约 1.5~3.6 倍；Batch 越大、模型越大，差距越小。",
-  "长训练实测：7 帧、batch 4、20 万 epochs（35 万步），Nuke（4090）约 2 小时 8 分，WildCat（5090）约 27 分钟。",
-  "训练结果与 CopyCat 一致：20 万 epochs 下逐阶段训练 loss 吻合（最后 1 万步 0.000046 vs 0.000045）。"
  ]
 }

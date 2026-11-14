@@ -12,6 +12,8 @@ import time
 import torch
 import torch.nn.functional as F
 
+from . import advanced
+
 
 class GraphSafeScaler:
     """Port of torch.amp.GradScaler semantics (init 2**16, growth 2.0, backoff 0.5, interval 2000)
@@ -42,7 +44,8 @@ class GraphSafeScaler:
 
 class StepEngine:
     def __init__(self, net, opt, scaler, device, amp_dtype, bs, c, c_in, c_out,
-                 channels_last=True, use_graph=True, warmup=3, lock=None, multi_scale=True):
+                 channels_last=True, use_graph=True, warmup=3, lock=None, multi_scale=True,
+                 loss_family_cfg=None, ema_params=None, ema_alpha_t=None):
         self.net = net
         self.opt = opt
         self.scaler = scaler
@@ -54,10 +57,13 @@ class StepEngine:
         self.x = torch.empty((bs, c_in, c, c), device=device, memory_format=mf).zero_()
         self.y = torch.empty((bs, c_out, c, c), device=device, memory_format=mf).zero_()
         self.loss = torch.zeros((), device=device)
-        self.use_graph = bool(use_graph and self.is_cuda)
+        self.use_graph = bool(use_graph and self.is_cuda and opt.defaults.get("fused"))
         self.warmup = int(warmup)
         self.lock = lock
         self.multi_scale = bool(multi_scale)
+        self.loss_family_cfg = loss_family_cfg
+        self.ema_params = ema_params
+        self.ema_alpha_t = ema_alpha_t
         self.graph = None
         self._eager_steps = 0
         self._params = [p for g in opt.param_groups for p in g["params"]]
@@ -70,13 +76,24 @@ class StepEngine:
         y = self.y.float()
         loss = None
         total = None
-        for o in outs:
-            o = o.float()
-            g = y if o.shape[-2:] == y.shape[-2:] else F.interpolate(
-                y, size=o.shape[-2:], mode="bilinear", align_corners=True)
-            l = F.mse_loss(o, g, reduction="mean")
-            total = l if total is None else total + l
-            loss = l  # reported loss = finest level (what CopyCat prints)
+        if self.loss_family_cfg is None:
+            for o in outs:
+                o = o.float()
+                g = y if o.shape[-2:] == y.shape[-2:] else F.interpolate(
+                    y, size=o.shape[-2:], mode="bilinear", align_corners=True)
+                l = F.mse_loss(o, g, reduction="mean")
+                total = l if total is None else total + l
+                loss = l  # reported loss = finest level (what CopyCat prints)
+        else:
+            n_out = len(outs)
+            for idx, o in enumerate(outs):
+                o = o.float()
+                g = y if o.shape[-2:] == y.shape[-2:] else F.interpolate(
+                    y, size=o.shape[-2:], mode="bilinear", align_corners=True)
+                if idx == n_out - 1:
+                    loss = F.mse_loss(o, g, reduction="mean")
+                l = advanced.compute_level_loss(o, g, self.loss_family_cfg)
+                total = l if total is None else total + l
         self.opt.zero_grad(set_to_none=True)
         if self.use_scaler:
             s = self.scaler
@@ -93,12 +110,19 @@ class StepEngine:
                 self.opt.found_inf = None
                 if float(s.found_inf.item()) == 0.0:
                     self.opt.step()
+            if self.ema_params is not None and self.ema_alpha_t is not None:
+                eff_a = torch.where(s.found_inf > 0, torch.zeros_like(self.ema_alpha_t), self.ema_alpha_t)
+                for ep, p in zip(self.ema_params, self._params):
+                    ep.lerp_(p.detach(), eff_a)
             torch._amp_update_scale_(s.scale, s.growth_tracker, s.found_inf,
                                      s.growth_factor, s.backoff_factor, s.growth_interval)
         else:
             total.backward()
             self.opt.found_inf = None
             self.opt.step()
+            if self.ema_params is not None and self.ema_alpha_t is not None:
+                for ep, p in zip(self.ema_params, self._params):
+                    ep.lerp_(p.detach(), self.ema_alpha_t)
         self.loss.copy_(loss.detach())
 
     def _capture(self):

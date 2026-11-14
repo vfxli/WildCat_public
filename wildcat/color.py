@@ -402,8 +402,8 @@ def read_image_float(
     """
     Unified image reader for `.exr`, `.png`, `.jpg`, `.tif`.
     Returns `(H, W, C)` float32 in RGB(A) order converted to `working_colorspace` (default `ACEScg`).
-      - `.exr` files default to `input_colorspace='ACEScg'` (full float HDR range preserved, no [0,1] clamp!).
-      - `.png`/`.jpg` files: if `input_colorspace='auto'`, kept in [0,1] normalized float (or transformed if explicit OCIO space given).
+      - `.exr` files default (`input_colorspace='auto'`) to `ACEScg` linear (full float HDR range preserved, no [0,1] clamp!).
+      - `.png`/`.jpg`/`.tif` files default (`input_colorspace='auto'`) to `sRGB -> working_colorspace` (matching Nuke Read node; 1-ch masks & alpha stay linear).
     """
     ext = os.path.splitext(path)[1].lower()
     if ext == ".exr":
@@ -427,13 +427,15 @@ def read_image_float(
     if im.shape[2] >= 3:
         im = im[..., [2, 1, 0, 3][: im.shape[2]]]
 
+    eff_cs = "sRGB" if input_colorspace in ("", "auto", None) else input_colorspace
     if (
         not is_data_pass
         and im.shape[2] >= 3
-        and input_colorspace not in ("", "auto", None, "Raw")
-        and input_colorspace != working_colorspace
+        and eff_cs != "Raw"
+        and working_colorspace != "Raw"
+        and eff_cs != working_colorspace
     ):
-        im = transform_colorspace(im, input_colorspace, working_colorspace, ocio_config_path)
+        im = transform_colorspace(im, eff_cs, working_colorspace, ocio_config_path)
     return np.ascontiguousarray(im, dtype=np.float32)
 
 
@@ -456,7 +458,7 @@ def decode_image_bytes(data_bytes: bytes, filename: str) -> np.ndarray:
     arr = np.frombuffer(data_bytes, dtype=np.uint8)
     im = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
     if im is None:
-        raise ValueError(f"无法解码图像文件: {filename}")
+        raise ValueError(f"Failed to decode image file: {filename}")
     if im.dtype == np.uint16:
         im = im.astype(np.float32) / 65535.0
     elif im.dtype == np.uint8:

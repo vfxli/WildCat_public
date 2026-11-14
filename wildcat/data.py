@@ -52,7 +52,30 @@ def _dedup_sorted(paths):
     return out
 
 
+def _resolve_env_pattern(pattern: str) -> str:
+    if not pattern or os.path.isabs(pattern) or os.path.exists(pattern):
+        return pattern
+    norm = pattern.replace("\\", "/")
+    users_env = os.environ.get("WC_USERS_STORAGE", "").strip()
+    if users_env:
+        if norm.startswith("storage/users/"):
+            cand = os.path.join(users_env, norm[len("storage/users/"):])
+            if os.path.exists(cand) or "*" in cand or "#" in cand:
+                return cand
+        elif norm.startswith("users/"):
+            cand = os.path.join(users_env, norm[len("users/"):])
+            if os.path.exists(cand) or "*" in cand or "#" in cand:
+                return cand
+    run_env = os.environ.get("WC_RUN_ROOT", "").strip()
+    if run_env and norm.startswith("run/"):
+        cand = os.path.join(run_env, norm[4:])
+        if os.path.exists(cand) or "*" in cand or "#" in cand:
+            return cand
+    return pattern
+
+
 def expand_pattern(pattern):
+    pattern = _resolve_env_pattern(str(pattern or ""))
     if os.path.isdir(pattern):
         exr_files = _dedup_sorted(glob.glob(os.path.join(pattern, "*.exr")) + glob.glob(os.path.join(pattern, "*.EXR")))
         if exr_files:

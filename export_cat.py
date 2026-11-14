@@ -43,7 +43,11 @@ def main():
 
     with open(args.config_path, "r", encoding="utf-8") as _f:
         cfg = json.load(_f)
-    run_dir = os.path.join("run", cfg["run_name"])
+    env_run_root = os.environ.get("WC_RUN_ROOT", "").strip()
+    default_run_dir = os.path.join(env_run_root or "run", cfg["run_name"])
+    if env_run_root and not os.path.isdir(default_run_dir) and os.path.isdir(os.path.join("run", cfg["run_name"])):
+        default_run_dir = os.path.join("run", cfg["run_name"])
+    run_dir = (cfg.get("paths") or {}).get("run_dir") or default_run_dir
     ck_name = "latest.pt" if args.step is None else "step_%06d.pt" % int(args.step)
     ck_path = os.path.join(run_dir, "ckpt", ck_name)
     ck = torch.load(ck_path, map_location="cpu", weights_only=False)

@@ -339,10 +339,6 @@ class EncoderDecoder(nn.Module):
         return n_outputs
 
 
-# Alias for backward compatibility
-WildCatNet = EncoderDecoder
-
-
 def build_generator(mo: dict, cudnn_pad: bool = False):
     model_size = mo.get("model_size", "Medium")
     if model_size not in MODEL_SPECS:
@@ -361,6 +357,18 @@ def build_generator(mo: dict, cudnn_pad: bool = False):
     if cudnn_pad or mo.get("cudnn_pad", False):
         net.set_cudnn_pad(True)
     return net, spec["k_size"]
+
+
+def _resolve_weight_path(weight_source: str) -> str:
+    if not weight_source or os.path.isabs(weight_source) or os.path.isfile(weight_source):
+        return weight_source
+    norm = str(weight_source).replace("\\", "/")
+    run_env = os.environ.get("WC_RUN_ROOT", "").strip()
+    if run_env and norm.startswith("run/"):
+        cand = os.path.join(run_env, norm[4:])
+        if os.path.isfile(cand):
+            return cand
+    return weight_source
 
 
 def inspect_weight_source(
@@ -389,7 +397,7 @@ def inspect_weight_source(
             "target": "",
         }
 
-    pt_path = weight_source
+    pt_path = _resolve_weight_path(weight_source)
     tmp_pt = None
     try:
         target_pt = pt_path
@@ -469,6 +477,7 @@ def load_weights_into_model(
     """Load initial weights from a WildCat checkpoint (.pt) or TorchScript (.pt) file."""
     if not weight_source or weight_source == "None":
         return False
+    weight_source = _resolve_weight_path(weight_source)
 
     pt_path = None
     if os.path.isfile(weight_source):

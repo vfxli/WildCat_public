@@ -123,10 +123,24 @@ EOF
       echo "[WildCat] Startup at ${now_str} | Build: ${ver_str} | PY_BIN=${PY_BIN} (${py_ver})"
       echo "================================================================================"
     } >> "${LOG_FILE}"
-    nohup "${PY_BIN}" "${APP_DIR}/webui/app.py" --host 0.0.0.0 --port "${PORT}" >> "${LOG_FILE}" 2>&1 &
+    if command -v setsid >/dev/null 2>&1; then
+      setsid nohup "${PY_BIN}" "${APP_DIR}/webui/app.py" --host 0.0.0.0 --port "${PORT}" </dev/null >> "${LOG_FILE}" 2>&1 &
+    else
+      nohup "${PY_BIN}" "${APP_DIR}/webui/app.py" --host 0.0.0.0 --port "${PORT}" </dev/null >> "${LOG_FILE}" 2>&1 &
+    fi
     echo $! > "${PID_FILE}"
-    sleep 2
-    if ! is_running; then
+    local ready=0
+    for _ in $(seq 1 60); do
+      if ! is_running; then
+        break
+      fi
+      if "${PY_BIN}" -c "import socket, sys; s = socket.socket(); s.settimeout(0.25); ok = (s.connect_ex(('127.0.0.1', int(sys.argv[1]))) == 0); s.close(); sys.exit(0 if ok else 1)" "${PORT}" 2>/dev/null; then
+        ready=1
+        break
+      fi
+      sleep 0.5
+    done
+    if [ "${ready}" -ne 1 ] || ! is_running; then
       echo "[WildCat] ✕ 服务启动失败！最近日志与错误堆栈 (${LOG_FILE}) 如下："
       tail -n 80 "${LOG_FILE}" 2>/dev/null || true
       rm -f "${PID_FILE}"
@@ -166,7 +180,7 @@ EOF
   # Code files shipped in patches / backed up before updates (only those that exist).
   app_code_files() {
     local f out=""
-    for f in wildcat.sh wildcat.bat set_admin_password.sh set_admin_password.bat update/README.txt backend frontend webui wildcat tools train.py infer.py export_cat.py config/default.json; do
+    for f in wildcat.sh wildcat.bat set_admin_password.sh set_admin_password.bat update/README.txt backend frontend webui wildcat tools data/open_experiments.db data/gpu_benchmarks.db train.py infer.py export_cat.py config/default.json; do
       [ -e "${APP_DIR}/${f}" ] && out="${out} ${f}"
     done
     echo "${out}"
@@ -315,16 +329,39 @@ except BaseException:
     echo "[WildCat] ✓ 已成功回滚并重启！当前版本: $(current_build_label)"
   }
 
+  do_foreground() {
+    do_stop || true
+    relocate_venv
+    link_persistent_data
+    rotate_log_if_needed
+    cd "${APP_DIR}"
+    local now_str ver_str py_ver ip_addr
+    now_str="$(date '+%Y-%m-%d %H:%M:%S')"
+    ver_str="$(current_build_label)"
+    py_ver="$("${PY_BIN}" --version 2>&1 || true)"
+    ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')"
+    {
+      echo ""
+      echo "================================================================================"
+      echo "[WildCat] Startup (foreground) at ${now_str} | Build: ${ver_str} | PY_BIN=${PY_BIN} (${py_ver})"
+      echo "================================================================================"
+    } >> "${LOG_FILE}"
+    echo "[WildCat] 前台守护模式启动中 (PID=$$) | 版本: ${ver_str} | 地址: http://${ip_addr}:${PORT}"
+    echo $$ > "${PID_FILE}"
+    exec "${PY_BIN}" "${APP_DIR}/webui/app.py" --host 0.0.0.0 --port "${PORT}" >> "${LOG_FILE}" 2>&1
+  }
+
   case "${1:-status}" in
     start)      do_start ;;
     stop)       do_stop ;;
     restart)    do_stop; do_start ;;
+    foreground) do_foreground ;;
     status)     do_status ;;
     update)     do_update "${2:-}" ;;
     pack-patch) do_pack_patch "${2:-}" ;;
     rollback)   do_rollback ;;
     *)
-      echo "用法: $0 {start|stop|restart|status|update [文件名.tar.gz]|pack-patch [文件名.tar.gz]|rollback}"
+      echo "用法: $0 {start|stop|restart|foreground|status|update [文件名.tar.gz]|pack-patch [文件名.tar.gz]|rollback}"
       exit 1
       ;;
   esac

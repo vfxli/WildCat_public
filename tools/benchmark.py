@@ -31,7 +31,7 @@ def main():
     ap.add_argument("--steps-per-stage", type=int, default=600)
     ap.add_argument("--vram-gb", type=float, default=0)
     ap.add_argument("--multires", type=int, default=1)
-    ap.add_argument("--extra", default="{}", help="json merged into optimizations.lossy")
+    ap.add_argument("--extra", default="{}", help="json merged into advanced config")
     a = ap.parse_args()
     if a.vram_gb:
         os.environ["WILDCAT_VRAM_LIMIT_GB"] = str(a.vram_gb)
@@ -47,10 +47,12 @@ def main():
     shutil.rmtree("run/_bench", ignore_errors=True)
     c["paths"] = {"source": a.src, "target": a.gt}
     c["model"]["model_size"] = a.model
-    c["train"].update(epochs=0, total_steps=total, batch_size_auto=False, batch_size=a.batch, crop_size_auto=False,
+    c["train"].update(epochs=0, total_steps=total, batch_size_auto=False, batch_size=a.batch,
                       crop_size=a.crop, multi_resolution=bool(a.multires), precision=a.precision)
-    c["optimizations"] = {"engine": a.engine, "lossless": {"preview_gpu": "off"},
-                          "lossy": dict({"precision": a.precision}, **json.loads(a.extra))}
+    c["optimizations"] = {"engine": a.engine, "lossless": {"preview_gpu": "off"}}
+    extra = json.loads(a.extra)
+    if extra:
+        c["advanced"] = extra
     c["io"].update(preview_enabled=False, checkpoint_interval=10**9, log_interval=10, export_cat=False)
     rows = []
     t = Trainer(c, on_step=lambda d: rows.append((d["step"], d["stage_scale"], d["sps"])))

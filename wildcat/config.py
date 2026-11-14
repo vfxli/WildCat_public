@@ -12,9 +12,14 @@ def load(path):
         return json.load(f)
 
 
-def prepare_run(cfg, cfg_path=None, root="run"):
+def prepare_run(cfg, cfg_path=None, root=None):
     """Create run/<run_name>/ (ckpt/), back up the json, init log."""
-    run_dir = os.path.join(root, cfg["run_name"])
+    custom_run = str((cfg.get("paths") or {}).get("run_dir") or "").strip()
+    if custom_run:
+        run_dir = custom_run
+    else:
+        base_root = root or os.environ.get("WC_RUN_ROOT") or "run"
+        run_dir = os.path.join(base_root, cfg["run_name"])
     ck = os.path.join(run_dir, "ckpt")
     resume = bool(cfg.get("train", {}).get("resume", False))
     if not resume and os.path.isdir(ck) and os.listdir(ck):
