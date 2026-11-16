@@ -18,6 +18,43 @@ from . import analytics_db, db, gpu_speed_db, i18n, security, storage, telemetry
 ROOT = db.ROOT
 
 
+# Temporary users are limited by the tasks IN PROGRESS - queued or training - not by how many they have submitted so far
+ACTIVE_TASK_STATUSES = ("queued", "running")
+
+
+def active_task_count(user_id) -> int:
+    """tasks of this user that are queued or training"""
+    row = db.query_one("SELECT COUNT(*) AS n FROM tasks WHERE user_id = ? AND status IN ('queued', 'running')", (int(user_id),))
+    return int((row or {}).get("n") or 0)
+
+
+def active_anon_tasks_in_scope(ip_scope: str) -> int:
+    """queued or training tasks of all anonymous temporary users behind one external address scope"""
+    if not ip_scope:
+        return 0
+    rows = db.query_all(
+        "SELECT u.last_ip, u.created_ip FROM tasks t JOIN users u ON u.id = t.user_id "
+        "WHERE t.status IN ('queued', 'running') AND u.password_hash = 'temp_algorithmic'"
+    )
+    n = 0
+    for r in rows:
+        raw = str(r.get("last_ip") or r.get("created_ip") or "")
+        if raw and security.normalize_ip_scope(raw) == ip_scope:
+            n += 1
+    return n
+
+
+def per_user_running_cap() -> int:
+    """How many tasks one account (not an administrator) may have TRAINING at the same time; 0 = no cap. Off together with
+    the temporary-user restrictions. Other users' queued tasks get the free GPUs first."""
+    if str(db.get_setting("enable_temp_user_restrictions", "1") or "1").strip() == "0":
+        return 0
+    try:
+        return max(0, int(db.get_setting("max_running_per_user", "1") or 0))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _resolve_python_bin() -> str:
     if sys.executable and os.path.isfile(sys.executable):
         return sys.executable
@@ -762,9 +799,31 @@ class TaskQueueScheduler:
                 queued = db.query_all(
                     "SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority DESC, created_at ASC, id ASC"
                 )
+                # one account (not an administrator) trains at most run_cap tasks at a time: its further queued tasks
+                # wait and a free GPU goes to the next user's task in the queue
+                run_cap = per_user_running_cap()
+                user_running = collections.Counter({
+                    int(r["user_id"]): int(r["n"])
+                    for r in db.query_all(
+                        "SELECT user_id, COUNT(*) AS n FROM tasks WHERE status = 'running' AND user_id IS NOT NULL GROUP BY user_id"
+                    )
+                })
+                role_of = {}
+
+                def _capped(uid) -> bool:
+                    if not run_cap or uid is None:
+                        return False
+                    uid = int(uid)
+                    if uid not in role_of:
+                        row = db.query_one("SELECT role FROM users WHERE id = ?", (uid,))
+                        role_of[uid] = str((row or {}).get("role") or "")
+                    return role_of[uid] != "admin" and user_running[uid] >= run_cap
+
                 for q in queued:
                     if sum(gpu_counts.get(g, 0) for g in enabled_gpu_ids) >= max_enabled_jobs:
                         break
+                    if _capped(q.get("user_id")):
+                        continue
                     pref = str(q.get("preferred_gpu") or "auto")
                     if pref != "auto" and pref not in enabled_gpu_ids:
                         pref = "auto"
@@ -791,6 +850,8 @@ class TaskQueueScheduler:
                         try:
                             self._launch_queued_task(q, chosen_gpu, surviving_gpus=surviving_gpus)
                             gpu_counts[chosen_gpu] = gpu_counts.get(chosen_gpu, 0) + 1
+                            if q.get("user_id") is not None:
+                                user_running[int(q["user_id"])] += 1
                         except Exception:
                             tb = traceback.format_exc()
                             sys.stderr.write(
@@ -1181,24 +1242,25 @@ class TaskQueueScheduler:
                 if cand_scope and cand_scope not in ("local", "testclient", "localhost", "unknown"):
                     eff_ip_scope = cand_scope
 
-            if consume_quota and not is_privileged and u_row:
+            # Temporary users: at most max_tasks tasks in progress (queued + training) at a time. Every submission that puts
+            # a task into the queue counts - new tasks and resumed / extended ones; a task that is in progress already (an
+            # extension of the running task) only replaces itself. A finished, failed or stopped task frees its place.
+            already_active = bool(existing) and str(existing.get("status") or "") in ACTIVE_TASK_STATUSES
+            if not is_privileged and u_row and not already_active:
                 max_t = int(u_row.get("max_tasks") if u_row.get("max_tasks") is not None else 2)
-                used_t = int(u_row.get("submitted_task_count") or 0)
-                if used_t >= max_t:
+                active_t = active_task_count(user_id)
+                if active_t >= max_t:
                     raise PermissionError(
-                        i18n.t("server.tempUserMaxTasksExceeded", max_tasks=max_t, used=used_t)
+                        i18n.t("server.tempUserMaxTasksExceeded", max_tasks=max_t, used=active_t)
                     )
                 if eff_ip_scope and u_row.get("password_hash") == "temp_algorithmic":
+                    # the anonymous temporary users behind one external address share this limit
                     def_max_t = max(0, int(db.get_setting("default_user_max_tasks", "2") or 2))
                     ip_cap = max(max_t, def_max_t)
-                    ip_row = db.query_one(
-                        "SELECT anon_tasks_submitted FROM ip_quota_ledger WHERE ip_scope = ?",
-                        (eff_ip_scope,),
-                    )
-                    ip_used = int((ip_row or {}).get("anon_tasks_submitted") or 0)
-                    if ip_used >= ip_cap:
+                    ip_active = active_anon_tasks_in_scope(eff_ip_scope)
+                    if ip_active >= ip_cap:
                         raise PermissionError(
-                            i18n.t("server.tempUserMaxTasksExceeded", max_tasks=ip_cap, used=ip_used)
+                            i18n.t("server.tempUserMaxTasksExceeded", max_tasks=ip_cap, used=ip_active)
                         )
             if not is_privileged:
                 from . import service  # (service imports this module; resolved at call time)

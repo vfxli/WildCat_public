@@ -170,8 +170,12 @@ const PRESET_EMA = Object.freeze({ enabled: true, ema_decay: 0.9995 });
 // anything not named here is switched off. hdr_alpha is forced to 0 for a 1-channel output.
 const PRESET_IDS = ['nuke', 'cleanup_grain', 'keying_despill', 'bokeh_focus', 'degrain_clean', 'roto_matte', 'face_edit'];
 const PRESET_SPECS = Object.freeze({
-  // Medium (the CopyCat default): +1.1 dB over Small on the clean-up test shot (Patch 50)
-  cleanup_grain: { model_size: 'Medium', channels: '3->3', crop: 256, crop_grid: 1, loss: { charbonnier_ratio: 0, grad_weight: 0.05, hdr_alpha: 0 }, ema: PRESET_EMA },
+  // Medium (the CopyCat default): +1.1 dB over Small on the clean-up test shot (Patch 50); 15 / 25 / 60 +0.64 dB on Medium
+  // with averaged weights, every seed higher, about 1.33 times the training time (Patch 58)
+  cleanup_grain: {
+    model_size: 'Medium', channels: '3->3', crop: 256, crop_grid: 1, loss: { charbonnier_ratio: 0, grad_weight: 0.05, hdr_alpha: 0 },
+    stages: { r_quarter: 15, r_half: 25, r_full: 60, warmup_steps: 200 }, ema: PRESET_EMA,
+  },
   keying_despill: { model_size: 'Small', channels: '3->4', crop: 256, crop_grid: 1, loss: { charbonnier_ratio: 0, grad_weight: 0.15, hdr_alpha: 0 }, ema: PRESET_EMA },
   bokeh_focus: {
     model_size: 'Large', channels: '3->3', crop: 256, crop_grid: 1,
@@ -203,7 +207,7 @@ const DOC_GROUPS = [
   { id: 'datasets', ids: ['dataset_overview', 'dataset_keyframes', 'dataset_validation_sequence', 'dataset_task_type', 'dataset_input_colorspace', 'dataset_check', 'dataset_tolerance', 'dataset_files', 'dataset_name', 'dataset_eval_sequence', 'dataset_demo'] },
   { id: 'monitor', ids: ['monitor_pause_resume', 'monitor_extend', 'monitor_download', 'monitor_delete', 'monitor_progress', 'monitor_stage', 'monitor_speed', 'monitor_eta', 'monitor_queue', 'metric_loss', 'metric_val_mse', 'monitor_failed', 'monitor_kfc', 'metric_kfc_rewritten', 'metric_kfc_common', 'monitor_preview', 'monitor_preview_keyframe', 'monitor_playback', 'monitor_contact_sheet', 'monitor_cs_overlay', 'monitor_cs_pixelated', 'monitor_loss_chart', 'monitor_loss_log', 'monitor_loss_smooth', 'monitor_quality', 'metric_kf_fit', 'metric_q_strength', 'metric_q_detail', 'metric_q_texture', 'metric_q_look_drift', 'metric_q_tex_drift', 'metric_q_bg', 'monitor_quality_chart', 'monitor_quality_strip', 'monitor_quality_table', 'monitor_models', 'monitor_model_file', 'monitor_model_tags', 'monitor_rec', 'monitor_rec_balanced', 'monitor_rec_detail', 'monitor_log'] },
   { id: 'tools', ids: ['api_key'] },
-  { id: 'admin', ids: ['admin_max_jobs_per_gpu', 'admin_gpu_pool', 'admin_temp_restrictions', 'admin_default_quotas', 'admin_users', 'admin_user_quota', 'admin_user_permissions', 'admin_storage_root', 'admin_analytics_db'] },
+  { id: 'admin', ids: ['admin_max_jobs_per_gpu', 'admin_gpu_pool', 'admin_temp_restrictions', 'admin_default_quotas', 'admin_max_running_per_user', 'admin_users', 'admin_user_quota', 'admin_user_permissions', 'admin_storage_root', 'admin_analytics_db'] },
 ];
 const EVIDENCE_GROUPS = [
   { id: 'method', ids: ['method', 'appendix_material'] },
@@ -1589,6 +1593,7 @@ async function mountWildCatApp() {
         enable_temp_user_restrictions: true,
         default_user_max_tasks: 2,
         default_user_max_epochs: 500000,
+        max_running_per_user: 1,
         togglingRestrictions: false,
         savingQuotas: false,
         data_cache_root: '',
@@ -2328,6 +2333,14 @@ async function mountWildCatApp() {
           if (tSettled.status === 'fulfilled' && tSettled.value) {
             const tRes = tSettled.value;
             tasks.value = tRes.tasks || [];
+            // temporary users: the limit counts the tasks in progress (queued + training); a finished task frees its
+            // place at once, so the header and the submit check follow the task list instead of the last login
+            if (user.value && !isPrivilegedUser.value) {
+              const uid = user.value.id;
+              user.value.tasks_used = tasks.value.filter(
+                (x) => (x.user_id == null || x.user_id === uid) && (x.status === 'queued' || x.status === 'running')
+              ).length;
+            }
             if (tRes.lab_groups) {
               applyServerLabGroups(tRes.lab_groups);
             }
@@ -4522,6 +4535,9 @@ async function mountWildCatApp() {
           if (sRes.settings.default_user_max_epochs != null) {
             adminSettings.default_user_max_epochs = Number(sRes.settings.default_user_max_epochs);
           }
+          if (sRes.settings.max_running_per_user != null) {
+            adminSettings.max_running_per_user = Number(sRes.settings.max_running_per_user);
+          }
           adminSettings.data_cache_root = String(sRes.settings.data_cache_root || '');
         }
         if (sRes.gpu_pool) {
@@ -4701,6 +4717,7 @@ async function mountWildCatApp() {
             body: JSON.stringify({
               default_user_max_tasks: Math.max(0, Math.floor(Number(adminSettings.default_user_max_tasks ?? 2))),
               default_user_max_epochs: Math.max(100, Math.floor(Number(adminSettings.default_user_max_epochs ?? 500000))),
+              max_running_per_user: Math.max(0, Math.min(64, Math.floor(Number(adminSettings.max_running_per_user ?? 1)))),
               apply_defaults_to_temp_users: !!syncExisting,
             }),
           });
@@ -5639,18 +5656,16 @@ async function mountWildCatApp() {
         } else if (effType === 'cleanup_grain') {
           // paint / erase shots: hand-painted keyframes can disagree like face edits do -> keyframe commonality is offered
           // as one recipe where it can take effect (its evidence comes from face shots)
-          const A = { m: PRESET_SPECS.cleanup_grain.model_size, loss: G05, ema: true };
+          const A = { m: PRESET_SPECS.cleanup_grain.model_size, loss: G05, ema: true, stage: STG };
           specs = [mk('Anchor_Preset', 'anchor', 'lab.comboReason_cg_1', A)]
             .concat(kfOk ? [mk('Kf_Common', 'relaxed', 'lab.comboReason_cg_kf', Object.assign({}, A, { kf: true }))] : [])
             .concat([
-              mk('Grid1_Only', 'relaxed', 'lab.comboReason_cg_2', { m: A.m, ema: true }),
+              mk('Grid1_Only', 'relaxed', 'lab.comboReason_cg_2', { m: A.m, ema: true, stage: STG }),
               mk('Small_Preset', 'relaxed', 'lab.comboReason_cg_3', Object.assign({}, A, { m: 'Small' })),
-              mk('Charb_Fidelity', 'relaxed', 'lab.comboReason_cg_8', { m: A.m, ema: true, loss: { cr: 0.25, gw: 0.05, ha: 0 } }),
+              mk('Charb_Fidelity', 'relaxed', 'lab.comboReason_cg_8', { m: A.m, ema: true, stage: STG, loss: { cr: 0.25, gw: 0.05, ha: 0 } }),
               mk('Wide_Crop', 'relaxed', 'lab.comboReason_cg_6', Object.assign({}, A, { crop: cropWide })),
-              mk('Prev_Preset', 'relaxed', 'lab.comboReason_cg_7', {
-                loss: { cr: 0.25, gw: 0.05, ha: cOut === 1 ? 0 : 0.5 },
-                aug: { flip: 0.5, ev: 0 },
-              }),
+              // the previous preset (until Patch 58): equal stage thirds, everything else as recommended
+              mk('Prev_Preset', 'relaxed', 'lab.comboReason_cg_7', { m: A.m, loss: G05, ema: true }),
               control(A.m),
             ]);
         } else if (effType === 'keying_despill') {

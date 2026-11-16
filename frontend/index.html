@@ -4666,6 +4666,12 @@
                        type="number" min="100" max="100000000" step="1000"
                        class="wc-input !w-44 text-xs wc-mono" />
               </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1">{{ t('admin.maxRunningPerUserLabel') }}<help-tip doc="admin_max_running_per_user"></help-tip></label>
+                <input v-model.number="adminSettings.max_running_per_user"
+                       type="number" min="0" max="64" step="1"
+                       class="wc-input !w-36 text-xs wc-mono" />
+              </div>
               <div class="flex flex-wrap items-center gap-2">
                 <button @click="saveDefaultTempQuotas(false)"
                         :disabled="adminSettings.savingQuotas"
@@ -4896,13 +4902,6 @@
                                :disabled="u.role === 'admin'"
                                type="number" min="0" max="999999" step="1"
                                class="wc-input wc-input-xs !w-20 text-center wc-mono text-xs" />
-                        <button v-if="u.tasks_used > 0"
-                                @click="adminResetUserUsedTasks(u)"
-                                type="button"
-                                :title="t('admin.resetUsedTasksTip')"
-                                class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-600 text-[10px] text-amber-300 hover:text-white transition-all">
-                          {{ t('admin.resetUsedTasksBtn') }}
-                        </button>
                       </div>
                     </td>
                     <td class="py-3 px-3 whitespace-nowrap">
@@ -5470,6 +5469,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261116_p56"></script>
+  <script type="module" src="/static/app.js?v=20261117_p59"></script>
 </body>
 </html>

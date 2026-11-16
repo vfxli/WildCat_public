@@ -186,6 +186,7 @@ class AdminSettingsRequest(BaseModel):
     enable_temp_user_restrictions: Optional[bool] = None
     default_user_max_tasks: Optional[int] = None
     default_user_max_epochs: Optional[int] = None
+    max_running_per_user: Optional[int] = None
     apply_defaults_to_temp_users: bool = False
     data_cache_root: Optional[str] = None
     migrate_existing: bool = False
@@ -1051,6 +1052,7 @@ def api_admin_get_settings(admin: dict = Depends(require_admin)):
             "enable_temp_user_restrictions": service.is_temp_restrictions_enabled(),
             "default_user_max_tasks": int(db.get_setting("default_user_max_tasks", "2") or 2),
             "default_user_max_epochs": int(db.get_setting("default_user_max_epochs", "500000") or 500000),
+            "max_running_per_user": int(db.get_setting("max_running_per_user", "1") or 0),
             "data_cache_root": st_info["data_cache_root"],
         },
         "gpu_pool": {
@@ -1089,6 +1091,8 @@ def api_admin_put_settings(req: AdminSettingsRequest, admin: dict = Depends(requ
                 "default_user_max_epochs",
                 str(max(100, min(100_000_000, int(req.default_user_max_epochs)))),
             )
+        if req.max_running_per_user is not None:
+            db.set_setting("max_running_per_user", str(max(0, min(64, int(req.max_running_per_user)))))
         if req.apply_defaults_to_temp_users:
             mt = int(db.get_setting("default_user_max_tasks", "2") or 2)
             me = int(db.get_setting("default_user_max_epochs", "500000") or 500000)

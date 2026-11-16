@@ -27,8 +27,8 @@
     "switchBtn": "Switch",
     "switchTip": "Switch isolated workspace by machine name",
     "userBadgeTip": "User name assigned by the system (unique, cannot be changed)",
-    "quotaPillFmt": "Quota {used}/{max}",
-    "quotaPillTip": "Temporary users can submit up to {max} tasks; {used} submitted",
+    "quotaPillFmt": "Active {used}/{max}",
+    "quotaPillTip": "Temporary users can have up to {max} tasks in progress at a time (queued + training); now {used}",
     "quotaUnlimitedBadge": "Unlimited",
     "roamBtn": "🔑 Roaming ID",
     "roamBtnTip": "Show the recovery code, or restore a workspace on another computer with it",
@@ -116,7 +116,7 @@
     "autoExtendNoSeqShort": "Needs a sequence",
     "autoExtendSeqReady": "✓ Sequence attached",
     "autoExtendAttachHint": "+ Add sequence",
-    "quotaExhaustedBanner": "🔒 Temporary user: the task quota is used up ({used}/{max} submitted); no new tasks can be created.",
+    "quotaExhaustedBanner": "🔒 Tasks in progress are at the limit ({used}/{max}, queued + training); a new task can be submitted when one of them has finished.",
     "batchClampedHint": "Actual {eff}",
     "batchAutoOpt": "Auto (8 · Default)",
     "batchManualOpt": "Manual",
@@ -731,8 +731,9 @@
     "modeUnrestrictedBadge": "✓ Restrictions off",
     "oneClickDisableRestrictBtn": "Turn Off Restrictions",
     "oneClickEnableRestrictBtn": "🔒 Turn On Restrictions",
-    "defMaxTasksLabel": "Task limit for new temporary users",
+    "defMaxTasksLabel": "Tasks in progress allowed for new temporary users",
     "defMaxEpochsLabel": "Epochs limit for new temporary users",
+    "maxRunningPerUserLabel": "Tasks training at once per user",
     "saveDefQuotasBtn": "Save Defaults",
     "syncDefToExistingBtn": "Save and Apply to Existing Temporary Users",
     "addUserTitle": "Create User",
@@ -741,7 +742,7 @@
     "addUserBtn": "+ Create User",
     "usersTableTitle": "Users, Quotas and Permissions ({count})",
     "colUserRoam": "ID / Username / Recovery code",
-    "colTaskQuota": "Task quota (used / limit)",
+    "colTaskQuota": "Tasks in progress (now / limit)",
     "colMaxEpochs": "Epochs limit",
     "colPerms": "Permissions",
     "permLabLabel": "Experiments",
@@ -909,11 +910,11 @@
     "comboDefaultGroupFmt": "Comparison set · {type} ({count} tasks)",
     "comboStageBtn": "📥 Add to pending list ({count} tasks)",
     "comboLaunchNowBtn": "🚀 Generate and submit now ({count} tasks)",
-    "comboReason_cg_1": "Recommended, same as the Clean-up preset: Medium, 1 px crop grid, gradient term 0.05, averaged weights (EMA).",
+    "comboReason_cg_1": "Recommended, same as the Clean-up preset: Medium, 1 px crop grid, gradient term 0.05, stage ratios 15/25/60, averaged weights (EMA).",
     "comboReason_cg_2": "Gradient term off (1 px crop grid and averaged weights kept), everything else as recommended.",
     "comboReason_cg_3": "Model Size Small, everything else as recommended; about 2/3 of the training time.",
     "comboReason_cg_6": "Crop Size raised to 384 (256 when the short side of the plate is below 720 px), everything else as recommended.",
-    "comboReason_cg_7": "All three composite-loss terms (Charbonnier 0.25, gradient term 0.05, highlight damping 0.5) plus horizontal flip 50 %, without averaged weights.",
+    "comboReason_cg_7": "Previous preset: equal stage thirds (the Nuke CopyCat default), everything else as recommended; about 3/4 of the training time of the recommended recipe.",
     "comboReason_kd_1": "Recommended, same as the Keying preset: Small, 1 px crop grid, gradient term 0.15, averaged weights (EMA).",
     "comboReason_kd_2": "Gradient term off (1 px crop grid and averaged weights kept), everything else as recommended.",
     "comboReason_kd_3": "Gradient term 0.05, everything else as recommended.",
@@ -1069,7 +1070,7 @@
     "userCreatedToast": "User created: {user}",
     "userUpdatedToast": "Quotas and permissions of [{user}] updated.",
     "confirmRegenRoam": "Regenerate the roaming recovery code of [{user}]? The old code stops working immediately.",
-    "errTempMaxTasks": "Temporary users can submit at most {max} training tasks ({used}/{max} used).",
+    "errTempMaxTasks": "Temporary users can have at most {max} tasks in progress (queued + training); {used} are in progress now. Submit again when one of them has finished.",
     "errTempMaxEpochs": "Temporary users can set at most {max} Epochs per task (requested {req}).",
     "helpRecipeLoadedToast": "Preset '{name}' loaded; Epochs unchanged. Select a dataset to start training.",
     "helpRecipeFaceLoadedToast": "Preset '{name}' loaded; Epochs unchanged. Keyframe commonality needs a dataset with a validation sequence and at least 3 keyframes.",
@@ -1150,7 +1151,7 @@
     "tempUserApiLocked": "The API key is not available to temporary users.",
     "tempUserConverterLocked": "Model format conversion is not available to temporary users.",
     "convertInvalidPath": "Invalid model file path (only model files inside your workspace)",
-    "tempUserMaxTasksExceeded": "Temporary users can submit at most {max_tasks} training tasks ({used}/{max_tasks} used).",
+    "tempUserMaxTasksExceeded": "Temporary users can have at most {max_tasks} tasks in progress (queued + training); {used} are in progress now. Submit again when one of them has finished.",
     "tempUserMaxEpochsExceeded": "Temporary users can set at most {max_epochs} Epochs per task (requested {requested}).",
     "tempUserStepsExceeded": "Temporary users can train at most {max_steps} steps per task (this setting needs {requested}). Increase Batch Size or reduce Epochs.",
     "tempUserUploadQuotaExceeded": "Temporary users can upload at most {max_assets} datasets (2 GB in total).",
@@ -1208,7 +1209,7 @@
     "multi_resolution": {
       "title": "Multi-Resolution",
       "summary": "Trains first on frames scaled to 1/4 and 1/2, then at full resolution, each stage taking a third of the steps. On by default, as in Nuke CopyCat.",
-      "body": "## In Nuke CopyCat\n**Use Multi-Resolution Training** of the CopyCat node.\n\n## What it does\nTraining runs in three resolution stages, 1/4 → 1/2 → 1/1, with the steps split into thirds; frames are scaled down with Bicubic filtering and the crop shrinks accordingly (see [[doc:crop_size]]). Steps at low resolution are faster, so the whole run takes clearly less time. With Off, the whole run trains at full resolution.\n\n## Limitations\nThe stage ratios among the advanced settings (see [[doc:adv_stages]]) are available only when this is on.\n\n## Test results\nWith Off (full resolution throughout), defocus and clean-up came out more accurate in the tests and keying slightly worse; training is clearly slower.\n\nEvidence: [[ev:adv_stages]]"
+      "body": "## In Nuke CopyCat\n**Use Multi-Resolution Training** of the CopyCat node.\n\n## What it does\nTraining runs in three resolution stages, 1/4 → 1/2 → 1/1, with the steps split into thirds; frames are scaled down with Bicubic filtering and the crop shrinks accordingly (see [[doc:crop_size]]). Steps at low resolution are faster, so the whole run takes clearly less time. With Off, the whole run trains at full resolution.\n\n## Limitations\nThe stage ratios among the advanced settings (see [[doc:adv_stages]]) are available only when this is on.\n\n## Test results\nWith Off (full resolution throughout), clean-up came out more accurate in the tests (Small and Medium); defocus was more accurate on Small but trained unstably on Large (one of 3 seeds collapsed mid-run); keying slightly worse. Training is clearly slower.\n\nEvidence: [[ev:adv_stages]]"
     },
     "mixed_precision": {
       "title": "Mixed Precision",
@@ -1417,8 +1418,8 @@
     },
     "preset_cleanup_grain": {
       "title": "Clean-up",
-      "summary": "Local paint-out shots: decals, tracking markers, stains, wires. Uses the 1 px crop grid, the gradient term and averaged weights; Model Size Medium (the Nuke default).",
-      "body": "## When to use\n\nRemoving local elements on a few keyframes: decals, tracking markers, stains, wires, small objects. Most of the frame stays unedited.\n\n## What it does\n\n- [[doc:adv_crop_grid|Crop grid]] 1 px: the effect is largest on this kind of shot and grows with training length.\n- [[doc:adv_loss_grad|Gradient term]]: cleaner edges of the repaired region.\n- [[doc:adv_ema|Averaged weights]]: steadier results when stopping early or using a mid-run checkpoint.\n- Model Size Medium (the Nuke default); Small needs about 2/3 of the training time at lower accuracy.\n\n## Limitations\n\nIf the repair is painted differently from keyframe to keyframe, [[doc:adv_kf_common|keyframe commonality]] can be added (requires a validation sequence).\n\nEvidence for the modules: [[ev:adv_crop_grid]] · [[ev:adv_loss_grad]] · [[ev:adv_ema]] · [[ev:model_size]]"
+      "summary": "Local paint-out shots: decals, tracking markers, stains, wires. Uses the 1 px crop grid, the gradient term, stage ratios 15 / 25 / 60 and averaged weights; Model Size Medium (the Nuke default).",
+      "body": "## When to use\n\nRemoving local elements on a few keyframes: decals, tracking markers, stains, wires, small objects. Most of the frame stays unedited.\n\n## What it does\n\n- [[doc:adv_crop_grid|Crop grid]] 1 px: the effect is largest on this kind of shot and grows with training length.\n- [[doc:adv_loss_grad|Gradient term]]: cleaner edges of the repaired region.\n- [[doc:adv_stages|Stage ratios]] 15 / 25 / 60: more steps at full resolution, more accurate unseen frames; about 1.3 times the training time of equal thirds.\n- [[doc:adv_ema|Averaged weights]]: steadier results when stopping early or using a mid-run checkpoint.\n- Model Size Medium (the Nuke default); Small needs about 2/3 of the training time at lower accuracy.\n\n## Limitations\n\nIf the repair is painted differently from keyframe to keyframe, [[doc:adv_kf_common|keyframe commonality]] can be added (requires a validation sequence).\n\nEvidence for the modules: [[ev:preset_cleanup_grain]] · [[ev:adv_crop_grid]] · [[ev:adv_loss_grad]] · [[ev:adv_stages]] · [[ev:adv_ema]] · [[ev:model_size]]"
     },
     "preset_keying_despill": {
       "title": "Keying",
@@ -1658,12 +1659,17 @@
     "admin_temp_restrictions": {
       "title": "Temporary-user restrictions",
       "summary": "When on, accounts without granted permissions are temporary users: limited in tasks, Epochs and uploads, and without Experiments or the API. When off, no user is restricted.",
-      "body": "## What it does\nVisitors need no registration: a workspace is created when the page is first opened. With restrictions on, every user except administrators and users holding both the Experiments and the API permission is a temporary user:\n- the number of training tasks and the Epochs per task are limited by quotas, see [[doc:admin_default_quotas]];\n- the number of uploaded datasets (twice the task quota, at least 4) and their total size (2 GB) are limited;\n- Experiments and the API key are unavailable unless granted in the user list.\n\nWith restrictions off, every user can use every feature without quotas.\n\n## When to use\nTurn it on when the service is open to the public; turn it off for in-house team use."
+      "body": "## What it does\nVisitors need no registration: a workspace is created when the page is first opened. With restrictions on, every user except administrators and users holding both the Experiments and the API permission is a temporary user:\n- the number of tasks in progress (queued + training) and the Epochs per task are limited, see [[doc:admin_default_quotas]];\n- the number of uploaded datasets (twice the limit of tasks in progress, at least 4) and their total size (2 GB) are limited;\n- Experiments and the API key are unavailable unless granted in the user list.\n\nWith restrictions on, every user except administrators also has a cap on the tasks training at the same time, see [[doc:admin_max_running_per_user]].\n\nWith restrictions off, every user can use every feature without quotas or training caps.\n\n## When to use\nTurn it on when the service is open to the public; turn it off for in-house team use."
     },
     "admin_default_quotas": {
       "title": "Default quotas for temporary users",
-      "summary": "The maximum number of training tasks a new temporary user can submit, and the maximum Epochs per task.",
-      "body": "## What it does\n- **Task limit**: how many training tasks a temporary user can submit in total.\n- **Epochs limit**: the largest Epochs value allowed for one task.\n\nSave Defaults applies to temporary users created afterwards; Save and Apply to Existing Temporary Users also updates the existing ones. Quotas of single users can be changed in the user list, see [[doc:admin_user_quota]].\n\n## Requirements\nApplies only while temporary-user restrictions are on."
+      "summary": "The number of tasks a new temporary user may have in progress at a time (queued + training), and the maximum Epochs per task.",
+      "body": "## What it does\n- **Tasks in progress**: how many tasks a temporary user may have at a time, queued and training alike. A task that has finished, failed or been stopped frees its place at once; resuming a finished task takes a place too. The anonymous temporary users behind one external address share this limit.\n- **Epochs limit**: the largest Epochs value allowed for one task.\n\nSave Defaults applies to temporary users created afterwards; Save and Apply to Existing Temporary Users also updates the existing ones. Quotas of single users can be changed in the user list, see [[doc:admin_user_quota]].\n\n## Requirements\nApplies only while temporary-user restrictions are on."
+    },
+    "admin_max_running_per_user": {
+      "title": "Tasks training at once per user",
+      "summary": "How many tasks one user may have training at the same time, 1 by default. At the limit, that user's other queued tasks wait and free GPUs go to other users' queued tasks.",
+      "body": "## What it does\n- Free GPUs are given to queued tasks in queue order; when a user already has this many tasks training, that user's queued tasks are skipped and the GPU goes to the next user's task.\n- For example two GPUs and a cap of 1: two users each have one task training, so one user cannot occupy both GPUs. When only one user is queuing, that user's tasks also train one after another.\n- 0 means no cap. Saved together with Save Defaults and effective at once.\n\n## Requirements\nAdministrators are not capped; with temporary-user restrictions off the cap does not apply either, see [[doc:admin_temp_restrictions]]."
     },
     "admin_storage_root": {
       "title": "Data and cache directory",
@@ -1682,8 +1688,8 @@
     },
     "admin_user_quota": {
       "title": "User quota",
-      "summary": "A user's task quota (submitted / limit) and the maximum Epochs per task. Applies to temporary users only.",
-      "body": "## What it does\n- **Task quota**: submitted tasks on the left, the limit on the right; Reset sets the submitted count to 0.\n- **Epochs limit**: the largest Epochs value this user may set for a task.\n\nChanges are saved immediately. Administrators have no quota.\n\n## Requirements\nApplies only while temporary-user restrictions are on, see [[doc:admin_temp_restrictions]]."
+      "summary": "A user's tasks in progress (now / limit) and the maximum Epochs per task. Applies to temporary users only.",
+      "body": "## What it does\n- **Tasks in progress**: the user's queued and training tasks on the left, the limit on the right.\n- **Epochs limit**: the largest Epochs value this user may set for a task.\n\nChanges are saved immediately. Administrators have no quota.\n\n## Requirements\nApplies only while temporary-user restrictions are on, see [[doc:admin_temp_restrictions]]."
     },
     "admin_user_permissions": {
       "title": "Permissions",
@@ -1738,7 +1744,7 @@
     "monitor_queue": {
       "title": "Queue status",
       "summary": "The task's position in the queue, the number of tasks ahead, the estimated wait and the estimated training time.",
-      "body": "## What it does\nEach GPU runs one training task at a time; other tasks wait in the order they were submitted and start automatically when a GPU becomes free. The lower part of the panel lists the task running on each GPU and its remaining time.\n\n## How to read it\nThe estimated wait is based on the remaining time of the tasks ahead; the estimated training time on this task's settings and the speed of the GPU."
+      "body": "## What it does\nEach GPU runs one training task at a time; other tasks wait in the order they were submitted and start automatically when a GPU becomes free; when a user already has the [[doc:admin_max_running_per_user|number of tasks training per user]] allowed, that user's queued tasks let the next users' tasks start first. The lower part of the panel lists the task running on each GPU and its remaining time.\n\n## How to read it\nThe estimated wait is based on the remaining time of the tasks ahead; the estimated training time on this task's settings and the speed of the GPU."
     },
     "metric_loss": {
       "title": "Loss",
@@ -1939,8 +1945,8 @@
     },
     "adv_stages": {
       "title": "Stage ratios 15 / 25 / 60",
-      "summary": "Giving 60% of the steps to the full-resolution stage (15 / 25 / 60, 200 transition steps) raised unseen-frame accuracy on defocus, and by 0.70 dB on clean-up, with no difference on keying and degrain, at about 27% longer training. 45 / 40 / 15 is 3.19 dB lower on defocus. Turning Multi-Resolution off (full resolution throughout) is 2.71 dB higher on defocus and 0.65 dB higher on clean-up, and 0.82 dB lower on keying.",
-      "body": "## Where it helps and where it does not\n\n- Helps: defocus. On that dataset the unseen-frame PSNR is still at the no-processing level at the end of the 1/4 and 1/2 stages (see [[ev:appendix_material]]); all of the gain happens in the 1/1 stage, so giving that stage more steps pays off.\n- Clean-up: 15 / 25 / 60 raises accuracy as well (follow-up runs below); the clean-up preset (Medium) has not been re-checked with it, so it is not used yet.\n- Keying, degrain: no difference to equal thirds; keep equal thirds.\n\n## Test conditions\n\nDefocus dataset of the main test set, Small, 100k Epochs, 3 seeds; warm-up (transition) 200 steps.\n\n## Results\n\n| Comparison | Δ PSNR (dB) | Δ display PSNR (dB) |\n|---|---|---|\n| Alone: phase-aligned baseline + 15 / 25 / 60 | +1.01 | +0.87 |\n| Removed from the defocus combination (Small) | −1.53 | −1.28 |\n\nDefocus, phase-aligned baseline, unseen-frame PSNR during training (mean of 3 seeds):\n\n| Point | 1/3 (end of the 1/4 stage) | 2/3 (end of the 1/2 stage) | 5/6 |\n|---|---|---|---|\n| PSNR (dB) | 24.04 | 23.83 | 35.08 |\n\n| Model | Training speed of the whole run (relative to equal thirds, %) |\n|---|---|\n| Small | 73–75 |\n| Medium | 71–73 |\n| Large | 71–73 |\n\n- Long-run records (single seed, 500k steps, 2 unseen frames): defocus Medium +0.77 dB; keying Medium −0.69 dB.\n\nFollow-up runs (Small, 100k Epochs, 3 seeds, relative to equal thirds with the same settings):\n\n| Dataset | Settings | Comparison | Δ PSNR (dB) |\n|---|---|---|---|\n| Tracking marker / stain removal | 1 px + gradient 0.05 | 15 / 25 / 60 | +0.70 |\n| Green-screen keying | 1 px + gradient 0.15 | 15 / 25 / 60 | +0.17 |\n| Degrain | 1 px | 15 / 25 / 60 | −0.09 |\n| Defocus | 1 px | 45 / 40 / 15 | −1.97 |\n| Degrain | 1 px | 45 / 40 / 15 | +0.05 |\n| Defocus | 1 px | Multi-Resolution off | +2.71 |\n| Tracking marker / stain removal | 1 px + gradient 0.05 | Multi-Resolution off | +0.65 |\n| Green-screen keying | 1 px + gradient 0.15 | Multi-Resolution off | −0.82 |\n\n- Defocus: 45 / 40 / 15 is 3.19 dB below 15 / 25 / 60; Multi-Resolution off is another 1.49 dB above 15 / 25 / 60; 15 / 25 / 60 without the transition (0 steps) equals 200 steps (+0.08 dB).\n- With Multi-Resolution off every step runs at full resolution, so training is clearly slower (the GPUs of these runs were shared unevenly, so the times were not compared).\n\n## Limitations\n\nMulti-seed tests: one shot per task type, Small, 100k Epochs; 15 / 25 / 60 on clean-up and Multi-Resolution off on defocus and clean-up were not yet tested with the presets' own settings (defocus Large, clean-up Medium), so the presets stay unchanged."
+      "summary": "Giving 60% of the steps to the full-resolution stage (15 / 25 / 60, 200 transition steps) raised unseen-frame accuracy on defocus and on clean-up (Small +0.70 dB, clean-up preset settings on Medium +0.64 dB, now part of the clean-up preset), with no difference on keying and degrain, at about 27% longer training. 45 / 40 / 15 is 3.19 dB lower on defocus. Turning Multi-Resolution off (full resolution throughout) on Small is 2.71 dB higher on defocus, 0.65 dB higher on clean-up and 0.82 dB lower on keying; on the defocus preset (Large) it trained unstably and is 0.98 dB lower on average.",
+      "body": "## Where it helps and where it does not\n\n- Helps: defocus. On that dataset the unseen-frame PSNR is still at the no-processing level at the end of the 1/4 and 1/2 stages (see [[ev:appendix_material]]); all of the gain happens in the 1/1 stage, so giving that stage more steps pays off.\n- Clean-up: 15 / 25 / 60 raises accuracy as well; the clean-up preset uses it (re-checked on the preset settings, Medium, see below).\n- Keying, degrain: no difference to equal thirds; keep equal thirds.\n\n## Test conditions\n\nDefocus dataset of the main test set, Small, 100k Epochs, 3 seeds; warm-up (transition) 200 steps.\n\n## Results\n\n| Comparison | Δ PSNR (dB) | Δ display PSNR (dB) |\n|---|---|---|\n| Alone: phase-aligned baseline + 15 / 25 / 60 | +1.01 | +0.87 |\n| Removed from the defocus combination (Small) | −1.53 | −1.28 |\n\nDefocus, phase-aligned baseline, unseen-frame PSNR during training (mean of 3 seeds):\n\n| Point | 1/3 (end of the 1/4 stage) | 2/3 (end of the 1/2 stage) | 5/6 |\n|---|---|---|---|\n| PSNR (dB) | 24.04 | 23.83 | 35.08 |\n\n| Model | Training speed of the whole run (relative to equal thirds, %) |\n|---|---|\n| Small | 73–75 |\n| Medium | 71–73 |\n| Large | 71–73 |\n\n- Long-run records (single seed, 500k steps, 2 unseen frames): defocus Medium +0.77 dB; keying Medium −0.69 dB.\n\nFollow-up runs (Small, 100k Epochs, 3 seeds, relative to equal thirds with the same settings):\n\n| Dataset | Settings | Comparison | Δ PSNR (dB) |\n|---|---|---|---|\n| Tracking marker / stain removal | 1 px + gradient 0.05 | 15 / 25 / 60 | +0.70 |\n| Green-screen keying | 1 px + gradient 0.15 | 15 / 25 / 60 | +0.17 |\n| Degrain | 1 px | 15 / 25 / 60 | −0.09 |\n| Defocus | 1 px | 45 / 40 / 15 | −1.97 |\n| Degrain | 1 px | 45 / 40 / 15 | +0.05 |\n| Defocus | 1 px | Multi-Resolution off | +2.71 |\n| Tracking marker / stain removal | 1 px + gradient 0.05 | Multi-Resolution off | +0.65 |\n| Green-screen keying | 1 px + gradient 0.15 | Multi-Resolution off | −0.82 |\n\n- Defocus: 45 / 40 / 15 is 3.19 dB below 15 / 25 / 60; Multi-Resolution off is another 1.49 dB above 15 / 25 / 60; 15 / 25 / 60 without the transition (0 steps) equals 200 steps (+0.08 dB).\n- With Multi-Resolution off every step runs at full resolution, so training is clearly slower (the GPUs of these runs were shared unevenly, so the times were not compared).\n\nOn the presets' own settings (100k Epochs, 3 seeds; both runs of a pair on one GPU model with one torch version):\n\n| Preset | Comparison | Δ PSNR (dB), mean (range) | Δ display PSNR (dB) | Training time |\n|---|---|---|---|---|\n| Clean-up (Medium, averaged weights) | 15 / 25 / 60 | +0.64 (+0.44 – +0.98) | +0.73 | ×1.33 |\n| Clean-up (Medium, averaged weights) | Multi-Resolution off | +0.95 (+0.70 – +1.10) | +1.13 | ×1.76 |\n| Defocus (Large) | Multi-Resolution off | −0.98 (−4.16 – +1.30) | −0.76 | ×1.33 |\n\n- Defocus (Large) with Multi-Resolution off: seed 1 collapsed at about 50k steps (unseen frames 35.84 → 29.21 dB) and did not recover (38.46 dB at the end); the other two seeds +1.30 and −0.08 dB. The three resolution stages act as a warm-up for the large model; the defocus preset stays as it is.\n\n## Limitations\n\nMulti-seed tests: one shot per task type; the follow-up runs are on Small with 100k Epochs, the tests on the presets' own settings are in the table above."
     },
     "adv_ema": {
       "title": "Averaged weights (EMA)",
@@ -1999,8 +2005,8 @@
     },
     "preset_cleanup_grain": {
       "title": "Preset: Clean-up",
-      "summary": "Clean-up preset = Medium + 1 px grid + gradient 0.05 + averaged weights. On Small these advanced parameters are 4.27 dB above the Nuke defaults (5.57 dB at 300k Epochs); Medium adds another 0.67 dB.",
-      "body": "## Where it helps and where it does not\n\n- For removing decals, tracking markers, stains and similar local edits from a few keyframes.\n- For face retouching use [[ev:preset_face_edit]].\n\n## Test conditions\n\nTracking marker / stain removal dataset ([[ev:appendix_material]]), Small and Medium, 5 keyframes, 3 seeds. Averaged weights were off during the measurement; they do not change the result at the final step ([[ev:adv_ema]]).\n\n## Results\n\n| Setting | Epochs | Unseen-frame PSNR (dB) | Δ relative to the Nuke defaults (Small, dB) | Display PSNR (dB) |\n|---|---|---|---|---|\n| Medium, 1 px + gradient 0.05 (preset) | 100k | 56.74 ± 0.31 | — | 56.33 |\n| Small, 1 px + gradient 0.05 | 100k | 56.07 ± 0.13 | +4.27 | 55.89 |\n| Small, 1 px + gradient 0.05 | 300k | 57.70 ± 0.14 | +5.57 | — |\n| Small, plus Charbonnier 0.25, highlight damping 0.5, horizontal flip 0.5 (not included) | 100k | 54.19 ± 0.29 | +2.39 | 54.32 |\n\n- The 1 px grid is the main source ([[ev:adv_crop_grid]]); gradient 0.05 mainly raises the display PSNR ([[ev:adv_loss_grad]]); averaged weights make mid-run checkpoints steadier ([[ev:adv_ema]]).\n- Model Size: the full set of settings is 0.67 dB higher on Medium than on Small, higher for all 3 seeds, and 0.44 dB higher in display PSNR, at about 1.5 times the training time ([[ev:model_size]]). The preset uses Medium, the Nuke default. On Medium, gradient 0.05 again mainly raises the display PSNR (54.60 dB with 1 px alone).\n- Charbonnier, highlight damping and horizontal flip brought no gain on this dataset ([[ev:adv_loss_charbonnier]], [[ev:adv_loss_hdr]], [[ev:adv_augment_flip]]).\n\n## Limitations\n\nOne synthetic removal shot (960×540); face retouching and grainy live-action footage are not part of this test. The three Medium runs and the three Small runs were made on different machines (same data and scoring; for the differences between machines see repeatability in [[ev:method]])."
+      "summary": "Clean-up preset = Medium + 1 px grid + gradient 0.05 + stage ratios 15 / 25 / 60 + averaged weights. On Small these advanced parameters (without the stage ratios) are 4.27 dB above the Nuke defaults (5.57 dB at 300k Epochs); Medium adds another 0.67 dB; 15 / 25 / 60 on Medium adds 0.64 dB more (all 3 seeds higher) at about 1.33 times the training time.",
+      "body": "## Where it helps and where it does not\n\n- For removing decals, tracking markers, stains and similar local edits from a few keyframes.\n- For face retouching use [[ev:preset_face_edit]].\n\n## Test conditions\n\nTracking marker / stain removal dataset ([[ev:appendix_material]]), Small and Medium, 5 keyframes, 3 seeds. Averaged weights were off during the measurement; they do not change the result at the final step ([[ev:adv_ema]]).\n\n## Results\n\n| Setting | Epochs | Unseen-frame PSNR (dB) | Δ relative to the Nuke defaults (Small, dB) | Display PSNR (dB) |\n|---|---|---|---|---|\n| Medium, 1 px + gradient 0.05 (previous preset, equal thirds) | 100k | 56.74 ± 0.31 | — | 56.33 |\n| Small, 1 px + gradient 0.05 | 100k | 56.07 ± 0.13 | +4.27 | 55.89 |\n| Small, 1 px + gradient 0.05 | 300k | 57.70 ± 0.14 | +5.57 | — |\n| Small, plus Charbonnier 0.25, highlight damping 0.5, horizontal flip 0.5 (not included) | 100k | 54.19 ± 0.29 | +2.39 | 54.32 |\n\n- The 1 px grid is the main source ([[ev:adv_crop_grid]]); gradient 0.05 mainly raises the display PSNR ([[ev:adv_loss_grad]]); averaged weights make mid-run checkpoints steadier ([[ev:adv_ema]]).\n- Model Size: the full set of settings is 0.67 dB higher on Medium than on Small, higher for all 3 seeds, and 0.44 dB higher in display PSNR, at about 1.5 times the training time ([[ev:model_size]]). The preset uses Medium, the Nuke default. On Medium, gradient 0.05 again mainly raises the display PSNR (54.60 dB with 1 px alone).\n- Charbonnier, highlight damping and horizontal flip brought no gain on this dataset ([[ev:adv_loss_charbonnier]], [[ev:adv_loss_hdr]], [[ev:adv_augment_flip]]).\n\nStage ratios and Multi-Resolution (Medium, 1 px + gradient 0.05, averaged weights, 100k Epochs, 3 seeds; scored on the exported averaged weights; the three runs of a seed on one GPU model with one torch version):\n\n| Setting | Unseen-frame PSNR (dB) | Δ PSNR (dB), mean (range) | Δ display PSNR (dB) | Training time (relative to equal thirds) |\n|---|---|---|---|---|\n| Equal thirds (previous preset) | 56.75 | — | — | ×1.00 |\n| 15 / 25 / 60 (preset) | 57.39 | +0.64 (+0.44 – +0.98) | +0.73 | ×1.33 |\n| Multi-Resolution off (not included) | 57.70 | +0.95 (+0.70 – +1.10) | +1.13 | ×1.76 |\n\n- 15 / 25 / 60 is higher for all 3 seeds; on Small it is 0.70 dB higher as well ([[ev:adv_stages]]).\n- Multi-Resolution off is more accurate, but takes about 1.76 times as long and trained unstably on the defocus preset (Large) ([[ev:adv_stages]]), so it is not part of the preset.\n\n## Limitations\n\nOne synthetic removal shot (960×540); the three seeds of the stage-ratio test ran on three GPU / torch platforms; face retouching and grainy live-action footage are not part of this test. The three Medium runs and the three Small runs were made on different machines (same data and scoring; for the differences between machines see repeatability in [[ev:method]])."
     },
     "preset_keying_despill": {
       "title": "Preset: Keying",

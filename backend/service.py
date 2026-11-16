@@ -32,7 +32,8 @@ def _decorate_user(u: dict | None, is_admin: bool = False) -> dict | None:
     restrict_on = is_temp_restrictions_enabled()
     priv = bool(is_admin or out.get("role") == "admin" or not restrict_on)
     max_t = int(out.get("max_tasks") if out.get("max_tasks") is not None else 2)
-    used_t = int(out.get("submitted_task_count") or 0)
+    # tasks in progress (queued + training): what the temporary-user limit counts
+    used_t = scheduler.active_task_count(out["id"]) if out.get("id") is not None else 0
     max_ep = int(out.get("max_epochs") if out.get("max_epochs") is not None else 500000)
     raw_lab = bool(out.get("perm_lab"))
     raw_api = bool(out.get("perm_api"))
@@ -45,6 +46,7 @@ def _decorate_user(u: dict | None, is_admin: bool = False) -> dict | None:
     out["perm_converter"] = bool(priv or raw_conv)
     out["max_tasks"] = max_t
     out["tasks_used"] = used_t
+    out["tasks_submitted"] = int(out.get("submitted_task_count") or 0)
     out["tasks_remaining"] = 99999 if priv else max(0, max_t - used_t)
     out["max_epochs"] = 0 if not restrict_on else max_ep
     out["raw_max_epochs"] = max_ep

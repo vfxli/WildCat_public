@@ -861,16 +861,16 @@ def batch_submit_experiments(
     is_privileged = bool(is_admin or (u_row and u_row.get("role") == "admin") or not restrict_on)
     if not is_privileged and u_row:
         max_t = int(u_row.get("max_tasks") if u_row.get("max_tasks") is not None else 2)
-        used_t = int(u_row.get("submitted_task_count") or 0)
         max_ep = int(u_row.get("max_epochs") if u_row.get("max_epochs") is not None else 500000)
-        existing_nodes = {
+        # the limit counts tasks in progress (queued + training); a node of the batch that is in progress already is replaced
+        active_nodes = {
             r["node_name"]
-            for r in db.query_all("SELECT node_name FROM tasks WHERE user_id = ?", (uid,))
+            for r in db.query_all("SELECT node_name FROM tasks WHERE user_id = ? AND status IN ('queued', 'running')", (uid,))
         }
         new_nodes = set()
         for idx, item in enumerate(items):
             nname = storage.sanitize_name(str(item.get("node_name") or f"Exp_{idx + 1}").strip(), "WildCat1")
-            if nname not in existing_nodes:
+            if nname not in active_nodes:
                 new_nodes.add(nname)
             tr_c = ((item.get("config") or {}).get("train")) or {}
             req_ep = int(tr_c.get("epochs") or 0)
@@ -878,9 +878,9 @@ def batch_submit_experiments(
                 raise PermissionError(
                     i18n.t("server.tempUserMaxEpochsExceeded", max_epochs=max_ep, requested=req_ep)
                 )
-        if used_t + len(new_nodes) > max_t:
+        if len(active_nodes) + len(new_nodes) > max_t:
             raise PermissionError(
-                i18n.t("server.tempUserMaxTasksExceeded", max_tasks=max_t, used=used_t)
+                i18n.t("server.tempUserMaxTasksExceeded", max_tasks=max_t, used=len(active_nodes))
             )
     analytics_db.migrate_legacy_groups_for_user(uid)
     req_bid = str(target_batch_id or "").strip()

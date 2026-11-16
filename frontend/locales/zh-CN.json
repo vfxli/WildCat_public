@@ -27,8 +27,8 @@
     "switchBtn": "切换",
     "switchTip": "按机器名隔离切换工作空间",
     "userBadgeTip": "系统分配的用户名（唯一，不可修改）",
-    "quotaPillFmt": "任务配额 {used}/{max}",
-    "quotaPillTip": "临时用户最多可提交 {max} 个任务，已提交 {used} 个",
+    "quotaPillFmt": "进行中 {used}/{max}",
+    "quotaPillTip": "临时用户同时最多可有 {max} 个进行中的任务（排队 + 训练中），现在 {used} 个",
     "quotaUnlimitedBadge": "无限制",
     "roamBtn": "🔑 跨设备找回",
     "roamBtnTip": "查看找回码，或在其他电脑上用找回码恢复工作空间",
@@ -116,7 +116,7 @@
     "autoExtendNoSeqShort": "需要验证序列",
     "autoExtendSeqReady": "✓ 已有验证序列",
     "autoExtendAttachHint": "+ 添加验证序列",
-    "quotaExhaustedBanner": "🔒 临时用户的任务配额已用完（已提交 {used}/{max} 个），不能再新建任务。",
+    "quotaExhaustedBanner": "🔒 进行中的任务已达上限（{used}/{max}，排队 + 训练中），等其中一个结束后才能再提交。",
     "batchClampedHint": "实际 {eff}",
     "batchAutoOpt": "Auto (8 · Default)",
     "batchManualOpt": "Manual（手动）",
@@ -731,8 +731,9 @@
     "modeUnrestrictedBadge": "✓ 限制已关闭",
     "oneClickDisableRestrictBtn": "关闭临时用户限制",
     "oneClickEnableRestrictBtn": "🔒 开启临时用户限制",
-    "defMaxTasksLabel": "新临时用户的任务数上限",
+    "defMaxTasksLabel": "新临时用户的进行中任务上限",
     "defMaxEpochsLabel": "新临时用户的 Epochs 上限",
+    "maxRunningPerUserLabel": "每个用户同时训练的任务数",
     "saveDefQuotasBtn": "保存默认配额",
     "syncDefToExistingBtn": "保存并应用到现有临时用户",
     "addUserTitle": "新建用户",
@@ -741,7 +742,7 @@
     "addUserBtn": "+ 新建用户",
     "usersTableTitle": "用户、配额与权限（{count}）",
     "colUserRoam": "ID / 用户名 / 漫游找回码",
-    "colTaskQuota": "任务配额（已用 / 上限）",
+    "colTaskQuota": "进行中任务（当前 / 上限）",
     "colMaxEpochs": "Epochs 上限",
     "colPerms": "功能权限",
     "permLabLabel": "实验",
@@ -909,11 +910,11 @@
     "comboDefaultGroupFmt": "对照组合 · {type}（{count} 个任务）",
     "comboStageBtn": "📥 加入待启动列表（{count} 个任务）",
     "comboLaunchNowBtn": "🚀 生成并立即提交（{count} 个任务）",
-    "comboReason_cg_1": "推荐配置，与「擦除修补」预设一致：Medium、1px 裁剪网格、梯度项 0.05、平均权重（EMA）。",
+    "comboReason_cg_1": "推荐配置，与「擦除修补」预设一致：Medium、1px 裁剪网格、梯度项 0.05、阶段比例 15/25/60、平均权重（EMA）。",
     "comboReason_cg_2": "关闭梯度项（保留 1px 裁剪网格与平均权重），其余同推荐配置。",
     "comboReason_cg_3": "Model Size 改为 Small，其余同推荐配置；训练时间约为推荐配置的 2/3。",
     "comboReason_cg_6": "Crop Size 加大到 384（画面短边小于 720 px 时为 256），其余同推荐配置。",
-    "comboReason_cg_7": "复合损失三项全开（Charbonnier 0.25、梯度项 0.05、高光衰减 0.5）并加水平翻转 50%，不含平均权重。",
+    "comboReason_cg_7": "上一版预设：阶段等分（Nuke CopyCat 默认），其余同推荐配置；训练时间约为推荐配置的 3/4。",
     "comboReason_kd_1": "推荐配置，与「绿幕抠像」预设一致：Small、1px 裁剪网格、梯度项 0.15、平均权重（EMA）。",
     "comboReason_kd_2": "关闭梯度项（保留 1px 裁剪网格与平均权重），其余同推荐配置。",
     "comboReason_kd_3": "梯度项改为 0.05，其余同推荐配置。",
@@ -1069,7 +1070,7 @@
     "userCreatedToast": "已创建用户：{user}",
     "userUpdatedToast": "已更新用户 [{user}] 的配额和权限。",
     "confirmRegenRoam": "为用户 [{user}] 重新生成漫游找回码？原找回码将立即失效。",
-    "errTempMaxTasks": "临时用户最多可提交 {max} 个训练任务（已用 {used}/{max}）。",
+    "errTempMaxTasks": "临时用户同时最多可有 {max} 个进行中的任务（排队 + 训练中），现在已有 {used} 个；等其中一个结束后再提交。",
     "errTempMaxEpochs": "临时用户每个任务最多 {max} Epochs（当前 {req}）。",
     "helpRecipeLoadedToast": "已载入预设「{name}」，Epochs 保持不变。选择数据集后即可开始训练。",
     "helpRecipeFaceLoadedToast": "已载入预设「{name}」，Epochs 保持不变。关键帧共性需要带验证序列、至少 3 张关键帧的数据集。",
@@ -1150,7 +1151,7 @@
     "tempUserApiLocked": "临时用户不能使用 API Key。",
     "tempUserConverterLocked": "临时用户不能使用模型格式转换。",
     "convertInvalidPath": "模型文件路径无效（只能是当前工作空间内的模型文件）",
-    "tempUserMaxTasksExceeded": "临时用户最多可提交 {max_tasks} 个训练任务（已用 {used}/{max_tasks}）。",
+    "tempUserMaxTasksExceeded": "临时用户同时最多可有 {max_tasks} 个进行中的任务（排队 + 训练中），现在已有 {used} 个；等其中一个结束后再提交。",
     "tempUserMaxEpochsExceeded": "临时用户每个任务最多 {max_epochs} Epochs（当前 {requested}）。",
     "tempUserStepsExceeded": "临时用户每个任务最多 {max_steps} 步（当前设置需要 {requested} 步）。请增大 Batch Size 或减少 Epochs。",
     "tempUserUploadQuotaExceeded": "临时用户最多上传 {max_assets} 个数据集（总容量 2 GB）。",
@@ -1208,7 +1209,7 @@
     "multi_resolution": {
       "title": "Multi-Resolution（多分辨率训练）",
       "summary": "先在缩小到 1/4、1/2 的画面上训练，最后在原始分辨率上训练，三个阶段各占三分之一的步数。默认开启，与 Nuke CopyCat 相同。",
-      "body": "## Nuke CopyCat 中的对应\nCopyCat 节点的 **Use Multi-Resolution Training**。\n\n## 作用\n训练分为三个分辨率阶段 1/4 → 1/2 → 1/1，步数三等分；画面用 Bicubic 缩小，Crop Size 随之缩小（见 [[doc:crop_size]]）。低分辨率阶段每步更快，整体训练时间明显缩短。设为 Off 时，全程在原始分辨率上训练。\n\n## 限制\n高级参数中的阶段比例（见 [[doc:adv_stages]]）只在开启时可用。\n\n## 测试结果\n关闭后（全程原始分辨率），失焦还原和擦除修补在测试中更准，抠像略差；训练明显更慢。\n\n测试依据：[[ev:adv_stages]]"
+      "body": "## Nuke CopyCat 中的对应\nCopyCat 节点的 **Use Multi-Resolution Training**。\n\n## 作用\n训练分为三个分辨率阶段 1/4 → 1/2 → 1/1，步数三等分；画面用 Bicubic 缩小，Crop Size 随之缩小（见 [[doc:crop_size]]）。低分辨率阶段每步更快，整体训练时间明显缩短。设为 Off 时，全程在原始分辨率上训练。\n\n## 限制\n高级参数中的阶段比例（见 [[doc:adv_stages]]）只在开启时可用。\n\n## 测试结果\n关闭后（全程原始分辨率），擦除修补在测试中更准（Small 与 Medium）；失焦还原在 Small 上更准，在 Large 上训练不稳定（3 个种子中一个中途崩落）；抠像略差。训练明显更慢。\n\n测试依据：[[ev:adv_stages]]"
     },
     "mixed_precision": {
       "title": "Mixed Precision（混合精度）",
@@ -1417,8 +1418,8 @@
     },
     "preset_cleanup_grain": {
       "title": "擦除修补",
-      "summary": "擦除贴图、跟踪点、污渍、威亚等局部修补镜头。使用 1 px 裁剪网格、梯度项和平均权重，Model Size 为 Medium（与 Nuke 默认相同）。",
-      "body": "## 何时使用\n\n在少数关键帧上去除局部元素：贴图、跟踪点、污渍、威亚、小物件。画面的大部分区域不修改。\n\n## 作用\n\n- [[doc:adv_crop_grid|裁剪网格]] 1 px：在这类镜头上效果最明显，训练越长差别越大。\n- [[doc:adv_loss_grad|梯度项]]：修补区域的边缘更干净。\n- [[doc:adv_ema|平均权重]]：提前停止或选用中途检查点时结果更稳定。\n- Model Size 为 Medium（与 Nuke 默认相同）；改用 Small 训练时间约为 2/3，精度较低。\n\n## 限制\n\n各关键帧的修补画法不一致时，可以另外开启[[doc:adv_kf_common|关键帧共性]]（需要验证序列）。\n\n各模块的测试依据：[[ev:adv_crop_grid]] · [[ev:adv_loss_grad]] · [[ev:adv_ema]] · [[ev:model_size]]"
+      "summary": "擦除贴图、跟踪点、污渍、威亚等局部修补镜头。使用 1 px 裁剪网格、梯度项、阶段比例 15 / 25 / 60 和平均权重，Model Size 为 Medium（与 Nuke 默认相同）。",
+      "body": "## 何时使用\n\n在少数关键帧上去除局部元素：贴图、跟踪点、污渍、威亚、小物件。画面的大部分区域不修改。\n\n## 作用\n\n- [[doc:adv_crop_grid|裁剪网格]] 1 px：在这类镜头上效果最明显，训练越长差别越大。\n- [[doc:adv_loss_grad|梯度项]]：修补区域的边缘更干净。\n- [[doc:adv_stages|阶段比例]] 15 / 25 / 60：更多步数用在全分辨率阶段，未见帧更准；训练时间约为三等分时的 1.3 倍。\n- [[doc:adv_ema|平均权重]]：提前停止或选用中途检查点时结果更稳定。\n- Model Size 为 Medium（与 Nuke 默认相同）；改用 Small 训练时间约为 2/3，精度较低。\n\n## 限制\n\n各关键帧的修补画法不一致时，可以另外开启[[doc:adv_kf_common|关键帧共性]]（需要验证序列）。\n\n各模块的测试依据：[[ev:preset_cleanup_grain]] · [[ev:adv_crop_grid]] · [[ev:adv_loss_grad]] · [[ev:adv_stages]] · [[ev:adv_ema]] · [[ev:model_size]]"
     },
     "preset_keying_despill": {
       "title": "绿幕抠像",
@@ -1658,12 +1659,17 @@
     "admin_temp_restrictions": {
       "title": "临时用户限制",
       "summary": "开启时，未获授权的账号作为临时用户使用，受任务数、Epochs 和上传数量限制，不能使用实验和 API；关闭时所有用户不受限制。",
-      "body": "## 作用\n访问者无需注册，首次打开页面时自动获得一个工作空间。开启限制后，除管理员和同时拥有「实验」与「API」权限的用户外，其他用户均为临时用户：\n- 可提交的训练任务数和每个任务的 Epochs 受配额限制，见 [[doc:admin_default_quotas]]；\n- 自定义数据集的数量（任务配额的 2 倍，至少 4 个）和总容量（2 GB）受限；\n- 不能使用实验和 API Key，除非在用户列表中单独开通。\n\n关闭限制后，所有用户可以使用全部功能，不受配额限制。\n\n## 何时使用\n对外开放服务时开启；团队内部使用时关闭。"
+      "body": "## 作用\n访问者无需注册，首次打开页面时自动获得一个工作空间。开启限制后，除管理员和同时拥有「实验」与「API」权限的用户外，其他用户均为临时用户：\n- 同时进行的任务数（排队中 + 训练中）和每个任务的 Epochs 受限，见 [[doc:admin_default_quotas]]；\n- 自定义数据集的数量（进行中任务上限的 2 倍，至少 4 个）和总容量（2 GB）受限；\n- 不能使用实验和 API Key，除非在用户列表中单独开通。\n\n开启限制时，除管理员外每个用户同时训练的任务数也有上限，见 [[doc:admin_max_running_per_user]]。\n\n关闭限制后，所有用户可以使用全部功能，不受配额和训练数上限的限制。\n\n## 何时使用\n对外开放服务时开启；团队内部使用时关闭。"
     },
     "admin_default_quotas": {
       "title": "临时用户默认配额",
-      "summary": "新建临时用户可提交的训练任务数上限，以及每个任务的 Epochs 上限。",
-      "body": "## 作用\n- **任务数上限**：临时用户累计可提交的训练任务数。\n- **Epochs 上限**：单个任务允许设置的最大 Epochs。\n\n「保存默认配额」只对之后新建的临时用户生效；「保存并应用到现有临时用户」同时更新已有的临时用户。单个用户的配额可在用户列表中修改，见 [[doc:admin_user_quota]]。\n\n## 要求\n只在开启临时用户限制时生效。"
+      "summary": "新建临时用户同时可进行的任务数上限（排队中 + 训练中），以及每个任务的 Epochs 上限。",
+      "body": "## 作用\n- **进行中任务上限**：临时用户同时可有的任务数，排队中和训练中都算。任务结束（完成、失败或停止）后名额立即释放；继续训练一个已结束的任务也占一个名额。同一外网地址下的匿名临时用户合起来按这个上限计算。\n- **Epochs 上限**：单个任务允许设置的最大 Epochs。\n\n「保存默认配额」只对之后新建的临时用户生效；「保存并应用到现有临时用户」同时更新已有的临时用户。单个用户的配额可在用户列表中修改，见 [[doc:admin_user_quota]]。\n\n## 要求\n只在开启临时用户限制时生效。"
+    },
+    "admin_max_running_per_user": {
+      "title": "每个用户同时训练的任务数",
+      "summary": "一个用户同时最多有几个任务在训练，默认 1。达到上限后，他排队中的其他任务先等着，空闲的显卡分给其他用户排队的任务。",
+      "body": "## 作用\n- 调度时按排队顺序把空闲显卡分给任务；某个用户已有这么多任务在训练时，跳过他排队中的任务，把显卡分给后面其他用户的任务。\n- 例如两张显卡、上限 1：两个用户各有一个任务在训练，不会由一个用户占用两张卡。只有一个用户在排队时，他的任务也要一个一个地训练。\n- 0 表示不限制。与「保存默认配额」一起保存，立即生效。\n\n## 要求\n管理员不受这个上限限制；关闭临时用户限制后也不生效，见 [[doc:admin_temp_restrictions]]。"
     },
     "admin_storage_root": {
       "title": "数据与缓存目录",
@@ -1682,8 +1688,8 @@
     },
     "admin_user_quota": {
       "title": "用户配额",
-      "summary": "单个用户的任务配额（已提交 / 上限）和每个任务的 Epochs 上限，只对临时用户生效。",
-      "body": "## 作用\n- **任务配额**：左侧为已提交的任务数，右侧为上限；「清零」将已提交数归零。\n- **Epochs 上限**：该用户每个任务允许的最大 Epochs。\n\n修改后立即保存。管理员不受配额限制。\n\n## 要求\n只在开启临时用户限制时生效，见 [[doc:admin_temp_restrictions]]。"
+      "summary": "单个用户进行中的任务（当前 / 上限）和每个任务的 Epochs 上限，只对临时用户生效。",
+      "body": "## 作用\n- **进行中任务**：左侧为该用户当前排队中与训练中的任务数，右侧为上限。\n- **Epochs 上限**：该用户每个任务允许的最大 Epochs。\n\n修改后立即保存。管理员不受配额限制。\n\n## 要求\n只在开启临时用户限制时生效，见 [[doc:admin_temp_restrictions]]。"
     },
     "admin_user_permissions": {
       "title": "功能权限",
@@ -1738,7 +1744,7 @@
     "monitor_queue": {
       "title": "排队信息",
       "summary": "任务在队列中的位置、前面的任务数，以及预计等待时间和预计训练时长。",
-      "body": "## 作用\n每张显卡同时只运行一个训练任务，其余任务按提交顺序排队，显卡空闲时自动开始。面板下方列出各显卡上正在训练的任务及其剩余时间。\n\n## 如何读数\n预计等待时间按前面各任务的剩余时间估算；预计训练时长按本任务的设置和显卡的速度估算。"
+      "body": "## 作用\n每张显卡同时只运行一个训练任务，其余任务按提交顺序排队，显卡空闲时自动开始；一个用户已有任务在训练、达到[[doc:admin_max_running_per_user|每个用户同时训练的任务数]]时，他排队中的任务会让后面其他用户的任务先开始。面板下方列出各显卡上正在训练的任务及其剩余时间。\n\n## 如何读数\n预计等待时间按前面各任务的剩余时间估算；预计训练时长按本任务的设置和显卡的速度估算。"
     },
     "metric_loss": {
       "title": "Loss",
@@ -1939,8 +1945,8 @@
     },
     "adv_stages": {
       "title": "阶段比例 15 / 25 / 60",
-      "summary": "把 60% 的步数分给全分辨率阶段（15 / 25 / 60，切换过渡 200 步）提高了失焦还原的未见帧精度，擦除修补上也高 0.70 dB，抠像和去噪上没有差别；整次训练慢约 27%。45 / 40 / 15 在失焦还原上低 3.19 dB。关闭 Multi-Resolution（全程原始分辨率）在失焦还原上高 2.71 dB、擦除修补高 0.65 dB，抠像低 0.82 dB。",
-      "body": "## 适用与不适用\n\n- 适用：失焦还原。该数据集在 1/4、1/2 两个阶段结束时，未见帧 PSNR 仍停在不处理的水平（见 [[ev:appendix_material]]），全部提升发生在 1/1 阶段，因此把更多步数分给这一阶段有效。\n- 擦除修补：15 / 25 / 60 也提高精度（见下方补测）；擦除修补预设（Medium）还没有在这一设置上复核，暂不采用。\n- 抠像、去噪：与三等分没有差别，保持等分。\n\n## 测试条件\n\n主测试集的失焦还原数据集，Small、100k Epochs、3 个种子；预热（切换过渡）200 步。\n\n## 结果\n\n| 比较 | Δ PSNR（dB） | Δ 显示域 PSNR（dB） |\n|---|---|---|\n| 单项：Nuke 默认设置（相位对齐） + 15 / 25 / 60 | +1.01 | +0.87 |\n| 从失焦还原组合（Small）中去掉 | −1.53 | −1.28 |\n\n失焦还原，Nuke 默认设置（相位对齐），训练过程中的未见帧 PSNR（3 个种子均值）：\n\n| 位置 | 1/3（1/4 阶段结束） | 2/3（1/2 阶段结束） | 5/6 |\n|---|---|---|---|\n| PSNR（dB） | 24.04 | 23.83 | 35.08 |\n\n| 模型 | 整次训练速度（相对等分，%） |\n|---|---|\n| Small | 73–75 |\n| Medium | 71–73 |\n| Large | 71–73 |\n\n- 长训练记录（单一种子，500k 步，2 张未见帧）：失焦还原 Medium +0.77 dB；抠像 Medium −0.69 dB。\n\n补测（Small、100k Epochs、3 个种子，相对同一设置的三等分）：\n\n| 数据集 | 设置 | 比较 | Δ PSNR（dB） |\n|---|---|---|---|\n| 跟踪点 / 污渍擦除 | 1 px + 梯度 0.05 | 15 / 25 / 60 | +0.70 |\n| 绿幕抠像 | 1 px + 梯度 0.15 | 15 / 25 / 60 | +0.17 |\n| 去噪 | 1 px | 15 / 25 / 60 | −0.09 |\n| 失焦还原 | 1 px | 45 / 40 / 15 | −1.97 |\n| 去噪 | 1 px | 45 / 40 / 15 | +0.05 |\n| 失焦还原 | 1 px | 关闭 Multi-Resolution | +2.71 |\n| 跟踪点 / 污渍擦除 | 1 px + 梯度 0.05 | 关闭 Multi-Resolution | +0.65 |\n| 绿幕抠像 | 1 px + 梯度 0.15 | 关闭 Multi-Resolution | −0.82 |\n\n- 失焦还原：45 / 40 / 15 比 15 / 25 / 60 低 3.19 dB；关闭 Multi-Resolution 比 15 / 25 / 60 还高 1.49 dB；15 / 25 / 60 不加切换过渡（0 步）与 200 步相同（+0.08 dB）。\n- 关闭 Multi-Resolution 后每一步都在原始分辨率上计算，训练明显更慢（这批补测的显卡并发不一致，耗时没有单独比较）。\n\n## 限制\n\n多种子测试每类任务一个镜头、Small、100k Epochs；擦除修补用 15 / 25 / 60、失焦还原和擦除修补关闭 Multi-Resolution，都还没有在预设本身的设置上（失焦还原 Large、擦除修补 Medium）测试，预设暂不改变。"
+      "summary": "把 60% 的步数分给全分辨率阶段（15 / 25 / 60，切换过渡 200 步）提高了失焦还原的未见帧精度，擦除修补上也高（Small +0.70 dB，擦除修补预设的设置 Medium +0.64 dB，已纳入擦除修补预设），抠像和去噪上没有差别；整次训练慢约 27%。45 / 40 / 15 在失焦还原上低 3.19 dB。关闭 Multi-Resolution（全程原始分辨率）在 Small 上失焦还原高 2.71 dB、擦除修补高 0.65 dB、抠像低 0.82 dB；在失焦还原预设（Large）上训练不稳定，平均低 0.98 dB。",
+      "body": "## 适用与不适用\n\n- 适用：失焦还原。该数据集在 1/4、1/2 两个阶段结束时，未见帧 PSNR 仍停在不处理的水平（见 [[ev:appendix_material]]），全部提升发生在 1/1 阶段，因此把更多步数分给这一阶段有效。\n- 擦除修补：15 / 25 / 60 也提高精度；擦除修补预设采用（在预设的设置 Medium 上复核，见下方）。\n- 抠像、去噪：与三等分没有差别，保持等分。\n\n## 测试条件\n\n主测试集的失焦还原数据集，Small、100k Epochs、3 个种子；预热（切换过渡）200 步。\n\n## 结果\n\n| 比较 | Δ PSNR（dB） | Δ 显示域 PSNR（dB） |\n|---|---|---|\n| 单项：Nuke 默认设置（相位对齐） + 15 / 25 / 60 | +1.01 | +0.87 |\n| 从失焦还原组合（Small）中去掉 | −1.53 | −1.28 |\n\n失焦还原，Nuke 默认设置（相位对齐），训练过程中的未见帧 PSNR（3 个种子均值）：\n\n| 位置 | 1/3（1/4 阶段结束） | 2/3（1/2 阶段结束） | 5/6 |\n|---|---|---|---|\n| PSNR（dB） | 24.04 | 23.83 | 35.08 |\n\n| 模型 | 整次训练速度（相对等分，%） |\n|---|---|\n| Small | 73–75 |\n| Medium | 71–73 |\n| Large | 71–73 |\n\n- 长训练记录（单一种子，500k 步，2 张未见帧）：失焦还原 Medium +0.77 dB；抠像 Medium −0.69 dB。\n\n补测（Small、100k Epochs、3 个种子，相对同一设置的三等分）：\n\n| 数据集 | 设置 | 比较 | Δ PSNR（dB） |\n|---|---|---|---|\n| 跟踪点 / 污渍擦除 | 1 px + 梯度 0.05 | 15 / 25 / 60 | +0.70 |\n| 绿幕抠像 | 1 px + 梯度 0.15 | 15 / 25 / 60 | +0.17 |\n| 去噪 | 1 px | 15 / 25 / 60 | −0.09 |\n| 失焦还原 | 1 px | 45 / 40 / 15 | −1.97 |\n| 去噪 | 1 px | 45 / 40 / 15 | +0.05 |\n| 失焦还原 | 1 px | 关闭 Multi-Resolution | +2.71 |\n| 跟踪点 / 污渍擦除 | 1 px + 梯度 0.05 | 关闭 Multi-Resolution | +0.65 |\n| 绿幕抠像 | 1 px + 梯度 0.15 | 关闭 Multi-Resolution | −0.82 |\n\n- 失焦还原：45 / 40 / 15 比 15 / 25 / 60 低 3.19 dB；关闭 Multi-Resolution 比 15 / 25 / 60 还高 1.49 dB；15 / 25 / 60 不加切换过渡（0 步）与 200 步相同（+0.08 dB）。\n- 关闭 Multi-Resolution 后每一步都在原始分辨率上计算，训练明显更慢（这批补测的显卡并发不一致，耗时没有单独比较）。\n\n预设本身的设置上（100k Epochs，3 个种子；每对的两次训练在同一型号显卡、同一 torch 版本上）：\n\n| 预设 | 比较 | Δ PSNR（dB），平均（范围） | Δ 显示域 PSNR（dB） | 训练时间 |\n|---|---|---|---|---|\n| 擦除修补（Medium，平均权重） | 15 / 25 / 60 | +0.64（+0.44 – +0.98） | +0.73 | ×1.33 |\n| 擦除修补（Medium，平均权重） | 关闭 Multi-Resolution | +0.95（+0.70 – +1.10） | +1.13 | ×1.76 |\n| 失焦还原（Large） | 关闭 Multi-Resolution | −0.98（−4.16 – +1.30） | −0.76 | ×1.33 |\n\n- 失焦还原（Large）关闭 Multi-Resolution：种子 1 在约 50k 步时崩落（未见帧 35.84 → 29.21 dB），之后没有恢复（最后 38.46 dB）；另外两个种子 +1.30、−0.08 dB。三个分辨率阶段对大模型相当于预热，失焦还原预设保持不变。\n\n## 限制\n\n多种子测试每类任务一个镜头；补测在 Small、100k Epochs 上，预设本身设置上的测试见上表。"
     },
     "adv_ema": {
       "title": "平均权重（EMA）",
@@ -1999,8 +2005,8 @@
     },
     "preset_cleanup_grain": {
       "title": "预设：擦除修补",
-      "summary": "擦除修补预设 = Medium + 1 px 网格 + 梯度 0.05 + 平均权重。这组高级参数在 Small 上比 Nuke 默认设置高 4.27 dB（300k Epochs 时 5.57 dB）；改用 Medium 再高 0.67 dB。",
-      "body": "## 适用与不适用\n\n- 适用：在少量关键帧上擦除贴图、跟踪点、污渍等局部修改。\n- 面部修饰使用 [[ev:preset_face_edit]]。\n\n## 测试条件\n\n跟踪点 / 污渍擦除数据集（[[ev:appendix_material]]），Small 与 Medium、5 张关键帧、3 个种子。测量时没有开平均权重；平均权重不改变最后一步的结果（[[ev:adv_ema]]）。\n\n## 结果\n\n| 设置 | Epochs | 未见帧 PSNR（dB） | Δ 相对 Nuke 默认（Small，dB） | 显示域 PSNR（dB） |\n|---|---|---|---|---|\n| Medium，1 px + 梯度 0.05（预设） | 100k | 56.74 ± 0.31 | — | 56.33 |\n| Small，1 px + 梯度 0.05 | 100k | 56.07 ± 0.13 | +4.27 | 55.89 |\n| Small，1 px + 梯度 0.05 | 300k | 57.70 ± 0.14 | +5.57 | — |\n| Small，再加 Charbonnier 0.25、高光衰减 0.5、水平翻转 0.5（不纳入） | 100k | 54.19 ± 0.29 | +2.39 | 54.32 |\n\n- 主要来源是 1 px 网格（[[ev:adv_crop_grid]]）；梯度 0.05 主要提高显示域 PSNR（[[ev:adv_loss_grad]]）；平均权重让中途检查点更稳（[[ev:adv_ema]]）。\n- Model Size：整套设置在 Medium 上比 Small 高 0.67 dB，3 个种子都更高，显示域高 0.44 dB；训练时间约为 1.5 倍（[[ev:model_size]]）。预设取 Medium，与 Nuke 默认相同。在 Medium 上，梯度 0.05 同样主要提高显示域 PSNR（只开 1 px 时为 54.60 dB）。\n- Charbonnier、高光衰减、水平翻转在这个数据集上没有带来提高（[[ev:adv_loss_charbonnier]]、[[ev:adv_loss_hdr]]、[[ev:adv_augment_flip]]）。\n\n## 限制\n\n一个合成擦除镜头（960×540）；面部修饰和带颗粒的实拍素材不在这组测试中。Medium 的三次训练与 Small 的三次在不同的机器上进行（同一数据与评分；机器间的差异见 [[ev:method]] 的重复性）。"
+      "summary": "擦除修补预设 = Medium + 1 px 网格 + 梯度 0.05 + 阶段比例 15 / 25 / 60 + 平均权重。这组高级参数（不含阶段比例）在 Small 上比 Nuke 默认设置高 4.27 dB（300k Epochs 时 5.57 dB）；改用 Medium 再高 0.67 dB；在 Medium 上加 15 / 25 / 60 再高 0.64 dB（3 个种子都更高），训练时间约为 1.33 倍。",
+      "body": "## 适用与不适用\n\n- 适用：在少量关键帧上擦除贴图、跟踪点、污渍等局部修改。\n- 面部修饰使用 [[ev:preset_face_edit]]。\n\n## 测试条件\n\n跟踪点 / 污渍擦除数据集（[[ev:appendix_material]]），Small 与 Medium、5 张关键帧、3 个种子。测量时没有开平均权重；平均权重不改变最后一步的结果（[[ev:adv_ema]]）。\n\n## 结果\n\n| 设置 | Epochs | 未见帧 PSNR（dB） | Δ 相对 Nuke 默认（Small，dB） | 显示域 PSNR（dB） |\n|---|---|---|---|---|\n| Medium，1 px + 梯度 0.05（上一版预设，三等分） | 100k | 56.74 ± 0.31 | — | 56.33 |\n| Small，1 px + 梯度 0.05 | 100k | 56.07 ± 0.13 | +4.27 | 55.89 |\n| Small，1 px + 梯度 0.05 | 300k | 57.70 ± 0.14 | +5.57 | — |\n| Small，再加 Charbonnier 0.25、高光衰减 0.5、水平翻转 0.5（不纳入） | 100k | 54.19 ± 0.29 | +2.39 | 54.32 |\n\n- 主要来源是 1 px 网格（[[ev:adv_crop_grid]]）；梯度 0.05 主要提高显示域 PSNR（[[ev:adv_loss_grad]]）；平均权重让中途检查点更稳（[[ev:adv_ema]]）。\n- Model Size：整套设置在 Medium 上比 Small 高 0.67 dB，3 个种子都更高，显示域高 0.44 dB；训练时间约为 1.5 倍（[[ev:model_size]]）。预设取 Medium，与 Nuke 默认相同。在 Medium 上，梯度 0.05 同样主要提高显示域 PSNR（只开 1 px 时为 54.60 dB）。\n- Charbonnier、高光衰减、水平翻转在这个数据集上没有带来提高（[[ev:adv_loss_charbonnier]]、[[ev:adv_loss_hdr]]、[[ev:adv_augment_flip]]）。\n\n阶段比例与 Multi-Resolution（Medium、1 px + 梯度 0.05、平均权重，100k Epochs，3 个种子；按导出的平均权重评分；每个种子的三次训练在同一型号显卡、同一 torch 版本上）：\n\n| 设置 | 未见帧 PSNR（dB） | Δ PSNR（dB），平均（范围） | Δ 显示域 PSNR（dB） | 训练时间（相对三等分） |\n|---|---|---|---|---|\n| 三等分（上一版预设） | 56.75 | — | — | ×1.00 |\n| 15 / 25 / 60（预设） | 57.39 | +0.64（+0.44 – +0.98） | +0.73 | ×1.33 |\n| 关闭 Multi-Resolution（不纳入） | 57.70 | +0.95（+0.70 – +1.10） | +1.13 | ×1.76 |\n\n- 15 / 25 / 60 的 3 个种子都更高；Small 上同样高 0.70 dB（[[ev:adv_stages]]）。\n- 关闭 Multi-Resolution 精度更高，但训练时间约为 1.76 倍，并且在失焦还原预设（Large）上训练不稳定（[[ev:adv_stages]]），因此不纳入预设。\n\n## 限制\n\n一个合成擦除镜头（960×540）；阶段比例的三个种子分别在三种显卡 / torch 平台上；面部修饰和带颗粒的实拍素材不在这组测试中。Medium 的三次训练与 Small 的三次在不同的机器上进行（同一数据与评分；机器间的差异见 [[ev:method]] 的重复性）。"
     },
     "preset_keying_despill": {
       "title": "预设：绿幕抠像",
