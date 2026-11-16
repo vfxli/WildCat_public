@@ -1,0 +1,11 @@
+torch>=2.8.0,<2.12  # Nuke 17 cannot read TorchScript saved by PyTorch >= 2.12
+torchvision>=0.23.0,<0.27
+numpy>=1.26.0
+opencv-python>=4.9.0
+opencolorio>=2.3.0
+openexr>=3.2.0
+Pillow>=10.0.0
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-multipart>=0.0.9
+pydantic>=2.6.0

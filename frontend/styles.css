@@ -1,0 +1,643 @@
+/* WildCat Modern Cloud AI Studio Styles */
+[v-cloak] {
+  display: none !important;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0b1120;
+  color: #f1f5f9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wc-mono {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, Monaco, monospace;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Pure CSS Hover Tooltip for Hyperparameters */
+.wc-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: rgba(99, 102, 241, 0.18);
+  color: #818cf8;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+  margin-left: 6px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.wc-tip:hover {
+  background: #6366f1;
+  color: #ffffff;
+}
+.wc-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  width: 260px;
+  padding: 8px 11px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 100;
+  white-space: normal;
+  text-align: left;
+}
+.wc-tip:hover::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+.wc-tip-down::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-4px);
+}
+.wc-tip-down:hover::after {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Form Controls */
+.wc-input,
+.wc-select {
+  width: 100%;
+  height: 38px;
+  box-sizing: border-box;
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  padding: 0 0.75rem;
+  color: #f8fafc;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  vertical-align: middle;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.wc-input:focus,
+.wc-select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+.wc-input:disabled,
+.wc-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Select: custom chevron, vertically centred, never touching the border */
+.wc-select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding-right: 2.25rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2394a3b8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 16px 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.wc-select:hover:not(:disabled) {
+  border-color: #475569;
+}
+.wc-select:disabled {
+  cursor: not-allowed;
+}
+.wc-select option {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+/* Compact Form Control Size Modifiers (keeps CJK & Latin glyphs vertically dead-centred) */
+.wc-input-sm,
+.wc-select-sm {
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.wc-select-sm {
+  padding-left: 0.625rem;
+  padding-right: 1.85rem;
+  background-position: right 0.55rem center;
+  background-size: 14px 14px;
+}
+
+.wc-input-xs,
+.wc-select-xs {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+.wc-select-xs {
+  padding-left: 0.6rem;
+  padding-right: 1.7rem;
+  background-position: right 0.45rem center;
+  background-size: 13px 13px;
+}
+
+/* Dataset & Timeline Frame Scrubber Slider */
+.wc-scrubber-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 9999px;
+  background: #1e293b;
+  outline: none;
+  cursor: pointer;
+}
+.wc-scrubber-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #818cf8;
+  border: 2px solid #eef2ff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+  transition: transform 0.1s ease, background-color 0.1s ease;
+}
+.wc-scrubber-range::-webkit-slider-thumb:hover {
+  background: #6366f1;
+  transform: scale(1.12);
+}
+.wc-scrubber-range::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.18);
+}
+.wc-scrubber-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #818cf8;
+  border: 2px solid #eef2ff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  cursor: grab;
+}
+.wc-select option:disabled {
+  color: #64748b;
+}
+.wc-select-sm {
+  width: 9.5rem;
+  height: 32px;
+  line-height: 30px;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+/* Option rows in the engine panel */
+.wc-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.45);
+}
+.wc-opt-label {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.wc-opt-label code {
+  color: #e2e8f0;
+}
+.wc-opt-desc {
+  color: #94a3b8;
+  margin-left: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Dark themed checkbox */
+.wc-check {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: #0f172a;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.wc-check::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  transform: scale(0);
+  transition: transform 0.12s ease;
+  background: #ffffff;
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+.wc-check:checked {
+  background: #10b981;
+  border-color: #10b981;
+}
+.wc-check:checked::before {
+  transform: scale(1);
+}
+.wc-check:focus-visible {
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
+}
+
+/* Native radios / range inputs follow the theme */
+input[type="radio"],
+input[type="range"] {
+  accent-color: #6366f1;
+}
+
+/* Toggle switch (master switch for acceleration options) */
+.wc-switch {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: #334155;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.wc-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #e2e8f0;
+  transition: transform 0.15s ease;
+}
+.wc-switch:checked {
+  background: #10b981;
+}
+.wc-switch:checked::before {
+  transform: translateX(16px);
+}
+.wc-switch:focus-visible {
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.35);
+}
+.wc-check:disabled,
+.wc-switch:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* ───────── Nuke CopyCat 3x3 Local Crop Contact Sheet Viewer ───────── */
+.wc-cs-box {
+  position: relative;
+  width: min(644px, calc(100% - 24px));
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
+  transition: transform 75ms ease-out;
+  pointer-events: none;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
+}
+
+.wc-cs-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.wc-pixelated {
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+.wc-cs-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  pointer-events: none;
+}
+
+.wc-cs-cell {
+  position: relative;
+  border-right: 1px solid rgba(255, 255, 255, 0.68);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.68);
+  overflow: hidden;
+}
+
+.wc-cs-cell:nth-child(3n) {
+  border-right: none;
+}
+
+.wc-cs-cell:nth-child(n + 7) {
+  border-bottom: none;
+}
+
+.wc-cs-tag-top,
+.wc-cs-tag-bot {
+  position: absolute;
+  left: 7px;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, Monaco, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.96);
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.92),
+     1px -1px 0 rgba(0, 0, 0, 0.92),
+    -1px  1px 0 rgba(0, 0, 0, 0.92),
+     1px  1px 0 rgba(0, 0, 0, 0.92),
+     0    2px 4px rgba(0, 0, 0, 0.85);
+  letter-spacing: 0.01em;
+}
+
+.wc-cs-tag-top {
+  top: 6px;
+}
+
+.wc-cs-tag-bot {
+  bottom: 6px;
+}
+
+/* ───────── Advanced Hyperparameters Lab & Offline KaTeX Styling (Obsidian Grade) ───────── */
+.wc-switch-violet:checked {
+  background: #8b5cf6;
+}
+.wc-switch-violet:focus-visible {
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+.wc-math-box {
+  background: linear-gradient(180deg, rgba(13, 19, 35, 0.96) 0%, rgba(9, 14, 26, 0.98) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  border-radius: 0.85rem;
+  padding: 1.05rem 1.35rem;
+  overflow-x: auto;
+  color: #f8fafc;
+  /* Escape parent text-xs (12px) so KaTeX renders at crisp Obsidian 16px base (~19px math) */
+  font-size: 15.5px;
+  line-height: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.wc-math-box .wc-math-caption {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #94a3b8;
+  margin-bottom: 0.35rem;
+}
+.wc-math-box .katex-display {
+  margin: 0.65rem 0;
+  padding: 0.2rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.wc-math-box .katex {
+  font-size: 1.16em;
+  line-height: 1.25;
+  color: #f8fafc;
+}
+/* Ensure Tailwind preflight never strips KaTeX fraction or rule lines */
+.wc-math-box .katex .mfrac .frac-line,
+.wc-math-box .katex .overline .overline-line,
+.wc-math-box .katex .underline .underline-line,
+.wc-math-box .katex .hline {
+  border-bottom-style: solid;
+  border-color: currentColor;
+}
+/* Give circumflex / tilde accents comfortable Obsidian-style breathing room above glyphs */
+.wc-math-box .katex .accent .accent-body {
+  transform: translateY(-0.045em);
+}
+.wc-math-inline {
+  font-size: 14px;
+  line-height: normal;
+}
+.wc-math-inline .katex {
+  font-size: 1.06em;
+  color: #e2e8f0;
+}
+
+/* ───────── "?" next to a parameter / indicator (component help-tip) and its popover ───────── */
+.wc-help-wrap {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  line-height: 0;
+  margin-left: 5px;
+  flex-shrink: 0;
+}
+.wc-help-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: transparent;
+  color: #94a3b8;
+  font-family: inherit;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.wc-help-tip:hover,
+.wc-help-tip:focus-visible {
+  border-color: #818cf8;
+  background: rgba(99, 102, 241, 0.35);
+  color: #eef2ff;
+  outline: none;
+}
+.wc-help-tip:focus-visible {
+  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.55);
+}
+.wc-help-pop {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  box-shadow: 0 14px 34px -8px rgba(0, 0, 0, 0.8);
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+.wc-help-pop.is-above {
+  transform: translateY(-100%);
+}
+.wc-help-pop-title {
+  color: #f8fafc;
+  font-weight: 700;
+  font-size: 12.5px;
+  margin-bottom: 3px;
+}
+.wc-help-pop-sum {
+  color: #cbd5e1;
+}
+.wc-help-pop-more {
+  margin-top: 6px;
+  color: #818cf8;
+  font-size: 11px;
+}
+
+/* ───────── rendered parameter reference / evidence entries (renderDocMarkup) ───────── */
+.wc-doc {
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.wc-doc p {
+  margin: 0 0 0.55em;
+}
+.wc-doc h5 {
+  margin: 0.95em 0 0.3em;
+  color: #e2e8f0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.wc-doc h5:first-child {
+  margin-top: 0;
+}
+.wc-doc ul {
+  margin: 0 0 0.55em;
+  padding-left: 1.25em;
+  list-style: disc;
+}
+.wc-doc li {
+  margin: 0.12em 0;
+}
+.wc-doc strong {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+.wc-doc code {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, Monaco, monospace;
+  font-size: 0.92em;
+  color: #c7d2fe;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.wc-doc .wc-doc-link {
+  color: #a5b4fc;
+  text-decoration: underline;
+  text-decoration-color: rgba(165, 180, 252, 0.45);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.wc-doc .wc-doc-link:hover {
+  color: #c7d2fe;
+}
+.wc-doc .wc-doc-table {
+  overflow-x: auto;
+  margin: 0.35em 0 0.75em;
+}
+.wc-doc table {
+  border-collapse: collapse;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.wc-doc th,
+.wc-doc td {
+  border: 1px solid #1e293b;
+  padding: 4px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.wc-doc th {
+  background: #0f172a;
+  color: #e2e8f0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.wc-doc td {
+  font-variant-numeric: tabular-nums;
+}
+.wc-doc .wc-doc-more {
+  margin: 0.7em 0 0;
+}
+.wc-doc-entry {
+  scroll-margin-top: 64px;
+}
+.wc-doc-focus {
+  animation: wcDocFocus 3s ease-out;
+}
+@keyframes wcDocFocus {
+  0%,
+  65% {
+    border-color: rgba(251, 191, 36, 0.9);
+    box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.55);
+    background-color: rgba(120, 53, 15, 0.22);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+  }
+}
+
