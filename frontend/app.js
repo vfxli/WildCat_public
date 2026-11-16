@@ -2288,14 +2288,19 @@ async function mountWildCatApp() {
         }
       }
 
-      async function fetchQueueAndTasks(force = false) {
+      // The task list is large (every task with its configuration) and mostly unchanged: the poll asks for it only while
+      // one of the user's tasks is queued or training, otherwise every 10 s; an identical list is not re-rendered.
+      let _lastTasksFetchAt = 0;
+      let _lastTasksSig = '';
+      let _lastTasksRef = null;
+      async function fetchQueueAndTasks(force = false, withTasks = true) {
         if (!user.value) return;
         if (!force && _fetchTasksInFlight) return _fetchTasksInFlight;
         const reqEpoch = _sessionEpoch;
         const run = (async () => {
           const [qSettled, tSettled] = await Promise.allSettled([
             apiFetch('/api/v1/queue'),
-            apiFetch('/api/v1/tasks'),
+            withTasks || force ? apiFetch('/api/v1/tasks') : Promise.resolve(null),
           ]);
           if (reqEpoch !== _sessionEpoch) return;
           if (qSettled.status === 'fulfilled' && qSettled.value && qSettled.value.queue) {
@@ -2322,7 +2327,14 @@ async function mountWildCatApp() {
           }
           if (tSettled.status === 'fulfilled' && tSettled.value) {
             const tRes = tSettled.value;
-            tasks.value = tRes.tasks || [];
+            _lastTasksFetchAt = Date.now();
+            const list = tRes.tasks || [];
+            const sig = JSON.stringify(list);
+            if (sig !== _lastTasksSig || tasks.value !== _lastTasksRef) {
+              _lastTasksSig = sig;
+              tasks.value = list;
+              _lastTasksRef = tasks.value;
+            }
             // temporary users: the limit counts the tasks in progress (queued + training); a finished task frees its
             // place at once, so the header and the submit check follow the task list instead of the last login
             if (user.value && !isPrivilegedUser.value) {
@@ -3101,6 +3113,9 @@ async function mountWildCatApp() {
       }
 
       let _telemetryReqSeq = 0;
+      let _lastTelemetryAt = 0;
+      let _telemetryStatusKey = '';
+      let _lastTelemetrySig = '';
 
       async function fetchTelemetry(resetToLatest = false) {
         if (!selectedTaskId.value || !user.value) return;
@@ -3113,6 +3128,12 @@ async function mountWildCatApp() {
           if (reqSeq !== _telemetryReqSeq || selectedTaskId.value !== reqTaskId || viewer.mode !== reqMode) {
             return;
           }
+          _lastTelemetryAt = Date.now();
+          _telemetryStatusKey = d.task ? `${d.task.id}:${d.task.status}` : '';
+          // nothing changed since the last answer (a finished task): leave the page, its lists and charts as they are
+          const sig = `${reqTaskId}|${reqMode}|${JSON.stringify(d)}`;
+          if (!resetToLatest && sig === _lastTelemetrySig) return;
+          _lastTelemetrySig = sig;
           const prevTailLen = telemetry.tail.length;
           const prevLastLine = prevTailLen ? telemetry.tail[prevTailLen - 1] : '';
           telemetry.steps = d.steps || [];
@@ -7341,13 +7362,20 @@ async function mountWildCatApp() {
           });
         }
 
-        // Poll queue, Studio telemetry & Lab evaluation progress every 1.8s
+        // Poll queue, Studio telemetry & Lab evaluation progress every 1.8s. A hidden page does not poll at all; the task
+        // list follows fetchQueueAndTasks' rule, and a finished task's telemetry is asked for every 15 s and whenever the
+        // task's status changes (a queued or training task: every 1.8 s as before).
         let prevEvalBusy = false;
+        const isLiveStatus = (st) => st === 'running' || st === 'queued';
         setInterval(() => {
-          if (!user.value) return;
-          fetchQueueAndTasks();
+          if (!user.value || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+          const nowMs = Date.now();
+          fetchQueueAndTasks(false, tasks.value.some((x) => isLiveStatus(x.status)) || nowMs - _lastTasksFetchAt >= 10000);
           if (topNav.value === 'studio' && studioMode.value === 'monitor') {
-            fetchTelemetry(false);
+            const at = activeTask.value;
+            if (!at || isLiveStatus(at.status) || `${at.id}:${at.status}` !== _telemetryStatusKey || nowMs - _lastTelemetryAt >= 15000) {
+              fetchTelemetry(false);
+            }
           }
           if (topNav.value === 'lab' && labMode.value === 'analyze' && labSelectedTaskIds.value.length) {
             const anyRunning = labCompare.runs.some((r) => r.status === 'running' || r.status === 'queued');
@@ -7357,6 +7385,14 @@ async function mountWildCatApp() {
             }
           }
         }, 1800);
+
+        if (typeof document !== 'undefined') {
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible' || !user.value) return;
+            fetchQueueAndTasks(true);
+            if (topNav.value === 'studio' && studioMode.value === 'monitor') fetchTelemetry(false);
+          });
+        }
 
         // Sequence, 3x3 Contact Sheet & Lab Multi-Model player loop
         let lastViewerTick = 0;

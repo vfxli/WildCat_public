@@ -11,7 +11,7 @@ import sys
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import cv2
 import numpy as np
@@ -570,7 +570,60 @@ def list_all_checkpoints(user_id: int = None, all_users: bool = True) -> list:
     return out
 
 
+# Frame lists of the task page (viewer, contact sheets): listing the folders and mapping every picture to its cached JPG
+# took ~0.1 s each, on every poll of every open page, also for finished runs whose folders never change. A list is reused
+# while the folders it was read from keep their modification time (adding or renaming a file changes it) and every JPG
+# it points to is still in the cache (the cache is pruned by size).
+_FRAMES_CACHE: dict = {}
+_FRAMES_CACHE_MAX = 512
+_FRAMES_LOCK = threading.Lock()
+
+
+def _mtimes(paths) -> tuple:
+    out = []
+    for p in paths:
+        try:
+            out.append(os.stat(p).st_mtime_ns)
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _jpg_urls_present(frames: list) -> bool:
+    jpg_dir = storage.get_jpg_cache_dir()
+    fallback = os.path.join(storage.DEFAULT_CACHE_DIR, "jpg")
+    for fr in frames:
+        u = str(fr.get("url") or "")
+        if not u.startswith("/f/cache/jpg/"):
+            continue
+        name = unquote(u[len("/f/cache/jpg/"):])
+        if not (os.path.isfile(os.path.join(jpg_dir, name)) or os.path.isfile(os.path.join(fallback, name))):
+            return False
+    return True
+
+
+def _frames_cached(key, sig, build):
+    hit = _FRAMES_CACHE.get(key)
+    if hit is not None and hit[0] == sig and _jpg_urls_present(hit[1].get("frames") or []):
+        return dict(hit[1])
+    res = build()
+    with _FRAMES_LOCK:
+        while len(_FRAMES_CACHE) >= _FRAMES_CACHE_MAX:
+            _FRAMES_CACHE.pop(next(iter(_FRAMES_CACHE)))
+        _FRAMES_CACHE[key] = (sig, res)
+    return dict(res)
+
+
 def get_contact_sheet_frames(run_dir_rel: str, cfg: dict = None) -> dict:
+    rdir_abs = storage.abs_from_root(run_dir_rel)
+    tr = (cfg or {}).get("train") or {}
+    ss = ((cfg or {}).get("advanced") or {}).get("stage_schedule")
+    key = ("cs", rdir_abs, json.dumps([tr.get("crop_size"), tr.get("total_steps"), tr.get("multi_resolution", True), ss], sort_keys=True, default=str))
+    sig = _mtimes([rdir_abs, os.path.join(rdir_abs, "contact_sup"), os.path.join(rdir_abs, "run_info.json")])
+    return _frames_cached(key, sig, lambda: _build_contact_sheet_frames(run_dir_rel, cfg))
+
+
+def _build_contact_sheet_frames(run_dir_rel: str, cfg: dict = None) -> dict:
     """Return all 3x3 Nuke-style local crop contact sheets (OCIO display-managed first, raw fallback)."""
     rdir_abs = storage.abs_from_root(run_dir_rel)
     nuke_prefix = resolve_nuke_prefix(rdir_abs)
@@ -648,6 +701,21 @@ def get_contact_sheet_frames(run_dir_rel: str, cfg: dict = None) -> dict:
 
 
 def get_viewer_frames(run_dir_rel: str, cfg: dict, mode: str = "preview", pair: str = None) -> dict:
+    rdir_abs = storage.abs_from_root(run_dir_rel)
+    if mode == "source" or mode == "target":
+        pat = str(((cfg or {}).get("paths") or {}).get(mode) or "")
+        sig = (pat, _mtimes([os.path.dirname(storage.abs_from_root(pat)) if pat else ""]))
+    else:
+        sup_dir = os.path.join(rdir_abs, "preview_sup")
+        try:
+            subs = sorted(e for e in os.listdir(sup_dir) if os.path.isdir(os.path.join(sup_dir, e)))
+        except OSError:
+            subs = []
+        sig = (_mtimes([sup_dir]), tuple(subs), _mtimes([os.path.join(sup_dir, e) for e in subs]))
+    return _frames_cached(("vw", rdir_abs, mode, pair or ""), sig, lambda: _build_viewer_frames(run_dir_rel, cfg, mode, pair))
+
+
+def _build_viewer_frames(run_dir_rel: str, cfg: dict, mode: str = "preview", pair: str = None) -> dict:
     rdir_abs = storage.abs_from_root(run_dir_rel)
     pairs = []
     selected_pair = pair

@@ -19,6 +19,47 @@ UNGROUPED_KEY = "__ungrouped__"
 
 _SYNC_LOCK = threading.Lock()
 _LAST_SYNC_TS: dict[str, float] = {}
+# Background sync (started by the server): the task list and the analytics summary are polled every 1.8 s by every open
+# page. Syncing synchronously there made each poll write to SQLite and wait up to busy_timeout (30 s) behind the other
+# writers (scheduler progress, other pages) - the "task page takes half a minute" symptom. With the thread running,
+# those requests only wake it up and read what is already there; without it (scripts, tests) the sync stays inline.
+BG_SYNC_INTERVAL_SEC = 5.0
+_BG_SYNC_EVENT = threading.Event()
+_BG_SYNC_STATE = {"started": False}
+_BG_SYNC_START_LOCK = threading.Lock()
+# task id -> ((eval entry, metrics.json mtime), ...) last ingested: an unchanged eval folder needs no database query
+_EVAL_DIR_SIG: dict[int, tuple] = {}
+
+
+def _bg_sync_loop():
+    while True:
+        _BG_SYNC_EVENT.wait(BG_SYNC_INTERVAL_SEC)
+        _BG_SYNC_EVENT.clear()
+        try:
+            sync_pending_tasks_to_db(user_id=None)
+        except Exception as e:  # keep the thread alive; the next round retries
+            try:
+                import sys
+                sys.stderr.write("[WildCat analytics sync] %s: %s\n" % (type(e).__name__, e))
+            except Exception:
+                pass
+        time.sleep(0.5)  # coalesce bursts of wake-ups
+
+
+def start_background_sync() -> None:
+    with _BG_SYNC_START_LOCK:
+        if _BG_SYNC_STATE["started"]:
+            return
+        _BG_SYNC_STATE["started"] = True
+        threading.Thread(target=_bg_sync_loop, name="wc-analytics-sync", daemon=True).start()
+
+
+def request_sync(user_id: int | None = None) -> None:
+    """Freshen the analytics tables without blocking the caller when the background thread runs; inline otherwise."""
+    if _BG_SYNC_STATE["started"]:
+        _BG_SYNC_EVENT.set()
+        return
+    sync_pending_tasks_to_db(user_id=user_id)
 
 
 def _num_float(v) -> float | None:
@@ -886,28 +927,42 @@ def sync_task_evals_from_disk(task_row: dict) -> int:
     if not eval_root or not os.path.isdir(eval_root):
         return 0
 
+    try:
+        entries = sorted(os.listdir(eval_root))
+    except OSError:
+        return 0
+    found = []
+    for entry in entries:
+        m_path = os.path.join(eval_root, entry, "metrics.json")
+        try:
+            found.append((entry, round(os.path.getmtime(m_path), 3)))
+        except OSError:
+            continue
+    sig = tuple(found)
+    if _EVAL_DIR_SIG.get(tid) == sig:
+        return 0
     existing = {
         r["eval_key"]: float(r["file_mtime"] or 0.0)
         for r in db.query_all("SELECT eval_key, file_mtime FROM experiment_evals WHERE task_id = ?", (tid,))
     }
     synced = 0
-    for entry in sorted(os.listdir(eval_root)):
-        m_path = os.path.join(eval_root, entry, "metrics.json")
-        if not os.path.isfile(m_path):
-            continue
-        try:
-            mt = round(os.path.getmtime(m_path), 3)
-        except OSError:
-            continue
+    complete = True
+    for entry, mt in found:
         if entry in existing and abs(existing[entry] - mt) < 0.002:
             continue
+        m_path = os.path.join(eval_root, entry, "metrics.json")
         try:
             with open(m_path, "r", encoding="utf-8") as fh:
                 payload = json.load(fh)
         except Exception:
+            complete = False  # half-written or unreadable: look again next time
             continue
         if sync_eval_result_to_db(tid, uid, entry, payload, file_mtime=mt) is not None:
             synced += 1
+        else:
+            complete = False
+    if complete:
+        _EVAL_DIR_SIG[tid] = sig
     return synced
 
 
@@ -1211,7 +1266,7 @@ def archive_tasks_heavy_files(
 
 def get_db_analytics_summary(user_id: int | None = None, all_users: bool = False) -> dict:
     """Query SQLite directly for live counts of managed numeric records."""
-    sync_pending_tasks_to_db(user_id=None if all_users else user_id)
+    request_sync(user_id=None if all_users else user_id)
     if all_users or user_id is None:
         t_cnt = db.query_one("SELECT COUNT(*) AS c FROM tasks")["c"]
         g_cnt = db.query_one("SELECT COUNT(*) AS c FROM experiment_groups WHERE batch_id != ?", (UNGROUPED_KEY,))["c"]

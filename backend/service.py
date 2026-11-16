@@ -1145,7 +1145,7 @@ def _inspect_task_run_dir_cached(run_dir_rel: str, status: str, now: float) -> d
 
 
 def list_tasks(user_id: int, all_users: bool = False) -> list:
-    analytics_db.sync_pending_tasks_to_db(user_id=None if all_users else user_id)
+    analytics_db.request_sync(user_id=None if all_users else user_id)  # never blocks the polled task list
     qstat = scheduler.SCHEDULER.queue_status()
 
     if all_users:

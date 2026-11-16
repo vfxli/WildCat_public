@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
     storage.refresh_storage_paths(force_db=True)
     service.sync_demo_catalog_for_all_users()
     scheduler.SCHEDULER.start()
+    analytics_db.start_background_sync()
     threading.Thread(target=_background_startup_warmup, name="wc-startup-warmup", daemon=True).start()
     yield
 
