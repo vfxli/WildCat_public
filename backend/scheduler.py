@@ -352,14 +352,6 @@ def parse_latest_log_metrics(run_dir_abs: str) -> dict:
                 out["crop_size"] = int(info["crop_size"])
             if info.get("frames"):
                 out["frames"] = int(info["frames"])
-            if info.get("auto_extended"):
-                out["auto_extended"] = bool(info["auto_extended"])
-                out["auto_extended_rounds"] = int(info.get("auto_extended_rounds") or 0)
-            if info.get("stopped_after_optimal"):
-                out["stopped_after_optimal"] = bool(info["stopped_after_optimal"])
-                out["stop_after_optimal_epochs"] = int(info.get("stop_after_optimal_epochs") or 0)
-                out["optimal_step"] = int(info.get("optimal_step") or 0)
-                out["optimal_epoch"] = int(info.get("optimal_epoch") or 0)
         except Exception:
             pass
     return out
@@ -1074,15 +1066,6 @@ class TaskQueueScheduler:
                 if not math.isfinite(lr_f) or lr_f < 1e-7 or lr_f > 1e-2:
                     raise ValueError(i18n.t("server.invalidTrainParam", field="train.lr"))
 
-            if "stop_after_optimal_epochs" in tr and tr["stop_after_optimal_epochs"] is not None:
-                try:
-                    sao_i = int(tr["stop_after_optimal_epochs"])
-                except (TypeError, ValueError):
-                    raise ValueError(i18n.t("server.invalidTrainParam", field="train.stop_after_optimal_epochs"))
-                if sao_i < 0 or sao_i > 10_000_000:
-                    raise ValueError(i18n.t("server.invalidTrainParam", field="train.stop_after_optimal_epochs"))
-                tr["stop_after_optimal_epochs"] = sao_i
-
             io_cfg = out["io"]
             for io_k, min_v in (("checkpoint_interval", 1000), ("preview_interval", 100), ("log_interval", 10)):
                 if io_k in io_cfg and io_cfg[io_k] is not None:
@@ -1289,7 +1272,7 @@ class TaskQueueScheduler:
                     shutil.rmtree(ckpt_dir, ignore_errors=True)
                 # (kf_common.*: report of the optional keyframe-commonality step, quality.jsonl: what the quality monitor
                 #  measured - a fresh run must not show an older run's; a resumed run appends to quality.jsonl)
-                for stale_fn in ("train.log", "recommended_models.json", "kf_common.json", "kf_common.jpg", "quality.jsonl"):
+                for stale_fn in ("train.log", "kf_common.json", "kf_common.jpg", "quality.jsonl"):
                     old_fp = os.path.join(run_abs, stale_fn)
                     if os.path.isfile(old_fp):
                         try:
@@ -1386,13 +1369,8 @@ class TaskQueueScheduler:
                 tot_steps = max(1, math.ceil(epochs * n_frames / float(eff_bs)))
             tr_cfg["epochs"] = epochs
             tr_cfg["total_steps"] = tot_steps
-            tr_cfg["auto_extend_optimal"] = bool(tr_cfg.get("auto_extend_optimal", False))
-            try:
-                stop_opt_ep = max(0, min(10_000_000, int(tr_cfg.get("stop_after_optimal_epochs") or 0)))
-            except (TypeError, ValueError):
-                stop_opt_ep = 0
-            tr_cfg["stop_after_optimal_epochs"] = stop_opt_ep
-            tr_cfg.pop("max_auto_extend_epochs", None)
+            for gone in ("auto_extend_optimal", "stop_after_optimal_epochs", "max_auto_extend_epochs"):  # removed options
+                tr_cfg.pop(gone, None)
 
             if not is_privileged and u_row:
                 max_ep = int(u_row.get("max_epochs") if u_row.get("max_epochs") is not None else 500000)
@@ -1406,7 +1384,6 @@ class TaskQueueScheduler:
                         raise PermissionError(
                             i18n.t("server.tempUserStepsExceeded", max_steps=max_steps, requested=tot_steps)
                         )
-                    tr_cfg["max_auto_extend_epochs"] = max_ep
 
             init_last_step = 0
             init_last_loss = None

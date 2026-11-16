@@ -185,9 +185,9 @@ class Trainer:
         kf_shot = [] if all(_quality.wanted(io, self.c_in, self.c_out)) else None  # the monitor below follows the plate with the same flow
         self.kf_common_report = None
         if self.adv["kf_common"]["enabled"]:
-            from . import kfcommon, recommender as _rec
+            from . import kfcommon
             self.kf_common_report = kfcommon.apply_to_training(
-                self.adv["kf_common"], src_files, tgt_files, self.src_full, self.tgt_full, _rec.resolve_eval_sequence_files(cfg), self.run_dir,
+                self.adv["kf_common"], src_files, tgt_files, self.src_full, self.tgt_full, data.resolve_eval_sequence_files(cfg), self.run_dir,
                 {"input_colorspace": self.source_colorspace, "working_colorspace": self.working_colorspace, "ocio_config_path": self.ocio_config},
                 log, keep_shot=kf_shot,
             )
@@ -279,7 +279,7 @@ class Trainer:
         # ---------------- optional advanced state (100% off by default) ----------------
         # Averaged weights (advanced.ema_lr): a shadow copy of the parameters that the engine blends towards the weights
         # after every optimiser step. The optimiser never reads it. eval_state_dict() hands it to validation, previews,
-        # checkpoints, the recommender and the exports; a resumed run takes it back from the checkpoint ("G_ema").
+        # checkpoints and the exports; a resumed run takes it back from the checkpoint ("G_ema").
         if self.adv["ema_lr"]["enabled"]:
             self.ema_param_names = [name for name, _ in self.raw_G.named_parameters()]
             if isinstance(ck, dict) and tr.get("resume", False) and isinstance(ck.get("G_ema"), dict):
@@ -309,7 +309,6 @@ class Trainer:
                 self.nuke_prefix = prev[-1][: -len(".summary")]  # continue the same CopyCat-style run name
         self.n_frames = n_frames
         self.initial_epochs = self.epochs
-        self.stop_after_optimal_epochs = max(0, int(tr.get("stop_after_optimal_epochs") or 0))
         self._io_futures = []
         self._write_run_info()
         self.export_cat_on_checkpoint = _bool(io.get("export_cat", True))
@@ -342,8 +341,6 @@ class Trainer:
                 "(decay %g, about the last %d steps, restarts with each resolution stage); the training itself is unchanged"
                 % (self.adv["ema_lr"]["ema_decay"], int(round(1.0 / max(1e-9, 1.0 - self.adv["ema_lr"]["ema_decay"]))))
             )
-        if self.stop_after_optimal_epochs > 0:
-            log("WildCat | optimal_patience=+%d epochs after 1/1 peak" % self.stop_after_optimal_epochs)
 
     # ======================================================================== helpers
     def _write_run_info(self, extra=None):
@@ -771,60 +768,6 @@ class Trainer:
         except Exception:
             pass
 
-        from . import recommender
-
-        init_epochs = int(getattr(self, "initial_epochs", self.epochs) or self.epochs)
-        init_total = int(total)
-        stage_1_start = 0
-        for _s_idx, (_sc_v, _) in enumerate(stages):
-            if _sc_v == 1:
-                stage_1_start = 0 if _s_idx == 0 else stages[_s_idx - 1][1]
-                break
-        patience_steps = (
-            max(2, math.ceil(self.stop_after_optimal_epochs * len(self.src_full) / float(self.batch_size)))
-            if self.stop_after_optimal_epochs > 0
-            else 0
-        )
-        stage_1_len = max(1, total - stage_1_start)
-        settle_steps = (
-            min(max(2, patience_steps // 3), max(2, min(200, stage_1_len // 10)))
-            if patience_steps > 0
-            else 0
-        )
-        opt_check_iv = (
-            max(2, min(ckpt_iv, patience_steps // 3 if patience_steps < 30 else max(10, patience_steps // 4)))
-            if patience_steps > 0
-            else ckpt_iv
-        )
-        opt_tracker = {
-            "best_step": 0,
-            "best_score": -1e9,
-            "triggered": False,
-            "stopped_step": 0,
-            "live_rec": None,
-        }
-
-        def get_live_rec():
-            if opt_tracker["live_rec"] is None:
-                lr_inst = recommender.CheckpointRecommender(
-                    self.run_dir,
-                    self.cfg,
-                    device=self.device,
-                    src_full=self.src_full,
-                    tgt_full=self.tgt_full,
-                    max_seq_frames=18,
-                )
-                if self.step0 > stage_1_start + settle_steps:
-                    ck_map = lr_inst.discover_checkpoint_paths()
-                    for prev_st in sorted(s for s in ck_map if stage_1_start + settle_steps <= s <= self.step0):
-                        m_prev = lr_inst.evaluate_step(prev_st, ckpt_path=ck_map[prev_st])
-                        sc_prev = lr_inst.live_score_step(m_prev)
-                        if opt_tracker["best_step"] <= 0 or sc_prev > opt_tracker["best_score"] + 0.015:
-                            opt_tracker["best_score"] = sc_prev
-                            opt_tracker["best_step"] = prev_st
-                opt_tracker["live_rec"] = lr_inst
-            return opt_tracker["live_rec"]
-
         def emit_ready(block=False):
             while pending:
                 s, lr_v, scl, buf, ev = pending[0]
@@ -857,7 +800,7 @@ class Trainer:
                 if not math.isfinite(loss_val):
                     raise FloatingPointError("Training loss reached NaN value. Please try to restart training with different training settings.")
 
-        def run_stage_segment(scale, end, stage_start_step, is_stage_transition, ext_mode=False, ext_start_step=0):
+        def run_stage_segment(scale, end, stage_start_step, is_stage_transition):
             nonlocal step, total
             if step >= end or stop["flag"]:
                 return
@@ -883,13 +826,7 @@ class Trainer:
             src = self._make_source(scale)
             resident = isinstance(src, data.GPUCropSource)
             self.quality.start()  # quality monitor: reads the plate in a thread of its own (first call only)
-            if ext_mode:
-                log(
-                    "== auto-extend: 1/%d resolution (steps %d -> %d, crop %d, batch %d, data=%s) =="
-                    % (scale, step, end, crop, bs, "vram" if resident else "host")
-                )
-            else:
-                log("== stage: 1/%d resolution (crop %d, batch %d, data=%s) ==" % (scale, crop, bs, "vram" if resident else "host"))
+            log("== stage: 1/%d resolution (crop %d, batch %d, data=%s) ==" % (scale, crop, bs, "vram" if resident else "host"))
 
             chunk = 512
             plan_np = None
@@ -937,23 +874,10 @@ class Trainer:
                     ema_params=self.ema_params, ema_alpha_t=self.ema_alpha_t,
                 )
 
-            ext_len = max(1, end - ext_start_step) if ext_mode else 1
-            ext_mid_ckpt = (ext_start_step + ext_len // 2) if (ext_mode and ext_len >= 20 and ckpt_iv > ext_len // 2) else -1
-            ext_lr_floor = poly_lr(self.lr, max(0, ext_start_step - 2), max(1, ext_start_step), self.lr_power) * lr_mul
-            ext_lr_peak = self.lr * 0.35 * lr_mul
-
             def do_step(engine):
                 nonlocal step
                 step += 1
-                if ext_mode:
-                    k_ext = max(1, step - ext_start_step)
-                    ramp = min(50, max(4, ext_len // 5))
-                    if k_ext <= ramp:
-                        cur_lr = ext_lr_floor + (ext_lr_peak - ext_lr_floor) * (k_ext / float(ramp))
-                    else:
-                        prog = (k_ext - ramp) / float(max(1, ext_len - ramp))
-                        cur_lr = ext_lr_peak * ((1.0 - 0.72 * min(1.0, prog)) ** 0.5)
-                elif not self.adv["stage_schedule"]["enabled"]:
+                if not self.adv["stage_schedule"]["enabled"]:
                     cur_lr = poly_lr(self.lr, step - 1, total, self.lr_power) * lr_mul
                 else:
                     cur_lr = advanced.compute_scheduled_lr(
@@ -968,22 +892,15 @@ class Trainer:
                     for pg in self.optG.param_groups:
                         pg["lr"] = cur_lr
                 if self.ema_alpha_t is not None:
-                    k_ema = step if ext_mode else max(1, step - stage_start_step)
+                    k_ema = max(1, step - stage_start_step)
                     self.ema_alpha_t.fill_(advanced.compute_ema_alpha(self.adv["ema_lr"]["ema_decay"], k_ema))
                 feed(engine)
                 loss = engine.step()
                 stop_iv = min(log_iv, 10)
                 if (step % stop_iv == 0 or step == total) and os.path.exists(stop_file):
                     stop["flag"] = True
-                do_ck = step % ckpt_iv == 0 or step == total or step == ext_mid_ckpt
-                do_opt_chk = (
-                    scale == 1
-                    and patience_steps > 0
-                    and not stop["flag"]
-                    and step >= stage_1_start + settle_steps
-                    and (do_ck or step % opt_check_iv == 0 or step == end)
-                )
-                if step % log_iv == 0 or step == 1 or step == total or do_ck or do_opt_chk or stop["flag"]:
+                do_ck = step % ckpt_iv == 0 or step == total
+                if step % log_iv == 0 or step == 1 or step == total or do_ck or stop["flag"]:
                     if self.is_cuda:
                         buf = torch.empty((), dtype=torch.float32, pin_memory=True)
                         buf.copy_(loss, non_blocking=True)
@@ -1000,25 +917,10 @@ class Trainer:
                     self._save_checkpoint(step)
                 if do_pv or do_ck:
                     self._preview(step, do_pv, do_ck, (engine.x, engine.y) if do_pv else None, scale=scale, quality=do_q)
-                if do_opt_chk:
-                    rec_live = get_live_rec()
-                    m_live = rec_live.evaluate_step(step, state_dict=self.eval_state_dict(cpu=True))
-                    sc_live = rec_live.live_score_step(m_live)
-                    if opt_tracker["best_step"] <= 0 or sc_live > opt_tracker["best_score"] + 0.015:
-                        opt_tracker["best_score"] = sc_live
-                        opt_tracker["best_step"] = step
-                        if not do_ck:
-                            self._save_checkpoint(step)
-                    elif step - opt_tracker["best_step"] >= patience_steps:
-                        if not do_ck:
-                            self._save_checkpoint(step)
-                        opt_tracker["triggered"] = True
-                        opt_tracker["stopped_step"] = step
-
             engine = None
             try:
                 engine = make_engine(chosen_amp)
-                while step < end and not stop["flag"] and not opt_tracker["triggered"]:
+                while step < end and not stop["flag"]:
                     do_step(engine)
             except torch.cuda.OutOfMemoryError:
                 raise RuntimeError(
@@ -1041,236 +943,15 @@ class Trainer:
         t_start = time.time()
         try:
             for stage_idx, (scale, end) in enumerate(stages):
-                if step >= end or stop["flag"] or opt_tracker["triggered"]:
+                if step >= end or stop["flag"]:
                     continue
                 stage_start_step = 0 if stage_idx == 0 else stages[stage_idx - 1][1]
                 is_stage_transition = stage_idx > 0
-                run_stage_segment(scale, end, stage_start_step, is_stage_transition, ext_mode=False)
+                run_stage_segment(scale, end, stage_start_step, is_stage_transition)
 
             emit_ready(block=True)
             if stop["flag"]:
                 raise KeyboardInterrupt
-
-            if opt_tracker["live_rec"] is not None:
-                opt_tracker["live_rec"].release()
-                opt_tracker["live_rec"] = None
-
-            # ── Post-Budget Validation-Sequence Optimal Recommender, Patience Early-Stop & Auto-Extend ──
-            seq_files = recommender.resolve_eval_sequence_files(self.cfg)
-            auto_ext_on = _bool(tr.get("auto_extend_optimal", False))
-            max_ep_cap = int(tr.get("max_auto_extend_epochs") or 0)
-            ext_round = 0
-
-            def _finalize_patience_stop():
-                nonlocal total
-                final_ep = max(1, int(round(step * self.batch_size / float(max(1, len(self.src_full))))))
-                best_st = int(opt_tracker["best_step"] or step)
-                best_ep = max(1, int(round(best_st * self.batch_size / float(max(1, len(self.src_full))))))
-                elapsed_st = max(0, step - best_st)
-                self.epochs = final_ep
-                self.total_steps = int(step)
-                total = int(step)
-                self._write_run_info(
-                    {
-                        "initial_epochs": init_epochs,
-                        "initial_total_steps": init_total,
-                        "auto_extended": ext_round > 0,
-                        "auto_extended_rounds": ext_round,
-                        "stopped_after_optimal": True,
-                        "stop_after_optimal_epochs": self.stop_after_optimal_epochs,
-                        "optimal_step": best_st,
-                        "optimal_epoch": best_ep,
-                    }
-                )
-                log(
-                    f"[Optimal-Stop] Best model locked at Step {best_st} (~Epoch {best_ep}, score={opt_tracker['best_score']:.2f}); "
-                    f"+{self.stop_after_optimal_epochs} epochs ({elapsed_st} steps) elapsed without further gain -> stopping cleanly."
-                )
-
-            if opt_tracker["triggered"]:
-                self._flush_io_pool()
-                _finalize_patience_stop()
-                if len(seq_files) >= 2:
-                    rec_engine = recommender.CheckpointRecommender(
-                        self.run_dir,
-                        self.cfg,
-                        device=self.device,
-                        src_full=self.src_full,
-                        tgt_full=self.tgt_full,
-                    )
-                    try:
-                        summary = rec_engine.evaluate_and_summarize(
-                            current_step=step,
-                            current_state_dict=self.eval_state_dict(cpu=True),
-                            epochs=self.epochs,
-                            total_steps=total,
-                            initial_epochs=init_epochs,
-                            initial_total_steps=init_total,
-                            auto_extended_rounds=ext_round,
-                            stop_reason=f"stopped_after_optimal_+{self.stop_after_optimal_epochs}ep",
-                            stopped_after_optimal=True,
-                            stop_after_optimal_epochs=self.stop_after_optimal_epochs,
-                            optimal_step=int(opt_tracker["best_step"] or step),
-                            persist=True,
-                        )
-                        picks = summary.get("picks") or {}
-                        if picks:
-                            b_p = picks.get("balanced") or {}
-                            f_p = picks.get("flicker") or {}
-                            d_p = picks.get("detail") or {}
-                            # a lowest-HFI pick is no longer produced (2026-11); the key can only come from files saved by older versions
-                            hfi_str = f"{f_p['seq_hfi']:.5f}" if f_p.get("seq_hfi") is not None else "n/a"
-                            f_part = f"Lowest-HFI: Step {int(f_p.get('step') or step)} (HFI={hfi_str}) | " if f_p else ""
-                            log(
-                                f"[Optimal-Eval] Evaluated {int(summary.get('evaluated_checkpoint_count') or 0)} ckpts "
-                                f"on {int(summary.get('seq_evaluated_frames') or 0)} validation frames "
-                                f"({float(summary.get('elapsed_sec') or 0.0):.1f}s) -> "
-                                f"Balanced: Step {int(b_p.get('step') or step)} | "
-                                f"{f_part}"
-                                f"Peak-Detail: Step {int(d_p.get('step') or step)} (ROI={float(d_p.get('roi_psnr') or 0.0):.2f}dB)"
-                            )
-                    finally:
-                        rec_engine.release()
-            elif len(seq_files) >= 2 or (patience_steps > 0 and auto_ext_on):
-                self._flush_io_pool()
-                rec_engine = recommender.CheckpointRecommender(
-                    self.run_dir,
-                    self.cfg,
-                    device=self.device,
-                    src_full=self.src_full,
-                    tgt_full=self.tgt_full,
-                )
-                try:
-                    while True:
-                        summary = (
-                            rec_engine.evaluate_and_summarize(
-                                current_step=step,
-                                current_state_dict=self.eval_state_dict(cpu=True),
-                                epochs=self.epochs,
-                                total_steps=total,
-                                initial_epochs=init_epochs,
-                                initial_total_steps=init_total,
-                                auto_extended_rounds=ext_round,
-                                optimal_step=int(opt_tracker["best_step"] or 0),
-                                stop_after_optimal_epochs=self.stop_after_optimal_epochs,
-                                persist=True,
-                            )
-                            if len(seq_files) >= 2
-                            else {}
-                        )
-                        picks = summary.get("picks") or {}
-                        if picks:
-                            b_p = picks.get("balanced") or {}
-                            f_p = picks.get("flicker") or {}
-                            d_p = picks.get("detail") or {}
-                            # a lowest-HFI pick is no longer produced (2026-11); the key can only come from files saved by older versions
-                            hfi_str = f"{f_p['seq_hfi']:.5f}" if f_p.get("seq_hfi") is not None else "n/a"
-                            f_part = f"Lowest-HFI: Step {int(f_p.get('step') or step)} (HFI={hfi_str}) | " if f_p else ""
-                            log(
-                                f"[Optimal-Eval] Evaluated {int(summary.get('evaluated_checkpoint_count') or 0)} ckpts "
-                                f"on {int(summary.get('seq_evaluated_frames') or 0)} validation frames "
-                                f"({float(summary.get('elapsed_sec') or 0.0):.1f}s) -> "
-                                f"Balanced: Step {int(b_p.get('step') or step)} | "
-                                f"{f_part}"
-                                f"Peak-Detail: Step {int(d_p.get('step') or step)} (ROI={float(d_p.get('roi_psnr') or 0.0):.2f}dB)"
-                            )
-                        if not auto_ext_on or stop["flag"] or os.path.exists(stop_file):
-                            break
-                        should_ext, reason, next_epochs = rec_engine.decide_auto_extend(
-                            summary,
-                            initial_epochs=init_epochs,
-                            initial_total_steps=init_total,
-                            current_epochs=self.epochs,
-                            current_total_steps=total,
-                            auto_extend_rounds=ext_round,
-                            max_epochs_cap=max_ep_cap,
-                            stop_after_optimal_epochs=self.stop_after_optimal_epochs,
-                            best_opt_step=int(opt_tracker["best_step"] or 0),
-                        )
-                        if not should_ext:
-                            if len(seq_files) >= 2:
-                                rec_engine.evaluate_and_summarize(
-                                    current_step=step,
-                                    epochs=self.epochs,
-                                    total_steps=total,
-                                    initial_epochs=init_epochs,
-                                    initial_total_steps=init_total,
-                                    auto_extended_rounds=ext_round,
-                                    stop_reason=reason,
-                                    stop_after_optimal_epochs=self.stop_after_optimal_epochs,
-                                    optimal_step=int(opt_tracker["best_step"] or 0),
-                                    persist=True,
-                                )
-                            log("[Optimal-Eval] Optimal checkpoint confirmed (%s)." % reason)
-                            break
-
-                        new_total = max(
-                            total + 1,
-                            math.ceil(next_epochs * len(self.src_full) / float(self.batch_size)),
-                        )
-                        ext_round += 1
-                        ext_start = step
-                        self.epochs = int(next_epochs)
-                        self.total_steps = int(new_total)
-                        total = int(new_total)
-                        self._write_run_info(
-                            {
-                                "initial_epochs": init_epochs,
-                                "initial_total_steps": init_total,
-                                "auto_extended": True,
-                                "auto_extended_rounds": ext_round,
-                            }
-                        )
-                        log(
-                            "[Auto-Extend #%d] Validation metrics still improving (%s) -> continuing to %d epochs (step %d)..."
-                            % (ext_round, reason, self.epochs, total)
-                        )
-                        run_stage_segment(
-                            scale=1,
-                            end=total,
-                            stage_start_step=ext_start,
-                            is_stage_transition=False,
-                            ext_mode=True,
-                            ext_start_step=ext_start,
-                        )
-                        emit_ready(block=True)
-                        self._flush_io_pool()
-                        if opt_tracker["live_rec"] is not None:
-                            opt_tracker["live_rec"].release()
-                            opt_tracker["live_rec"] = None
-                        if stop["flag"]:
-                            if len(seq_files) >= 2:
-                                rec_engine.evaluate_and_summarize(
-                                    current_step=step,
-                                    epochs=self.epochs,
-                                    total_steps=total,
-                                    initial_epochs=init_epochs,
-                                    initial_total_steps=init_total,
-                                    auto_extended_rounds=ext_round,
-                                    stop_reason="user_stopped",
-                                    persist=True,
-                                )
-                            raise KeyboardInterrupt
-                        if opt_tracker["triggered"]:
-                            _finalize_patience_stop()
-                            if len(seq_files) >= 2:
-                                rec_engine.evaluate_and_summarize(
-                                    current_step=step,
-                                    current_state_dict=self.eval_state_dict(cpu=True),
-                                    epochs=self.epochs,
-                                    total_steps=total,
-                                    initial_epochs=init_epochs,
-                                    initial_total_steps=init_total,
-                                    auto_extended_rounds=ext_round,
-                                    stop_reason=f"stopped_after_optimal_+{self.stop_after_optimal_epochs}ep",
-                                    stopped_after_optimal=True,
-                                    stop_after_optimal_epochs=self.stop_after_optimal_epochs,
-                                    optimal_step=int(opt_tracker["best_step"] or step),
-                                    persist=True,
-                                )
-                            break
-                finally:
-                    rec_engine.release()
 
             if self.quality.due(step, total, time.time() - t_start, final=True):  # the run ended before its last planned step
                 self._preview(step, False, False, quality=True)
@@ -1283,11 +964,6 @@ class Trainer:
                 self._save_checkpoint(step)
             log("stopped.")
         finally:
-            if opt_tracker.get("live_rec") is not None:
-                try:
-                    opt_tracker["live_rec"].release()
-                except Exception:
-                    pass
             if os.path.exists(stop_file):
                 try:
                     os.remove(stop_file)

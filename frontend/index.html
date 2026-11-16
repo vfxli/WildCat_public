@@ -1105,56 +1105,6 @@
                     </div>
                   </div>
 
-                  <!-- Row 2: Dedicated Best-Combo Stopping Option ("Stop N Epochs After Optimal") + Auto-Extend -->
-                  <div class="bg-slate-950/90 border border-emerald-500/30 rounded-xl p-3.5 space-y-2.5">
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                      <div class="flex flex-wrap items-center gap-2">
-                        <label class="flex items-center gap-2 cursor-pointer select-none">
-                          <input v-model="labComboCfg.stopAfterOptimalOn" type="checkbox" class="wc-check" />
-                          <span class="text-xs font-bold text-emerald-300">{{ t('lab.comboStopAfterOptPrefix') }}</span>
-                        </label>
-                        <input v-model.number="labComboCfg.stopAfterOptimalEpochs"
-                               @input="onLabComboPatienceInput"
-                               :disabled="!labComboCfg.stopAfterOptimalOn"
-                               type="number"
-                               min="100"
-                               step="5000"
-                               class="wc-input wc-input-xs !w-28 text-xs wc-mono font-bold text-center text-white disabled:opacity-45" />
-                        <span class="text-xs font-bold"
-                              :class="labComboCfg.stopAfterOptimalOn ? 'text-emerald-300' : 'text-slate-500'">
-                          {{ t('lab.comboStopAfterOptSuffix') }}
-                        </span>
-                        <help-tip doc="lab_stop_after_best"></help-tip>
-                        <div class="flex items-center gap-1 ml-1">
-                          <button v-for="pEp in [20000, 50000, 80000, 100000]"
-                                  :key="'pat-' + pEp"
-                                  type="button"
-                                  @click="setLabComboPatiencePreset(pEp)"
-                                  class="px-2 py-0.5 rounded border text-[10px] wc-mono font-semibold transition-all"
-                                  :class="labComboCfg.stopAfterOptimalOn && Number(labComboCfg.stopAfterOptimalEpochs) === pEp
-                                    ? 'bg-emerald-600/30 border-emerald-400/60 text-emerald-200'
-                                    : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'">
-                            {{ (pEp / 1000).toFixed(0) }}k
-                          </button>
-                        </div>
-                      </div>
-
-                      <label class="flex items-center gap-2 select-none text-xs"
-                             :class="hasSelectedDatasetEvalSeq ? 'cursor-pointer text-slate-200' : 'opacity-45 cursor-not-allowed text-slate-500'">
-                        <input :checked="hasSelectedDatasetEvalSeq && labComboCfg.autoExtendOn"
-                               @change="labComboCfg.autoExtendOn = $event.target.checked"
-                               :disabled="!hasSelectedDatasetEvalSeq"
-                               type="checkbox"
-                               class="wc-check disabled:cursor-not-allowed" />
-                        <span class="font-semibold">{{ docTitle('auto_extend') }}</span><help-tip doc="auto_extend"></help-tip>
-                        <span v-if="!hasSelectedDatasetEvalSeq" class="text-[10px] text-slate-500">({{ t('wizard.autoExtendNoSeqShort') }})</span>
-                      </label>
-                    </div>
-                    <p class="text-[11px] text-slate-400 leading-relaxed">
-                      {{ docSummary('lab_stop_after_best') }}
-                    </p>
-                  </div>
-
                   <!-- Row 3: Live Candidate Matrix Preview & Multi-GPU Parallel Runtime Estimate -->
                   <div class="bg-slate-950/75 border border-slate-800 rounded-xl p-3.5 space-y-3">
                     <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1163,13 +1113,7 @@
                           {{ t('lab.comboPreviewHeaderFmt', { count: labComboSuitePreview.candidates.length }) }}
                         </span>
                         <span class="px-2.5 py-0.5 rounded-lg bg-indigo-500/15 border border-indigo-500/35 text-[11px] font-semibold text-indigo-200 wc-mono">
-                          {{ labComboCfg.stopAfterOptimalOn
-                              ? t('lab.comboEtaWithPatienceFmt', {
-                                  gpus: labComboSuitePreview.gpuSlots,
-                                  est: formatEta(labComboSuitePreview.estPatienceParallelSec),
-                                  max: formatEta(labComboSuitePreview.maxBudgetParallelSec)
-                                })
-                              : t('lab.comboEtaFullBudgetFmt', {
+                          {{ t('lab.comboEtaFullBudgetFmt', {
                                   gpus: labComboSuitePreview.gpuSlots,
                                   max: formatEta(labComboSuitePreview.maxBudgetParallelSec)
                                 }) }}
@@ -1557,16 +1501,6 @@
                     </span>
                     <help-tip doc="color_pipeline"></help-tip>
                   </div>
-                  <span v-if="topNav === 'lab' && hasSelectedDatasetEvalSeq && form.stop_after_optimal_epochs > 0" class="flex items-center">
-                    <button type="button"
-                            @click="form.stop_after_optimal_epochs = 0"
-                            :title="t('lab.formPatienceClearTip')"
-                            class="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-[11px] font-semibold text-amber-300 wc-mono flex items-center gap-1.5 transition-all">
-                      <span>{{ t('lab.formPatienceBadgeFmt', { epochs: form.stop_after_optimal_epochs.toLocaleString() }) }}</span>
-                      <span class="text-amber-200/80 hover:text-white">✕</span>
-                    </button>
-                    <help-tip doc="lab_stop_after_best"></help-tip>
-                  </span>
                 </div>
 
                 <!-- Uniform 4-Column Hyperparameter Grid -->
@@ -1608,41 +1542,6 @@
                            :max="userMaxEpochs > 0 ? userMaxEpochs : null"
                            step="1"
                            class="wc-input wc-mono" />
-                  </div>
-
-                  <!-- 3. Auto-Extend Until Optimal (Standard Dropdown Size, Disabled When No Eval Sequence) -->
-                  <div>
-                    <label class="flex items-center justify-between h-5 text-xs font-medium mb-1.5"
-                           :class="hasSelectedDatasetEvalSeq ? 'text-slate-300' : 'text-slate-500'">
-                      <span class="flex items-center shrink-0 whitespace-nowrap">
-                        <span>{{ t('wizard.autoExtendOptLbl') }}</span>
-                        <help-tip doc="auto_extend"></help-tip>
-                      </span>
-                      <span v-if="hasSelectedDatasetEvalSeq"
-                            class="ml-2 min-w-0 truncate text-[10px] text-emerald-400 wc-mono">
-                        {{ t('wizard.autoExtendSeqReady') }}
-                      </span>
-                      <button v-else-if="selectedDataset"
-                              type="button"
-                              @click.stop="openAttachSeqModal(selectedDataset)"
-                              class="ml-2 min-w-0 truncate text-[10px] text-amber-400/90 hover:text-amber-300 underline decoration-dotted">
-                        {{ t('wizard.autoExtendAttachHint') }}
-                      </button>
-                      <span v-else class="ml-2 min-w-0 truncate text-[10px] text-slate-500">
-                        {{ t('wizard.autoExtendNoSeqShort') }}
-                      </span>
-                    </label>
-                    <select v-if="hasSelectedDatasetEvalSeq"
-                            v-model="form.auto_extend_optimal"
-                            class="wc-select">
-                      <option :value="true">{{ t('wizard.autoExtendOnOpt') }}</option>
-                      <option :value="false">{{ t('wizard.autoExtendOffOpt') }}</option>
-                    </select>
-                    <select v-else
-                            disabled
-                            class="wc-select opacity-45 cursor-not-allowed bg-slate-900/60 text-slate-500">
-                      <option>{{ t('wizard.autoExtendDisabledOpt') }}</option>
-                    </select>
                   </div>
 
                   <!-- 3. Batch Size -->
@@ -3169,103 +3068,11 @@
                   </div>
 
                   <div v-if="taskModels.count > 0" class="flex flex-wrap items-center gap-2">
-                    <span v-if="taskModels.has_eval_sequence && activeTask && activeTask.status !== 'running'" class="inline-flex items-center gap-1">
-                      <button @click="evaluateTaskRecommendations(activeTask.id, !!taskModels.recommendations)"
-                              :disabled="taskModels.evaluatingRec"
-                              class="px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/35 disabled:opacity-50 text-indigo-200 text-xs font-semibold border border-indigo-400/40 transition-all">
-                        {{ taskModels.evaluatingRec ? t('monitor.recEvaluatingBtn') : (taskModels.recommendations ? t('monitor.recRecomputeBtn') : t('monitor.recComputeBtn')) }}
-                      </button>
-                      <help-tip doc="monitor_rec"></help-tip>
-                    </span>
                     <button @click="downloadAllModels(activeTask.id, 'pt')"
                             class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
                       {{ t('monitor.dlAllPtZipBtn', { zip: taskModels.zip_filename }) }}
                     </button>
                     <help-tip doc="monitor_download"></help-tip>
-                  </div>
-                </div>
-
-                <!-- Validation-Sequence Multi-Metric Optimal Checkpoint Recommendations -->
-                <div v-if="taskModels.patience_stop_info && !(taskModels.recommendations && taskModels.recommendations.picks)"
-                     class="px-5 py-3 bg-amber-950/20 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span class="font-semibold text-amber-200 wc-mono">
-                    {{ t('monitor.recStoppedAfterOptStandalone', {
-                      optStep: taskModels.patience_stop_info.optimal_step || 0,
-                      optEp: Number(taskModels.patience_stop_info.optimal_epoch || 0).toLocaleString(),
-                      patEp: Number(taskModels.patience_stop_info.stop_after_optimal_epochs || 0).toLocaleString(),
-                      finalEp: Number(taskModels.patience_stop_info.final_epochs || 0).toLocaleString()
-                    }) }}<help-tip doc="lab_stop_after_best"></help-tip>
-                  </span>
-                </div>
-                <div v-if="taskModels.recommendations && taskModels.recommendations.picks"
-                     class="px-5 py-4 bg-gradient-to-r from-indigo-950/35 via-slate-900 to-emerald-950/25 border-b border-slate-800 space-y-3">
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span class="text-xs font-bold text-white">{{ t('monitor.recTitle') }}<help-tip doc="monitor_rec"></help-tip></span>
-                      <span class="text-[11px] text-slate-400 wc-mono">
-                        {{ t('monitor.recSubInfo', {
-                          frames: taskModels.recommendations.seq_evaluated_frames || 0,
-                          totalFrames: taskModels.recommendations.seq_total_frames || 0,
-                          ckpts: taskModels.recommendations.evaluated_checkpoint_count || 0
-                        }) }}
-                      </span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span v-if="taskModels.recommendations.stopped_after_optimal"
-                            class="px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-[11px] font-semibold text-amber-200 wc-mono">
-                        {{ t('monitor.recStoppedAfterOptBadge', {
-                          optStep: taskModels.recommendations.optimal_step || 0,
-                          patEp: Number(taskModels.recommendations.stop_after_optimal_epochs || 0).toLocaleString(),
-                          finalEp: Number(taskModels.recommendations.final_epochs || 0).toLocaleString()
-                        }) }}<help-tip doc="lab_stop_after_best"></help-tip>
-                      </span>
-                      <span v-if="taskModels.recommendations.auto_extended"
-                            class="px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-[11px] font-semibold text-emerald-300 wc-mono">
-                        {{ t('monitor.recAutoExtendedBadge', {
-                          initEp: Number(taskModels.recommendations.initial_epochs || 0).toLocaleString(),
-                          finalEp: Number(taskModels.recommendations.final_epochs || 0).toLocaleString(),
-                          rounds: taskModels.recommendations.auto_extended_rounds || 1
-                        }) }}<help-tip doc="auto_extend"></help-tip>
-                      </span>
-                    </div>
-                  </div>
-
-                  <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                    <div v-for="rc in [
-                           { key: 'balanced', pick: taskModels.recommendations.picks.balanced, cardCls: 'border-emerald-500/40 bg-emerald-950/15', badgeCls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
-                           { key: 'detail',   pick: taskModels.recommendations.picks.detail,   cardCls: 'border-violet-500/40 bg-violet-950/15', badgeCls: 'bg-violet-500/20 text-violet-300 border-violet-500/40' }
-                         ]"
-                         :key="rc.key"
-                         v-show="rc.pick"
-                         class="rounded-xl border p-3.5 flex flex-col justify-between gap-2.5"
-                         :class="rc.cardCls">
-                      <div class="space-y-1.5">
-                        <div class="flex items-center justify-between gap-2">
-                          <span class="inline-flex items-center gap-1">
-                            <span class="px-2 py-0.5 rounded border text-[11px] font-bold" :class="rc.badgeCls">
-                              {{ t('monitor.recRole_' + rc.key) }}
-                            </span>
-                            <help-tip :doc="'monitor_rec_' + rc.key"></help-tip>
-                          </span>
-                          <span v-if="rc.pick" class="text-xs font-bold text-white wc-mono">
-                            Step {{ rc.pick.step }}
-                            <span v-if="rc.pick.epoch" class="text-[11px] font-normal text-slate-400">(Ep {{ rc.pick.epoch }})</span>
-                          </span>
-                        </div>
-                        <div class="text-[11px] text-slate-300 leading-snug">{{ t('monitor.recRoleSub_' + rc.key) }}</div>
-                        <div v-if="rc.pick" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] wc-mono text-slate-300 pt-0.5">
-                          <span>{{ t('monitor.fitRegionLabel') }} <strong class="text-emerald-300">{{ Number(rc.pick.roi_psnr || 0).toFixed(2) }} dB</strong></span>
-                          <span>{{ t('monitor.fitWholeLabel') }} <strong class="text-indigo-200">{{ Number(rc.pick.psnr_aces || 0).toFixed(2) }} dB</strong></span>
-                          <help-tip doc="metric_kf_fit"></help-tip>
-                        </div>
-                      </div>
-                      <div v-if="rc.pick && activeTask" class="flex items-center justify-end gap-2 pt-1 border-t border-slate-800/70">
-                        <button @click="downloadModel(activeTask.id, 'pt', rc.pick.step)"
-                                class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold transition-all">
-                          {{ t('monitor.dlModelPtBtn') }}
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -3293,13 +3100,6 @@
                             <span class="font-bold text-white">Step {{ m.step }}</span>
                             <span v-if="m.epoch" class="text-slate-400 text-[11px]">(Epoch {{ m.epoch }})</span>
                             <span v-if="m.is_latest" class="px-1.5 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-[10px] font-bold text-indigo-300">{{ t('monitor.tagLatest') }}</span>
-                            <span v-if="m.is_best" class="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-bold text-emerald-300">{{ t('monitor.tagBest') }}</span>
-                            <span v-if="m.rec_roles && m.rec_roles.includes('balanced')" class="px-1.5 py-0.5 rounded bg-emerald-500/25 border border-emerald-400/50 text-[10px] font-bold text-emerald-200">{{ t('monitor.tagRecBalanced') }}</span>
-                            <span v-if="m.rec_roles && m.rec_roles.includes('flicker')" class="px-1.5 py-0.5 rounded bg-sky-500/25 border border-sky-400/50 text-[10px] font-bold text-sky-200">{{ t('monitor.tagRecFlicker') }}</span>
-                            <span v-if="m.rec_roles && m.rec_roles.includes('detail')" class="px-1.5 py-0.5 rounded bg-violet-500/25 border border-violet-400/50 text-[10px] font-bold text-violet-200">{{ t('monitor.tagRecDetail') }}</span>
-                          </div>
-                          <div v-if="m.rec_metrics" class="text-[10px] text-slate-400 mt-0.5">
-                            {{ t('monitor.fitRegionLabel') }} {{ Number(m.rec_metrics.roi_psnr || 0).toFixed(2) }} dB
                           </div>
                         </td>
                         <td class="py-2.5 px-4 wc-mono text-indigo-200 select-text">{{ m.filename }}</td>
@@ -5469,6 +5269,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261117_p59"></script>
+  <script type="module" src="/static/app.js?v=20261117_v252"></script>
 </body>
 </html>

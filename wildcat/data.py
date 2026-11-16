@@ -74,6 +74,15 @@ def _resolve_env_pattern(pattern: str) -> str:
     return pattern
 
 
+def resolve_eval_sequence_files(cfg):
+    """Frames of `paths.eval_sequence` (the plate), sorted; [] unless there are at least 2."""
+    raw_seq = str(((cfg or {}).get("paths") or {}).get("eval_sequence") or "").strip()
+    if not raw_seq:
+        return []
+    files = expand_pattern(raw_seq)
+    return files if len(files) >= 2 else []
+
+
 def expand_pattern(pattern):
     pattern = _resolve_env_pattern(str(pattern or ""))
     if os.path.isdir(pattern):

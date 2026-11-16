@@ -109,13 +109,6 @@
     "nukeHiddenHint": "Hidden in Nuke",
     "modelMediumDefault": "Medium (Default)",
     "epochsCapHint": "Max {max}",
-    "autoExtendOptLbl": "Auto-extend",
-    "autoExtendOnOpt": "On",
-    "autoExtendOffOpt": "Off (Default)",
-    "autoExtendDisabledOpt": "Unavailable (needs a validation sequence)",
-    "autoExtendNoSeqShort": "Needs a sequence",
-    "autoExtendSeqReady": "✓ Sequence attached",
-    "autoExtendAttachHint": "+ Add sequence",
     "quotaExhaustedBanner": "🔒 Tasks in progress are at the limit ({used}/{max}, queued + training); a new task can be submitted when one of them has finished.",
     "batchClampedHint": "Actual {eff}",
     "batchAutoOpt": "Auto (8 · Default)",
@@ -278,7 +271,7 @@
       "overallLabel": "Overall look to consensus (recommended)"
     },
     "el": {
-      "badge": "Steadier early stops and mid-run checkpoints · Training unchanged",
+      "badge": "Steadier mid-run stops and checkpoints · Training unchanged",
       "statusOn": "On · β={decay} (average of about the last {effSteps} steps)",
       "statusOff": "Nuke default: weights of the current step",
       "switchTip": "Switch averaged weights on or off",
@@ -358,22 +351,6 @@
     "colSizeTime": "Size / Saved At",
     "colDownload": "Download",
     "tagLatest": "Latest",
-    "tagBest": "Lowest keyframe MSE",
-    "recTitle": "Checkpoint Recommendation",
-    "recSubInfo": "{ckpts} checkpoints evaluated · {frames}/{totalFrames} validation-sequence frames",
-    "recAutoExtendedBadge": "⚡ Auto-extended: {initEp} → {finalEp} Epochs ({rounds}×)",
-    "recStoppedAfterOptBadge": "⏹ Stopped early: best score at step {optStep}, no gain for {patEp} Epochs after it, stopped at {finalEp} Epochs",
-    "recStoppedAfterOptStandalone": "⏹ Stopped early: best score at {optEp} Epochs (step {optStep}); no gain for {patEp} Epochs after it, training stopped at {finalEp} Epochs",
-    "recComputeBtn": "Compute Recommendation",
-    "recRecomputeBtn": "↻ Recompute",
-    "recEvaluatingBtn": "⏳ Evaluating checkpoints…",
-    "recRole_balanced": "⚖️ Balanced · latest full-resolution checkpoint",
-    "recRole_detail": "🎯 Detail · best fit of the edited region",
-    "recRoleSub_balanced": "The latest full-resolution (1/1) checkpoint; for matte outputs, checkpoints whose foreground collapsed are skipped. When the run finished its Epochs, this is usually the best version.",
-    "recRoleSub_detail": "The full-resolution checkpoint with the highest edited-region PSNR and lowest edge error on the keyframes. It reflects the fit to the training keyframes only; the in-between frames are not necessarily better.",
-    "tagRecBalanced": "⚖️ Balanced",
-    "tagRecFlicker": "Lowest HFI (older tasks)",
-    "tagRecDetail": "🎯 Detail",
     "onDemandExport": "Exported on download",
     "dlSingleTip": "Download {filename}",
     "dlModelPtBtn": "Download .pt",
@@ -490,9 +467,7 @@
     "qColFrame": "Frame",
     "qColFrameStrength": "Strength (%)",
     "qHelpToggle": "About These Measures",
-    "taskPathsFmt": "Input: {src} → Ground Truth: {tgt} · Model Size: {model}",
-    "fitRegionLabel": "Edited region",
-    "fitWholeLabel": "Whole frame"
+    "taskPathsFmt": "Input: {src} → Ground Truth: {tgt} · Model Size: {model}"
   },
   "datasets": {
     "title": "Datasets",
@@ -558,7 +533,7 @@
     "targetTitle": "Keyframe Ground Truth · EXR / PNG / TIFF / JPG",
     "targetHintHtml": "Select the Ground Truth images matching the Inputs (<code class=\"text-emerald-300\">.exr</code> recommended) or one .zip file. Pairs are formed in file-name order.",
     "optSeqTitle": "Validation sequence (optional) · EXR / PNG / TIFF / JPG / ZIP",
-    "optSeqHintHtml": "The complete original plate of the shot, at the keyframe resolution, at least 2 frames. Used for quality monitoring, checkpoint recommendation, keyframe commonality and sequence evaluation in Experiments; it can also be added later.",
+    "optSeqHintHtml": "The complete original plate of the shot, at the keyframe resolution, at least 2 frames. Used for quality monitoring, keyframe commonality and sequence evaluation in Experiments; it can also be added later.",
     "filesSelected": "{count} file(s) selected",
     "noFilesSelected": "No files selected",
     "checkFailedTitle": "Material check failed:",
@@ -644,7 +619,6 @@
     "evGroup_method": "Test method and material",
     "evGroup_adv": "Advanced settings",
     "evGroup_training": "Training settings",
-    "evGroup_checkpoint": "Checkpoints and automatic stopping",
     "evGroup_presets": "Scene presets"
   },
   "admin": {
@@ -896,10 +870,7 @@
     "comboScopeCompact": "Compact · 4 tasks",
     "comboScopeStandard": "Standard · up to 6 tasks",
     "comboScopeThorough": "All · up to 8 tasks",
-    "comboStopAfterOptPrefix": "Stop when the score has not improved for",
-    "comboStopAfterOptSuffix": "Epochs",
     "comboPreviewHeaderFmt": "{count} tasks",
-    "comboEtaWithPatienceFmt": "{gpus} GPU(s) in parallel: about {est} (about {max} if every task trains to its full Epochs)",
     "comboEtaFullBudgetFmt": "{gpus} GPU(s) in parallel: about {max}",
     "comboHidePreviewBtn": "Hide details ▲",
     "comboShowPreviewBtn": "Show details ▼",
@@ -943,9 +914,7 @@
     "comboReason_fe_2": "Comparison: keyframe commonality off, everything else as recommended.",
     "comboReason_fe_3": "Crop grid kept at 4 px (Nuke CopyCat default), everything else as recommended.",
     "comboReason_fe_nokf": "Recommended configuration without keyframe commonality: Medium, 1 px crop grid, Charbonnier 0.25, averaged weights (EMA). Keyframe commonality cannot be used on this dataset; the reason is shown above.",
-    "comboReason_nuke": "Nuke CopyCat defaults: 4 px crop grid, plain MSE, no advanced settings, no early stop. Same Model Size as the recommended configuration.",
-    "formPatienceBadgeFmt": "⏱ Stop after {epochs} Epochs without improvement",
-    "formPatienceClearTip": "The form carries Stop after best score. Click to clear it and train to the full Epochs.",
+    "comboReason_nuke": "Nuke CopyCat defaults: 4 px crop grid, plain MSE, no advanced settings. Same Model Size as the recommended configuration.",
     "comboReason_fe_4": "Model Size Small, everything else as recommended; about 2/3 of the training time.",
     "comboReason_fe_5": "Keyframe commonality without the overall look, everything else as recommended. For shots whose keyframes differ in overall density or colour on purpose, such as a wound that darkens over time or make-up that appears gradually.",
     "comboReason_fe_6": "Keyframe commonality with RAFT optical flow, everything else as recommended. Aligns keyframes more accurately on fast motion; the preparation before training takes longer.",
@@ -962,7 +931,6 @@
     "deltaLegend": "Below each value: difference from the reference (Δ)"
   },
   "msg": {
-    "errInvalidStopOptimalEpochs": "Early stop: the number of Epochs must be a whole number of at least 1.",
     "labComboStagedToast": "Added {count} comparison runs to the staged group '{group}'.",
     "copiedLatex": "LaTeX formula copied",
     "copyFailedManual": "The clipboard is not available; select and copy the text manually.",
@@ -970,8 +938,6 @@
     "presetNukeLoaded": "Switched to the Nuke CopyCat defaults (all advanced settings off).",
     "presetEmpiricalLoaded": "Preset loaded: {name}. Epochs unchanged.",
     "presetFaceLoaded": "Preset loaded: {name}. Epochs unchanged; keyframe commonality needs a validation sequence and at least 3 keyframes.",
-    "evaluatingRecommendationsToast": "Evaluating the checkpoints on the validation sequence…",
-    "recommendationsReadyToast": "Checkpoint recommendations are ready.",
     "reqFailedStatus": "Request failed ({status})",
     "switchedMachine": "Switched to workspace: {machine}",
     "enterOldAndNewPwd": "Enter the current administrator password and the new password.",
@@ -1156,9 +1122,7 @@
     "tempUserStepsExceeded": "Temporary users can train at most {max_steps} steps per task (this setting needs {requested}). Increase Batch Size or reduce Epochs.",
     "tempUserUploadQuotaExceeded": "Temporary users can upload at most {max_assets} datasets (2 GB in total).",
     "tempUserResumeDatasetLocked": "The dataset cannot be changed when resuming or extending a task",
-    "invalidTrainParam": "Invalid or out-of-range training parameter: {field}",
-    "taskRecommendBusy": "The task is training; checkpoint recommendations are generated when it finishes",
-    "taskRecommendNoSeq": "This task's dataset has no validation sequence. Add one on the Datasets page first."
+    "invalidTrainParam": "Invalid or out-of-range training parameter: {field}"
   },
   "doc": {
     "task_name": {
@@ -1169,7 +1133,7 @@
     "dataset": {
       "title": "Dataset",
       "summary": "The dataset to train on: keyframe pairs (Input and Ground Truth), optionally with the shot's validation sequence.",
-      "body": "## In Nuke CopyCat\nThe image pairs connected to the Input and Ground Truth inputs of the CopyCat node.\n\n## What it does\nClick the field to open the dataset list. The selected dataset is previewed below: Input on the left, Ground Truth on the right; when the dataset has a validation sequence, the preview can switch to the whole sequence. The dataset's channels decide which [[doc:channels]] options are available, and the number of keyframes enters the total step count (see [[doc:epochs]]).\n\n## Requirements\nDatasets are created on the Datasets page, see [[doc:dataset_keyframes]]. The validation sequence is optional (see [[doc:dataset_validation_sequence]]); auto-extend, the checkpoint recommendation, keyframe commonality and the training-quality measures need it."
+      "body": "## In Nuke CopyCat\nThe image pairs connected to the Input and Ground Truth inputs of the CopyCat node.\n\n## What it does\nClick the field to open the dataset list. The selected dataset is previewed below: Input on the left, Ground Truth on the right; when the dataset has a validation sequence, the preview can switch to the whole sequence. The dataset's channels decide which [[doc:channels]] options are available, and the number of keyframes enters the total step count (see [[doc:epochs]]).\n\n## Requirements\nDatasets are created on the Datasets page, see [[doc:dataset_keyframes]]. The validation sequence is optional (see [[doc:dataset_validation_sequence]]); keyframe commonality and the training-quality measures need it."
     },
     "device": {
       "title": "Use Device",
@@ -1190,11 +1154,6 @@
       "title": "Epochs",
       "summary": "Number of passes over all keyframes; sets the total number of training steps. Same as Epochs in Nuke CopyCat.",
       "body": "## In Nuke CopyCat\n**Epochs** of the CopyCat node, default 10000.\n\n## What it does\nTotal Steps = ⌈Epochs × number of keyframes ÷ Batch Size⌉, shown to the right of the field. For example, 8 keyframes, Batch Size 8 and 10000 Epochs give 10000 steps.\n\n## Recommended values\nStart with the default. Once the Loss curve and the preview on the task page stop changing, further training adds little; a finished task can be continued by extending its Epochs on the task page (see [[doc:monitor_extend]]).\n\n## Limitations\nScene presets never change Epochs. Temporary users may have an Epochs limit, shown next to the field."
-    },
-    "auto_extend": {
-      "title": "Auto-extend",
-      "summary": "After the set Epochs, keeps training in further rounds while the fit to the training keyframes still improves clearly, up to a limit. Off by default.",
-      "body": "## What it does\nWhen the set Epochs are reached, the saved checkpoints are evaluated on the validation sequence; if the fit to the training keyframes (PSNR) is still improving (by at least 0.20 dB per extension round), training continues for about 30% of the Epochs and the check is repeated. At most 4 rounds; the total never exceeds 2.5 times the set Epochs or the account's Epochs limit. Auto-extend never ends training early.\n\n## When to use\nWhen the set Epochs may be too few and training should top up on its own. The criterion looks only at the training keyframes and cannot tell whether the in-between frames benefit as well; degrain shots do not improve with longer training, so leave it off for them.\n\n## Requirements\nThe dataset has a validation sequence (see [[doc:dataset_validation_sequence]]).\n\n## Limitations\nWhen off (default), the task trains exactly the set Epochs, as Nuke CopyCat does. The number of extension rounds is shown with the checkpoint recommendation on the task page."
     },
     "batch_size": {
       "title": "Batch Size",
@@ -1364,7 +1323,7 @@
     "adv_ema": {
       "title": "Averaged weights (EMA)",
       "summary": "Keeps a running average of the weights next to the trained weights; previews, checkpoints and exports use the average. Training itself is unchanged; results are steadier when stopping early or using a mid-run checkpoint.",
-      "body": "## In Nuke CopyCat\n\nCopyCat previews, saves and exports the weights of the current step. While the learning rate is still high, the weights move a little from step to step, so stopping early or picking a checkpoint from the middle of the run can catch them at an off moment.\n\n## What it does\n\nThe optimiser never reads the average, so the trained weights are exactly the same as without it. Validation, previews, checkpoints, the [[doc:monitor_rec|checkpoint recommendation]] and exported models use the averaged weights. The average restarts at every new resolution stage.\n\n## When to use\n\nWhen training may be stopped early based on the preview, or a checkpoint from the middle of the run will be used. The difference is largest on keying, clean-up and face-edit shots, whose presets switch it on; on defocus and degrain shots it makes little difference.\n\n## Recommended values\n\n[[doc:adv_ema_decay|Decay β]] 0.9995 (about the average of the last 2000 steps).\n\n## Limitations\n\nFor a run trained to the end, averaged and current weights give the same result (the learning rate is then close to 0). In the first, low-resolution stage the average can lag slightly behind. The extra cost per step is small."
+      "body": "## In Nuke CopyCat\n\nCopyCat previews, saves and exports the weights of the current step. While the learning rate is still high, the weights move a little from step to step, so stopping early or picking a checkpoint from the middle of the run can catch them at an off moment.\n\n## What it does\n\nThe optimiser never reads the average, so the trained weights are exactly the same as without it. Validation, previews, checkpoints and exported models use the averaged weights. The average restarts at every new resolution stage.\n\n## When to use\n\nWhen training may be stopped early based on the preview, or a checkpoint from the middle of the run will be used. The difference is largest on keying, clean-up and face-edit shots, whose presets switch it on; on defocus and degrain shots it makes little difference.\n\n## Recommended values\n\n[[doc:adv_ema_decay|Decay β]] 0.9995 (about the average of the last 2000 steps).\n\n## Limitations\n\nFor a run trained to the end, averaged and current weights give the same result (the learning rate is then close to 0). In the first, low-resolution stage the average can lag slightly behind. The extra cost per step is small."
     },
     "adv_ema_decay": {
       "title": "Decay β",
@@ -1454,12 +1413,12 @@
     "lab_combo": {
       "title": "Comparison set",
       "summary": "Generates a set of comparison tasks for the selected task type: the recommended configuration (same as the scene preset), variants of it, and a control with the Nuke CopyCat defaults.",
-      "body": "## What it does\nBuilds a set of training settings for the selected task type and adds it to a new experiment group:\n\n- **Recommended**: identical to the matching scene preset; always first.\n- **Variants**: most of them change one setting of the recommended configuration (Model Size, gradient term, stage ratios, Crop Size or one advanced setting); each one is described in the list.\n- **Control**: the Nuke CopyCat defaults (4 px crop grid, plain MSE, no advanced settings, no early stop) with the same Model Size as the recommended configuration.\n\nEvery task uses the Epochs, Batch Size, Mixed Precision, Learning Rate, Seed and Initial Weights currently set in the training form (the control loads no initial weights); Multi-Resolution is always on, and Crop Size and channels are set by the comparison set. If the dataset does not meet the requirements of keyframe commonality, the set does not include it and the panel states why.\n\n## When to use\nTo find out whether a scene preset works better than the Nuke CopyCat defaults on the current shot, or to choose between a few similar settings. The set can be added to the pending list for review first, or submitted directly.\n\n## How to read it\nThe estimated time assumes the tasks run in parallel on the available GPUs; with Stop after best score on, an estimate with early stopping is shown next to the time for training every task to its full Epochs.\nWhen the tasks have finished, select the group under **Compare & Analyze**, use the control as the comparison reference and compare the keyframe metrics, the validation-sequence metrics and the in-between frames. Tasks with keyframe commonality rewrite parts of individual keyframes before training; the keyframe metrics count those parts as error, so judge those tasks on the in-between frames."
+      "body": "## What it does\nBuilds a set of training settings for the selected task type and adds it to a new experiment group:\n\n- **Recommended**: identical to the matching scene preset; always first.\n- **Variants**: most of them change one setting of the recommended configuration (Model Size, gradient term, stage ratios, Crop Size or one advanced setting); each one is described in the list.\n- **Control**: the Nuke CopyCat defaults (4 px crop grid, plain MSE, no advanced settings) with the same Model Size as the recommended configuration.\n\nEvery task uses the Epochs, Batch Size, Mixed Precision, Learning Rate, Seed and Initial Weights currently set in the training form (the control loads no initial weights); Multi-Resolution is always on, and Crop Size and channels are set by the comparison set. If the dataset does not meet the requirements of keyframe commonality, the set does not include it and the panel states why.\n\n## When to use\nTo find out whether a scene preset works better than the Nuke CopyCat defaults on the current shot, or to choose between a few similar settings. The set can be added to the pending list for review first, or submitted directly.\n\n## How to read it\nThe estimated time assumes the tasks run in parallel on the available GPUs, each trained to its full Epochs.\nWhen the tasks have finished, select the group under **Compare & Analyze**, use the control as the comparison reference and compare the keyframe metrics, the validation-sequence metrics and the in-between frames. Tasks with keyframe commonality rewrite parts of individual keyframes before training; the keyframe metrics count those parts as error, so judge those tasks on the in-between frames."
     },
     "lab_combo_dataset": {
       "title": "Test dataset",
       "summary": "The dataset the comparison set trains on: the dataset currently selected in the training form.",
-      "body": "Every task of the set trains on this dataset. With a validation sequence, the validation-sequence metrics can be measured when comparing results, and [[doc:auto_extend]] becomes available; without one, only keyframe metrics can be compared. A validation sequence can be attached or replaced here."
+      "body": "Every task of the set trains on this dataset. With a validation sequence, the validation-sequence metrics can be measured when comparing results; without one, only keyframe metrics can be compared. A validation sequence can be attached or replaced here."
     },
     "lab_combo_task_type": {
       "title": "Task type",
@@ -1471,11 +1430,6 @@
       "summary": "Number of tasks in the comparison set: Compact 4, Standard up to 6, All up to 8. The Nuke CopyCat defaults control is always included.",
       "body": "## What it does\nTasks are taken in list order: the recommended configuration first, the control always last, and the variants in between. Some task types have fewer variants, so **All** may give fewer than 8 tasks.\n\n## Recommended values\n**Standard**. With little GPU time, **Compact** trains the recommended configuration, the first two variants and the control."
     },
-    "lab_stop_after_best": {
-      "title": "Stop after best score",
-      "summary": "Once training reaches the full-resolution stage, stops it when the score has not improved for the set number of Epochs and saves the current checkpoint, which saves GPU time in batch experiments.",
-      "body": "## What it does\nIn the 1/1 full-resolution stage the model is scored at regular intervals (at least once per Checkpoint Interval). When the score has not exceeded its previous best for the set number of Epochs (a new best has to be at least 0.015 dB higher), the checkpoint is saved, training stops and the GPU is released.\n\n## Score\nThe score has two parts: how closely the keyframes are reproduced (PSNR of the edited region and of the whole frame, edge error), and how stable the parts that should not change stay (the unedited area of the keyframes; if there is none, the static areas of the validation sequence). For mattes, checkpoints whose foreground clearly disappears are penalised. The score does not measure how the edit carries over to the in-between frames.\n\n## Recommended values\nThe default depends on the task type: Clean-up 60000, Degrain 80000, all other types 100000 Epochs. When off, every task trains to its full Epochs. The Nuke CopyCat defaults control never stops early.\n\n## Limitations\nIn-between frames can still improve after the fit to the keyframes has levelled off, so a task that stopped early may end before its best point. Train to the full Epochs for final deliverables."
-    },
     "lab_group_name": {
       "title": "Experiment group name",
       "summary": "Name of the experiment group the comparison set is added to; if empty, a name is generated from the task type and the number of tasks.",
@@ -1484,7 +1438,7 @@
     "lab_native_baseline": {
       "title": "Nuke defaults control",
       "summary": "Adds a training task with exactly the Nuke CopyCat defaults to the current experiment group, as the reference for comparison.",
-      "body": "The task uses the current dataset with Model Size Medium, Multi-Resolution on, Batch Size Auto, Crop Size 256, Mixed Precision Adaptive, no initial weights, no advanced settings and no early stop; Epochs, channels, Learning Rate and Seed are taken from the form.\nThe control of a comparison set differs from it: there, the Model Size is the same as in the recommended configuration."
+      "body": "The task uses the current dataset with Model Size Medium, Multi-Resolution on, Batch Size Auto, Crop Size 256, Mixed Precision Adaptive, no initial weights, and no advanced settings; Epochs, channels, Learning Rate and Seed are taken from the form.\nThe control of a comparison set differs from it: there, the Model Size is the same as in the recommended configuration."
     },
     "lab_note": {
       "title": "Note",
@@ -1509,7 +1463,7 @@
     "lab_param_tags": {
       "title": "Parameter tags",
       "summary": "Short tags under a task's name that list the parameters in which the task differs from the Nuke CopyCat defaults.",
-      "body": "Tasks marked **Nuke CopyCat defaults** use the CopyCat defaults. Tags:\n\n- `Small` / `Large`: Model Size (the default Medium is not shown).\n- `Crop=384`, `Batch=4`, `MultiRes=Off`, `FP16` / `FP32`: the corresponding basic parameters.\n- `20000ep`: Epochs (not shown for 10000); `…st`: total steps (tasks that recorded steps only).\n- `Init=…`: Initial Weights.\n- `Grid=1px`, `Grid=4px·Top`: step and anchor of the crop grid.\n- `Charb(0.25)`, `0.05∇`, `HDR(0.5)`: Charbonnier, gradient term and highlight damping of the composite loss.\n- `Stage(15/25/60)`: stage ratios.\n- `EMA(0.9995)`: averaged weights and their decay.\n- `Aug(Flip(0.5)/EV±0.25)`: augmentation.\n- `KfCommon(thr=2,span=2)`: keyframe commonality; `raft` = RAFT optical flow, `no-overall` = the overall-look option is off.\n- `OptStop(+60000ep)`: Stop after best score."
+      "body": "Tasks marked **Nuke CopyCat defaults** use the CopyCat defaults. Tags:\n\n- `Small` / `Large`: Model Size (the default Medium is not shown).\n- `Crop=384`, `Batch=4`, `MultiRes=Off`, `FP16` / `FP32`: the corresponding basic parameters.\n- `20000ep`: Epochs (not shown for 10000); `…st`: total steps (tasks that recorded steps only).\n- `Init=…`: Initial Weights.\n- `Grid=1px`, `Grid=4px·Top`: step and anchor of the crop grid.\n- `Charb(0.25)`, `0.05∇`, `HDR(0.5)`: Charbonnier, gradient term and highlight damping of the composite loss.\n- `Stage(15/25/60)`: stage ratios.\n- `EMA(0.9995)`: averaged weights and their decay.\n- `Aug(Flip(0.5)/EV±0.25)`: augmentation.\n- `KfCommon(thr=2,span=2)`: keyframe commonality; `raft` = RAFT optical flow, `no-overall` = the overall-look option is off."
     },
     "lab_eval": {
       "title": "Keyframe and validation-sequence evaluation",
@@ -1579,7 +1533,7 @@
     "metric_hfi": {
       "title": "High-frequency change index (HFI)",
       "summary": "Mean second-order temporal difference of the edit layer on the validation sequence, in ‰ (sRGB display value 1.0 = 1000 ‰); it follows how much grain the model alters and how much the picture moves. It is not a flicker measure, has no better or worse direction and takes no part in any automatic decision.",
-      "body": "## How to read it\nHFI = mean|δₜ − 2δₜ₋₁ + δₜ₋₂|, δ = output − input. Tasks that alter the original grain, such as degrain or denoise, naturally raise it; so does strong subject motion.\n\n## Limitations\nUse it only as a reference between tasks of the same shot and task type, not to decide which result is better. Checkpoint recommendation, early stopping and auto-extend do not use it."
+      "body": "## How to read it\nHFI = mean|δₜ − 2δₜ₋₁ + δₜ₋₂|, δ = output − input. Tasks that alter the original grain, such as degrain or denoise, naturally raise it; so does strong subject motion.\n\n## Limitations\nUse it only as a reference between tasks of the same shot and task type, not to decide which result is better."
     },
     "metric_static_boil": {
       "title": "Static-area boiling",
@@ -1603,8 +1557,8 @@
     },
     "dataset_validation_sequence": {
       "title": "Validation sequence",
-      "summary": "The complete original plate of the shot, stored with the dataset. It is not used for training; it enables quality monitoring of the in-between frames, checkpoint recommendation, keyframe commonality and sequence evaluation in Experiments.",
-      "body": "## What it does\nA dataset with a validation sequence enables:\n- the training quality (in-between frames) card on the task page;\n- checkpoint recommendation ([[doc:monitor_rec]]) and auto-extend ([[doc:auto_extend]]);\n- the advanced setting Keyframe commonality;\n- full-sequence inference and sequence metrics in Experiments.\n\n## Requirements\n- Same resolution as the keyframes, at least 2 frames, ordered by file name.\n- Keyframe commonality also needs every keyframe Input to be a frame of the validation sequence, and an RGB → RGB model.\n\n## When to use\nUpload it whenever the full plate is available. It can be added when the dataset is created, or later on the Datasets page, where it can also be replaced or removed; the keyframes are not affected.\n\n## Limitations\nThe validation sequence is not used for training and does not change the trained model."
+      "summary": "The complete original plate of the shot, stored with the dataset. It is not used for training; it enables quality monitoring of the in-between frames, keyframe commonality and sequence evaluation in Experiments.",
+      "body": "## What it does\nA dataset with a validation sequence enables:\n- the training quality (in-between frames) card on the task page;\n- the advanced setting Keyframe commonality;\n- full-sequence inference and sequence metrics in Experiments.\n\n## Requirements\n- Same resolution as the keyframes, at least 2 frames, ordered by file name.\n- Keyframe commonality also needs every keyframe Input to be a frame of the validation sequence, and an RGB → RGB model.\n\n## When to use\nUpload it whenever the full plate is available. It can be added when the dataset is created, or later on the Datasets page, where it can also be replaced or removed; the keyframes are not affected.\n\n## Limitations\nThe validation sequence is not used for training and does not change the trained model."
     },
     "dataset_task_type": {
       "title": "Task type",
@@ -1824,7 +1778,7 @@
     "metric_kf_fit": {
       "title": "Keyframe fit",
       "summary": "PSNR (dB) of the model output against the keyframe Ground Truth, computed inside the edited region and over the whole frame. Higher means the keyframes are reproduced more accurately.",
-      "body": "## How to read it\n- **Edited region**: only pixels where the Ground Truth differs from the input (by more than 0.005 in linear value). When the edit covers a small part of the frame, this reflects the edit itself better than the whole-frame value. For an Alpha output, the region is the matte's foreground. When the region covers less than 0.05% or more than 90% of the frame, the whole-frame value is used.\n- **Whole frame**: all pixels.\n- PSNR is computed on linear ACEScg values with a peak of 1.0; about 3 dB higher halves the squared error.\n- The two values of the checkpoint recommendation are this measure.\n\n## Limitations\nIt measures the training keyframes only, not the in-between frames. With [[doc:adv_kf_common]] on, the checkpoint recommendation refers to the keyframes as painted."
+      "body": "## How to read it\n- **Edited region**: only pixels where the Ground Truth differs from the input (by more than 0.005 in linear value). When the edit covers a small part of the frame, this reflects the edit itself better than the whole-frame value. For an Alpha output, the region is the matte's foreground. When the region covers less than 0.05% or more than 90% of the frame, the whole-frame value is used.\n- **Whole frame**: all pixels.\n- PSNR is computed on linear ACEScg values with a peak of 1.0; about 3 dB higher halves the squared error.\n\n## Limitations\nIt measures the training keyframes only, not the in-between frames."
     },
     "metric_q_strength": {
       "title": "In-between edit strength",
@@ -1874,7 +1828,7 @@
     "monitor_models": {
       "title": "Model versions",
       "summary": "All model versions saved by this task, listed by step and downloadable one by one.",
-      "body": "## In Nuke CopyCat\nThe same model files CopyCat writes at every Checkpoint Interval, named `Training_YYMMDD_HHMMSS.<step>`.\n\n## What it does\nA version is saved automatically at every [[doc:checkpoint_interval]], on pause and at the end of training. The list shows step and Epoch, file name, the Loss at that step, the [[doc:metric_val_mse]], file size and time saved; the tags are explained in [[doc:monitor_model_tags]].\n\n## How to read it\nWhen the run finished its Epochs, the last version is usually the best. Tasks with a validation sequence can compute a [[doc:monitor_rec]]."
+      "body": "## In Nuke CopyCat\nThe same model files CopyCat writes at every Checkpoint Interval, named `Training_YYMMDD_HHMMSS.<step>`.\n\n## What it does\nA version is saved automatically at every [[doc:checkpoint_interval]], on pause and at the end of training. The list shows step and Epoch, file name, the Loss at that step, the [[doc:metric_val_mse]], file size and time saved; the tags are explained in [[doc:monitor_model_tags]].\n\n## How to read it\nWhen the run has finished its Epochs, use the last version, as in CopyCat. In the tests the last version was the best or close to it (0.04 dB below the best on average); picking an earlier version by score was 0.5 dB worse on average."
     },
     "monitor_model_file": {
       "title": "Model file name",
@@ -1883,23 +1837,8 @@
     },
     "monitor_model_tags": {
       "title": "Version tags",
-      "summary": "Tags in the model version list: latest, lowest keyframe MSE, and the Balanced and Detail picks of the checkpoint recommendation.",
-      "body": "## How to read it\n- **Latest**: the last saved version.\n- **Lowest keyframe MSE**: the version with the lowest [[doc:metric_val_mse]].\n- **Balanced**, **Detail**: see [[doc:monitor_rec_balanced]] and [[doc:monitor_rec_detail]]; versions with a recommendation tag also show the edited-region [[doc:metric_kf_fit]].\n- **Lowest HFI (older tasks)**: appears only in recommendations saved by older tasks; HFI does not measure flicker, see [[doc:metric_hfi]]."
-    },
-    "monitor_rec": {
-      "title": "Checkpoint recommendation",
-      "summary": "Evaluates the saved checkpoints on the keyframes and the validation sequence and suggests two versions: Balanced (the latest full-resolution checkpoint) and Detail (best fit of the edited region).",
-      "body": "## What it does\nCompute Recommendation evaluates about 10 checkpoints (including those at the resolution stage changes and the last two); each is inferred on all keyframes and on up to 60 frames of the validation sequence. The two picks are then shown and tagged in the model version list. For tasks with auto-extend or early stop, the corresponding badge is shown as well (see [[doc:auto_extend]] and [[doc:lab_stop_after_best]]).\n\n## Requirements\nThe dataset has a validation sequence and the task is not training.\n\n## How to read it\n- [[doc:monitor_rec_balanced]]: the default choice.\n- [[doc:monitor_rec_detail]]: describes the fit of the keyframes' edited region only.\n- The two values on each card are the edited-region and whole-frame [[doc:metric_kf_fit]]."
-    },
-    "monitor_rec_balanced": {
-      "title": "Balanced (recommended)",
-      "summary": "The latest full-resolution (1/1) checkpoint. When the run finished its Epochs, this is usually the best version.",
-      "body": "## How to read it\nFor matte (Alpha) outputs, checkpoints whose foreground clearly collapsed are skipped (edit magnitude below 85% of the full-resolution reference).\n\n## Limitations\nWhen training is stopped midway, the last checkpoint is not necessarily the best. If you plan to stop early or to use a mid-run checkpoint, turn on [[doc:adv_ema]] to make mid-run checkpoints steadier."
-    },
-    "monitor_rec_detail": {
-      "title": "Detail",
-      "summary": "The full-resolution checkpoint that fits the edited region of the keyframes best (high edited-region PSNR, low edge error).",
-      "body": "## Limitations\nIt reflects the fit to the training keyframes only; the in-between frames are not necessarily better. When it differs from Balanced, compare the in-between frames of both versions in Nuke."
+      "summary": "Tags in the model version list: Latest (the last saved version).",
+      "body": "## How to read it\n- **Latest**: the last saved version. When the run has finished its Epochs, use this version, as in CopyCat; see [[doc:monitor_models]]."
     },
     "monitor_log": {
       "title": "Training log",
@@ -1987,21 +1926,6 @@
       "title": "Speed options and training speed",
       "summary": "The speed options do not change what is computed: the training loss matches Nuke CopyCat stage by stage, and on the same GPU a whole training run is about 1.8–5.5 times faster than CopyCat.",
       "body": "## Where it helps and where it does not\n\nAll on by default; they change only how the work is executed (whole-step CUDA Graph, fused Adam, NHWC layout, cuDNN algorithm search, dataset resident in GPU memory, asynchronous saving). The low-resolution stages gain the most.\n\n## Test conditions\n\n- Equivalence: a 7-frame 772×855 live-action EXR shot, Medium, batch 4, 200k Epochs (350k steps), multi-resolution, seed 0; the same data and settings trained in Nuke 17 CopyCat and in WildCat.\n- Speed: the same workstation and GPU, Nuke 17.0v2 CopyCat and WildCat at their defaults, multi-resolution on, Mixed Precision = Adaptive, steady-state steps/s per stage.\n\n## Results\n\nTraining loss (window mean of the finest level):\n\n| Step range | CopyCat | WildCat |\n|---|---|---|\n| 1k–117k (1/4) | 0.000339 | 0.000330 |\n| 117k–233k (1/2) | 0.000133 | 0.000141 |\n| 233k–300k (1/1) | 0.000093 | 0.000097 |\n| 340k–350k | 0.000045 | 0.000046 |\n\n- Both models rendered with Nuke Inference on a 113-frame sequence that was not trained on: the MSE between the two outputs is 0.000127 (for reference, the CopyCat output differs from its input by 0.001616).\n\nSpeed (RTX 5090, batch 4, Crop 256, 7 frames, 6000 steps):\n\n| Model | Speed-up per stage (1/4 · 1/2 · 1/1) | Whole run |\n|---|---|---|\n| Small | ×8.5 · ×6.5 · ×3.8 | ×5.5 |\n| Medium | ×8.5 · ×5.6 · ×3.1 | ×4.7 |\n| Large | ×6.7 · ×4.5 · ×3.2 | ×4.1 |\n\n- The 14 settings on the Hardware Benchmarks page (RTX 4090 / 5090, Small / Medium / Large, batch 4 / 8, Crop 256 / 512): whole run ×1.8–×5.3, 1/4 stage ×3.2–×8.7.\n- Running 2 or 3 trainings on the same GPU at once is not faster (RTX 5090, Small, batch 5: one training 280 steps/s, 2 together 268, 3 together 263), so each GPU runs one training at a time.\n\n## Limitations\n\nEquivalence was tested on one shot and one model size; training is not bit-reproducible (repeated runs with the same seed differ by about 0.07 dB); the speed-up depends on batch, Crop Size and GPU."
-    },
-    "monitor_rec": {
-      "title": "Checkpoint recommendation",
-      "summary": "After a run has completed its Epochs, the last full-resolution checkpoint is the best evaluated checkpoint or close to it; the Balanced recommendation therefore takes the last qualified full-resolution checkpoint.",
-      "body": "## Where it helps and where it does not\n\n- Applies to runs that completed their Epochs.\n- Runs stopped early and checkpoints from the middle of a run: averaged weights make them steadier, see [[ev:adv_ema]].\n\n## Test conditions\n\n258 runs of the main test set, each evaluated on the unseen frames at 1/3, 1/2, 2/3 and 5/6 of the steps and at the final step; the recommendation rules were replayed on these records.\n\n## Results\n\n| Measure | Value |\n|---|---|\n| Runs whose final step is the best of the 5 evaluation points (%) | 76.7 |\n| Mean shortfall of the final step against the best step (dB) | 0.038 |\n| Largest shortfall of the final step against the best step (dB; without the failure-case dataset, which reaches 0.67) | 0.36 |\n\n- Per dataset (mean of 3 seeds): keying, clean-up and defocus are still improving after 5/6; degrain on the 4 px grid ends 0.20 dB below its best step, with 1 px 0.00; roto within 0.21 dB.\n- Runs of 300k Epochs: on keying and clean-up the final step is the best step; on degrain the final step is 0.10 dB (1 px) and 0.22 dB (4 px) below the 5/6 point.\n- The Detail recommendation (best fit of the edited region of the keyframes) equals the final step in 98.8% of the runs; in the other 3 it is at most 0.27 dB better on unseen frames.\n- Rules not used (measured): choosing by the combined score without a validation sequence picks the final step in only 66.7% of the runs, unseen frames 0.50 dB lower on average and up to 5.13 dB; capping at a saturated keyframe PSNR (46 / 58 dB) fires in 83 / 258 runs, which are 1.56 dB lower on average.\n\n## Limitations\n\nThe rules were replayed on records, there is no end-to-end training data; nothing is known between the evaluation points; the matte-collapse guard could not be checked with the available data."
-    },
-    "auto_extend": {
-      "title": "Auto-extend",
-      "summary": "Auto-extend only checks whether the keyframe fit is still improving and almost always continues; it cannot detect cases where longer training hurts the unseen frames (degrain).",
-      "body": "## Where it helps and where it does not\n\n- Useful for tasks that still gain from longer training, for example keying and clean-up (see [[ev:epochs]]).\n- Not for degrain.\n\n## Test conditions\n\nCriterion: stop when a round of extension improves the keyframe accuracy by less than 0.20 dB. Replayed on the 27 cases of the main test set that have a longer comparison run (30k → 100k, 100k → 300k, same setting).\n\n## Results\n\n| Criterion | Cases | Decided to continue | Longer training better on unseen frames | Longer training worse on unseen frames |\n|---|---|---|---|---|\n| Stop when a round gains less than 0.20 dB | 27 | 27 | 18 | 9 (all degrain) |\n\n- Criterion not used (measured): no extension once the keyframe PSNR exceeds 41 / 56 dB — right in 9 of the 27 cases and wrong in 18, 12 of which stopped clean-up runs whose unseen frames were still improving by 0.3–4.8 dB.\n- When enabled, a run usually extends to the limit (at most 4 rounds of about 30% of the Epochs each, no more than 2.5 times the length).\n\n## Limitations\n\nOnly the criterion was replayed, there is no end-to-end extension data; the learning-rate curve of the extension was not tested separately."
-    },
-    "lab_stop_after_best": {
-      "title": "Stop after the best score",
-      "summary": "The live score used by stop-after-best looks only at the training keyframes; in the test records the best score was almost always the final step, and in single cases training would stop too early.",
-      "body": "## Where it helps and where it does not\n\n- Useful to save GPU time in batches of comparison runs.\n- The score reflects only the fit of the training keyframes (plus a stability term for the unedited area), not the in-between frames.\n\n## Test conditions\n\nThe live score was replayed on the records of the main test set (5 evaluation points per run), including runs of 300k Epochs and with the 2 px grid.\n\n## Results\n\n| Measure | Value |\n|---|---|\n| Runs whose best score is at the final step (%) | about 99 |\n| Best score before the final step, unseen frames better than at the final step | 3 (degrain on the 4 px grid, +0.16 to +0.27 dB) |\n| Best score before the final step, unseen frames worse than at the final step | 1 (keying, 2 px grid, −0.90 dB) |\n\n- In the last case the display PSNR of the training frames fell by 0.28 dB at the last evaluation point while the unseen frames were still improving.\n- Rule not used (measured): treating a keyframe PSNR above 46 / 58 dB as saturated locks the final step in only 70.2% of the runs, unseen frames 0.48 dB lower on average over all runs.\n\n## Limitations\n\nThere is no data on whether training would stop too early between the evaluation points."
     },
     "preset_cleanup_grain": {
       "title": "Preset: Clean-up",

@@ -60,7 +60,7 @@ SIG = kfprop.SIG if kfprop else 3.0  # "overall look": Gaussian sigma (px) of th
 TEX_SIGMAS = (1.5, 5.0)  # "texture": Gaussian 1.5 minus Gaussian 5 of the edit layer (structures of about 3-10 px)
 EDIT_MIN = 5e-3  # a pixel counts as edited when one channel differs from the plate by at least this
 ROI_SHARE_MIN = 0.002  # a frame whose edited area covers less of the picture than this is skipped
-FIT_ROI_SHARE = (0.0005, 0.90)  # keyframe fit inside the edited area: the rule of the recommender's roi_psnr
+FIT_ROI_SHARE = (0.0005, 0.90)  # keyframe fit inside the edited area: shares of edited pixels for which it is measured
 MAX_FRAMES = 96  # frames evaluated between the first and the last keyframe
 BG_DILATE_PX = 8  # "outside the edited area": this far from it
 BUDGET = 0.03  # the evaluations may take this share of the elapsed training time
@@ -440,7 +440,7 @@ def _fit(prep, t, p):
     n = cv2.countNonZero(area)
     if FIT_ROI_SHARE[0] <= n / float(area.size) <= FIT_ROI_SHARE[1]:
         return whole, _psnr(float(cv2.norm(p, g, cv2.NORM_L2SQR, area)) / (n * 3))
-    return whole, whole  # no usable edited area on this keyframe: the recommender's fallback
+    return whole, whole  # no usable edited area on this keyframe: the whole frame stands in
 
 
 def _figures(prep, t, s, p, kernel):
@@ -820,9 +820,9 @@ def for_trainer(trainer, cfg, src_files, tgt_files, kept=None):
         if not rgb:
             mon.unavailable("rgb_only", "the quality monitor needs an RGB to RGB model (this one is %d to %d channels)" % (trainer.c_in, trainer.c_out))
             return mon
-        from . import kfcommon, recommender
+        from . import data as _data, kfcommon
 
-        plate_files = recommender.resolve_eval_sequence_files(cfg)
+        plate_files = _data.resolve_eval_sequence_files(cfg)
         if len(plate_files) < 2:
             mon.unavailable("no_plate", "the dataset has no evaluation sequence (the plate)")
             return mon

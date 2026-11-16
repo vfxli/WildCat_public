@@ -133,10 +133,6 @@ def summarize_config_diff(cfg: dict) -> dict:
         kc_flow += "" if adv["kf_common"].get("overall", True) else ",no-overall"  # the overall-look consensus is on by default and is not named
         tags.append(f"KfCommon(thr={adv['kf_common']['threshold']:g},span={adv['kf_common']['span']}{kc_flow})")
 
-    stop_opt_ep = int(tr.get("stop_after_optimal_epochs") or 0)
-    if stop_opt_ep > 0:
-        tags.append(f"OptStop(+{stop_opt_ep}ep)")
-
     exp_meta = cfg.get("experiment") or {}
     return {
         "is_nuke_native": not non_default,

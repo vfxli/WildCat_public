@@ -200,12 +200,12 @@ const PRESET_SPECS = Object.freeze({
 // "- " lines = list; "|a|b|" lines = table (first row header, "|---|" row skipped); inline **bold**, `code`,
 // [[doc:id]] / [[ev:id]] (optional "|label") = link to another entry. Raw HTML is escaped.
 const DOC_GROUPS = [
-  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'epochs', 'auto_extend', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
+  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
   { id: 'adv', ids: ['adv_overview', 'adv_crop_grid', 'adv_crop_grid_step', 'adv_crop_grid_anchor', 'adv_loss', 'adv_loss_charbonnier', 'adv_loss_grad', 'adv_loss_hdr', 'adv_loss_eps', 'adv_stages', 'adv_stages_ratio', 'adv_stages_warmup', 'adv_ema', 'adv_ema_decay', 'adv_augment', 'adv_augment_flip', 'adv_augment_exposure', 'adv_kf_common', 'adv_kf_common_threshold', 'adv_kf_common_span', 'adv_kf_common_overall'] },
   { id: 'presets', ids: ['presets_overview', 'preset_nuke', 'preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
-  { id: 'lab', ids: ['lab_overview', 'lab_combo', 'lab_combo_dataset', 'lab_combo_task_type', 'lab_combo_scope', 'lab_stop_after_best', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
+  { id: 'lab', ids: ['lab_overview', 'lab_combo', 'lab_combo_dataset', 'lab_combo_task_type', 'lab_combo_scope', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
   { id: 'datasets', ids: ['dataset_overview', 'dataset_keyframes', 'dataset_validation_sequence', 'dataset_task_type', 'dataset_input_colorspace', 'dataset_check', 'dataset_tolerance', 'dataset_files', 'dataset_name', 'dataset_eval_sequence', 'dataset_demo'] },
-  { id: 'monitor', ids: ['monitor_pause_resume', 'monitor_extend', 'monitor_download', 'monitor_delete', 'monitor_progress', 'monitor_stage', 'monitor_speed', 'monitor_eta', 'monitor_queue', 'metric_loss', 'metric_val_mse', 'monitor_failed', 'monitor_kfc', 'metric_kfc_rewritten', 'metric_kfc_common', 'monitor_preview', 'monitor_preview_keyframe', 'monitor_playback', 'monitor_contact_sheet', 'monitor_cs_overlay', 'monitor_cs_pixelated', 'monitor_loss_chart', 'monitor_loss_log', 'monitor_loss_smooth', 'monitor_quality', 'metric_kf_fit', 'metric_q_strength', 'metric_q_detail', 'metric_q_texture', 'metric_q_look_drift', 'metric_q_tex_drift', 'metric_q_bg', 'monitor_quality_chart', 'monitor_quality_strip', 'monitor_quality_table', 'monitor_models', 'monitor_model_file', 'monitor_model_tags', 'monitor_rec', 'monitor_rec_balanced', 'monitor_rec_detail', 'monitor_log'] },
+  { id: 'monitor', ids: ['monitor_pause_resume', 'monitor_extend', 'monitor_download', 'monitor_delete', 'monitor_progress', 'monitor_stage', 'monitor_speed', 'monitor_eta', 'monitor_queue', 'metric_loss', 'metric_val_mse', 'monitor_failed', 'monitor_kfc', 'metric_kfc_rewritten', 'metric_kfc_common', 'monitor_preview', 'monitor_preview_keyframe', 'monitor_playback', 'monitor_contact_sheet', 'monitor_cs_overlay', 'monitor_cs_pixelated', 'monitor_loss_chart', 'monitor_loss_log', 'monitor_loss_smooth', 'monitor_quality', 'metric_kf_fit', 'metric_q_strength', 'metric_q_detail', 'metric_q_texture', 'metric_q_look_drift', 'metric_q_tex_drift', 'metric_q_bg', 'monitor_quality_chart', 'monitor_quality_strip', 'monitor_quality_table', 'monitor_models', 'monitor_model_file', 'monitor_model_tags', 'monitor_log'] },
   { id: 'tools', ids: ['api_key'] },
   { id: 'admin', ids: ['admin_max_jobs_per_gpu', 'admin_gpu_pool', 'admin_temp_restrictions', 'admin_default_quotas', 'admin_max_running_per_user', 'admin_users', 'admin_user_quota', 'admin_user_permissions', 'admin_storage_root', 'admin_analytics_db'] },
 ];
@@ -213,7 +213,6 @@ const EVIDENCE_GROUPS = [
   { id: 'method', ids: ['method', 'appendix_material'] },
   { id: 'adv', ids: ['adv_crop_grid', 'adv_crop_grid_anchor', 'adv_loss_grad', 'adv_loss_charbonnier', 'adv_loss_hdr', 'adv_stages', 'adv_ema', 'adv_augment_flip', 'adv_kf_common'] },
   { id: 'training', ids: ['model_size', 'crop_size', 'epochs', 'dataset_keyframes', 'speed_options'] },
-  { id: 'checkpoint', ids: ['monitor_rec', 'auto_extend', 'lab_stop_after_best'] },
   { id: 'presets', ids: ['preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
 ];
 
@@ -1072,10 +1071,6 @@ async function mountWildCatApp() {
         in_channels: 3,
         out_channels: 3,
         epochs: 10000,
-        // Off by default (2026-11): the stop rules behind auto-extend were tuned in-sample and are being
-        // re-validated; with it off a task trains exactly the requested Epochs, as CopyCat does.
-        auto_extend_optimal: false,
-        stop_after_optimal_epochs: 0,
         batch_size_mode: 'Auto',
         batch_size: 8,
         crop_size: 256,
@@ -1317,13 +1312,11 @@ async function mountWildCatApp() {
           adv.augment.exposure_ev = 0;
         }
         if (!silent) {
-          form.stop_after_optimal_epochs = 0;
           notify(t('msg.resetAdvDone'), 'info');
         }
       }
 
       function applyEmpiricalPresetCore(presetId) {
-        form.stop_after_optimal_epochs = 0;
         const setPresetModelAndCh = (modelSz, chPreset) => {
           if (!isModelSizeLocked.value && modelSz) {
             form.model_size = modelSz;
@@ -1530,9 +1523,6 @@ async function mountWildCatApp() {
         count: 0,
         items: [],
         has_eval_sequence: false,
-        recommendations: null,
-        patience_stop_info: null,
-        evaluatingRec: false,
       });
       // What the optional keyframe-commonality step did for the task on screen (telemetry field kf_common; null = the run
       // folder has no kf_common.json, i.e. the module was not asked for)
@@ -2412,7 +2402,6 @@ async function mountWildCatApp() {
       }
 
       function onSelectDataset() {
-        form.stop_after_optimal_epochs = 0;
         syncFormWithSelectedDataset();
         if (selectedDataset.value && selectedDataset.value.id) {
           ensureAssetFrames(selectedDataset.value.id);
@@ -2437,7 +2426,6 @@ async function mountWildCatApp() {
 
       function openCreateWizard() {
         proposeNextTaskName();
-        form.stop_after_optimal_epochs = 0;
         topNav.value = 'studio';
         studioMode.value = 'create';
         fetchCheckpoints();
@@ -2466,8 +2454,6 @@ async function mountWildCatApp() {
           qualityUi.hoverPoint = -1;
           qualityUi.hoverFrame = -1;
         }
-        taskModels.recommendations = null;
-        taskModels.patience_stop_info = null;
         taskModels.has_eval_sequence = false;
         resetViewerZoom();
         resetContactZoom();
@@ -2807,11 +2793,6 @@ async function mountWildCatApp() {
             seed: Number(form.seed || 0),
             initial_weights: iw,
             resume: !!resume,
-            auto_extend_optimal: !!(hasSelectedDatasetEvalSeq.value && form.auto_extend_optimal),
-            stop_after_optimal_epochs:
-              (topNav.value === 'studio' || !hasSelectedDatasetEvalSeq.value) && !resume
-                ? 0
-                : Math.max(0, Math.floor(Number(form.stop_after_optimal_epochs || 0))),
           },
           optimizations: {
             engine: accelAny.value ? 'fast' : 'reference',
@@ -3077,8 +3058,6 @@ async function mountWildCatApp() {
           onCheckpointSelected();
         }
         if (tr.epochs) form.epochs = Number(tr.epochs);
-        form.auto_extend_optimal = typeof tr.auto_extend_optimal === 'boolean' ? tr.auto_extend_optimal : false;
-        form.stop_after_optimal_epochs = 0;
         if (mo.model_size) form.model_size = mo.model_size;
         if (mo.in_channels && mo.out_channels) {
           syncLockedChannels(mo.in_channels, mo.out_channels);
@@ -3196,8 +3175,6 @@ async function mountWildCatApp() {
           taskModels.count = Number(md.count || 0);
           taskModels.items = md.items || [];
           taskModels.has_eval_sequence = !!md.has_eval_sequence;
-          taskModels.recommendations = md.recommendations || null;
-          taskModels.patience_stop_info = md.patience_stop_info || null;
 
           // 4. Keyframe commonality report (advanced.kf_common), tagged with the task it belongs to
           taskKfCommon.value =
@@ -3937,31 +3914,6 @@ async function mountWildCatApp() {
           triggerBrowserDownload(url, zipName);
         } catch (e) {
           notify(e.message, 'error');
-        }
-      }
-
-      async function evaluateTaskRecommendations(taskId, force = false) {
-        if (!taskId || taskModels.evaluatingRec) return;
-        taskModels.evaluatingRec = true;
-        try {
-          notify(t('msg.evaluatingRecommendationsToast'), 'info');
-          const q = force ? '?force=true' : '';
-          const res = await apiFetch(`/api/v1/tasks/${taskId}/recommend-models${q}`, {
-            method: 'POST',
-          });
-          const md = res.models || {};
-          taskModels.nuke_prefix = md.nuke_prefix || taskModels.nuke_prefix;
-          taskModels.zip_filename = md.zip_filename || taskModels.zip_filename;
-          taskModels.count = Number(md.count || 0);
-          taskModels.items = md.items || [];
-          taskModels.has_eval_sequence = !!md.has_eval_sequence;
-          taskModels.recommendations = md.recommendations || null;
-          taskModels.patience_stop_info = md.patience_stop_info || null;
-          notify(t('msg.recommendationsReadyToast'), 'success');
-        } catch (e) {
-          notify(e.message, 'error');
-        } finally {
-          taskModels.evaluatingRec = false;
         }
       }
 
@@ -5247,10 +5199,6 @@ async function mountWildCatApp() {
           nonDefault = true;
           tags.push(`KfCommon(thr=${kc.threshold},span=${kc.span}${kc.flow === 'raft' ? ',raft' : ''}${kc.overall ? '' : ',no-overall'})`);
         }
-        const stopOptEp = Math.max(0, Math.floor(Number(tr.stop_after_optimal_epochs || 0)));
-        if (stopOptEp > 0) {
-          tags.push(`OptStop(+${stopOptEp}ep)`);
-        }
         return { is_nuke_native: !nonDefault, model_size: msize, tags };
       }
 
@@ -5441,7 +5389,6 @@ async function mountWildCatApp() {
         baseCfg.train.batch_size = 8;
         baseCfg.train.crop_size = 256;
         baseCfg.train.initial_weights = 'None';
-        baseCfg.train.stop_after_optimal_epochs = 0;
         const nFrames = Math.max(1, Number((selectedDataset.value && selectedDataset.value.frame_count) || 1));
         const bs = Math.min(nFrames, 8);
         baseCfg.train.total_steps = Math.max(1, Math.ceil((baseCfg.train.epochs * nFrames) / bs));
@@ -5457,7 +5404,6 @@ async function mountWildCatApp() {
         formSnap.crop_size = 256;
         formSnap.initial_weights_mode = 'None';
         formSnap.checkpoint_path = '';
-        formSnap.stop_after_optimal_epochs = 0;
         const grp = activeStagedGroup.value;
         grp.collapsed = false;
         grp.items.unshift({
@@ -5477,15 +5423,6 @@ async function mountWildCatApp() {
       }
 
       // ───────── Recommended Best-Combo Exploration Generator (Parameter Relaxation Suite) ─────────
-      const COMBO_DEFAULT_STOP_EPOCHS = {
-        cleanup_grain: 60000,
-        roto_matte: 100000,
-        degrain_clean: 80000,
-        keying_despill: 100000,
-        bokeh_focus: 100000,
-        face_edit: 100000,
-      };
-
       const VALID_COMBO_TASK_TYPES = [
         'cleanup_grain',
         'keying_despill',
@@ -5500,10 +5437,6 @@ async function mountWildCatApp() {
         previewOpen: true,
         taskType: 'auto', // 'auto' | 'cleanup_grain' | 'keying_despill' | 'bokeh_focus' | 'degrain_clean' | 'roto_matte' | 'face_edit'
         scope: 'standard', // 'compact' (4) | 'standard' (6) | 'thorough' (8)
-        stopAfterOptimalOn: true,
-        stopAfterOptimalEpochs: 60000,
-        stopEpochsUserTouched: false,
-        autoExtendOn: false, // off by default (2026-11), same reason as form.auto_extend_optimal
         groupName: '',
       });
 
@@ -5536,26 +5469,6 @@ async function mountWildCatApp() {
       const effectiveLabComboTaskType = computed(() => {
         return labComboCfg.taskType === 'auto' ? detectedLabComboTaskType.value : labComboCfg.taskType;
       });
-
-      watch(
-        effectiveLabComboTaskType,
-        (nextType) => {
-          if (!labComboCfg.stopEpochsUserTouched) {
-            labComboCfg.stopAfterOptimalEpochs = COMBO_DEFAULT_STOP_EPOCHS[nextType] || 50000;
-          }
-        },
-        { immediate: true }
-      );
-
-      function setLabComboPatiencePreset(ep) {
-        labComboCfg.stopAfterOptimalOn = true;
-        labComboCfg.stopAfterOptimalEpochs = Math.max(100, Math.floor(Number(ep) || 50000));
-        labComboCfg.stopEpochsUserTouched = true;
-      }
-
-      function onLabComboPatienceInput() {
-        labComboCfg.stopEpochsUserTouched = true;
-      }
 
       function _buildComboCandidateRecipes(ds, effType, scope) {
         const dsIn = Number((ds && ds.in_channels) || form.in_channels || 3);
@@ -5735,10 +5648,6 @@ async function mountWildCatApp() {
         const nFrames = Math.max(1, Number((ds && ds.frame_count) || 8));
         const reqBs = form.batch_size_mode === 'Auto' ? 8 : Math.max(1, Math.floor(Number(form.batch_size) || 8));
         const effBs = Math.min(nFrames, reqBs);
-        const stopEp = labComboCfg.stopAfterOptimalOn
-          ? Math.max(100, Math.floor(Number(labComboCfg.stopAfterOptimalEpochs) || 50000))
-          : 0;
-        const autoExt = !!(ds && ds.has_eval_sequence && labComboCfg.autoExtendOn);
 
         let iw = 'None';
         if (initCategory.value === 'checkpoint') {
@@ -5818,8 +5727,6 @@ async function mountWildCatApp() {
               seed: Number(form.seed || 0),
               initial_weights: sp.nukeNative ? 'None' : iw,
               resume: false,
-              auto_extend_optimal: sp.nukeNative ? false : autoExt, // the control is the CopyCat default: no early stop, no extension
-              stop_after_optimal_epochs: sp.nukeNative ? 0 : stopEp,
             },
             optimizations: {
               engine: accelAny.value ? 'fast' : 'reference',
@@ -5861,8 +5768,6 @@ async function mountWildCatApp() {
           formSnap.epochs = ep;
           formSnap.crop_size = sp.crop_size;
           formSnap.multi_resolution = true;
-          formSnap.auto_extend_optimal = autoExt;
-          formSnap.stop_after_optimal_epochs = stopEp;
           if (sp.nukeNative) {
             formSnap.initial_weights_mode = 'None';
             formSnap.checkpoint_path = '';
@@ -5924,16 +5829,12 @@ async function mountWildCatApp() {
           bins[minIdx] += c.etaSec;
         }
         const maxBudgetParallelSec = bins.length ? Math.max(...bins) : 0;
-        const estPatienceParallelSec = labComboCfg.stopAfterOptimalOn
-          ? Math.max(10, Math.round(maxBudgetParallelSec * 0.68))
-          : maxBudgetParallelSec;
 
         return {
           effType,
           gpuSlots,
           candidates,
           maxBudgetParallelSec,
-          estPatienceParallelSec,
           defaultGroupName: t('lab.comboDefaultGroupFmt', {
             type: t(`adv.preset_${effType}`),
             count: candidates.length,
@@ -5955,15 +5856,6 @@ async function mountWildCatApp() {
           notify(t('msg.errSelectCheckpointFirst'), 'error');
           return;
         }
-        if (labComboCfg.stopAfterOptimalOn) {
-          const stopVal = Math.floor(Number(labComboCfg.stopAfterOptimalEpochs || 0));
-          if (!Number.isFinite(stopVal) || stopVal < 1) {
-            notify(t('msg.errInvalidStopOptimalEpochs'), 'error');
-            return;
-          }
-          labComboCfg.stopAfterOptimalEpochs = stopVal;
-        }
-
         const suite = labComboSuitePreview.value;
         if (!suite.candidates.length) return;
 
@@ -7737,7 +7629,6 @@ async function mountWildCatApp() {
         deleteTask,
         downloadModel,
         downloadAllModels,
-        evaluateTaskRecommendations,
         copyTrainLog,
         openDatasetModal,
         openAttachSeqModal,
@@ -7791,8 +7682,6 @@ async function mountWildCatApp() {
         hasExplicitDatasetTaskType,
         detectedLabComboTaskType,
         effectiveLabComboTaskType,
-        setLabComboPatiencePreset,
-        onLabComboPatienceInput,
         labComboSuitePreview,
         labComboKfNote,
         stageRecommendedComboSuite,

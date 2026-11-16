@@ -106,8 +106,8 @@ def parse_advanced_config(cfg: dict | None) -> dict:
 
     # 04. Averaged weights (EMA shadow), off by default. A running average of the weights is kept NEXT TO the model:
     # the optimiser never reads it, so sampler, loss, schedule and the weights being trained are exactly the same with
-    # it on or off. What changes is which weights are LOOKED AT: validation, previews, checkpoints, the checkpoint
-    # recommender and the exported models take the average (Trainer.eval_state_dict). It steadies checkpoints taken
+    # it on or off. What changes is which weights are LOOKED AT: validation, previews, checkpoints
+    # and the exported models take the average (Trainer.eval_state_dict). It steadies checkpoints taken
     # BEFORE the end of a run; a run trained to its last step comes out the same.
     # The average restarts with every resolution stage (compute_ema_alpha + trainer: k counted from the stage start).
     el_raw = raw.get("ema_lr") if isinstance(raw.get("ema_lr"), dict) else {}

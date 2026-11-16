@@ -1245,43 +1245,6 @@ def export_task_cat(user_id: int, is_admin: bool, task_id: int, step: int = None
     }
 
 
-def recommend_task_models(user_id: int, is_admin: bool, task_id: int, force: bool = False) -> dict:
-    """Evaluate checkpoints of a completed/stopped task on its validation sequence and return updated models inventory."""
-    row = get_task_for_user(user_id, is_admin, task_id=task_id)
-    if not row:
-        raise ValueError(i18n.t("server.taskNotFound"))
-    if row.get("status") == "running":
-        raise RuntimeError(i18n.t("server.taskRecommendBusy"))
-
-    cfg = dict(row.get("config") or {})
-    seq_path = telemetry._resolve_cfg_eval_seq(cfg)
-    if not seq_path:
-        raise ValueError(i18n.t("server.taskRecommendNoSeq"))
-
-    rdir_abs = storage.abs_from_root(row["run_dir"])
-    cfg_abs = storage.abs_from_root(row["config_path"])
-    cmd = [scheduler.PYTHON_BIN, "-m", "wildcat.recommender", rdir_abs, cfg_abs, "--eval-seq", seq_path]
-    if force:
-        cmd.append("--force")
-
-    exp_env = storage.apply_subprocess_storage_env(os.environ.copy())
-    res = subprocess.run(
-        cmd,
-        cwd=db.ROOT,
-        env=exp_env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=240,
-    )
-    if res.returncode != 0:
-        raise RuntimeError(((res.stderr or "") + "\n" + (res.stdout or "")).strip() or "Model recommendation failed")
-
-    parsed = telemetry.parse_train_log_full_cached(os.path.join(rdir_abs, "train.log"))
-    return telemetry.list_task_models(row["run_dir"], cfg, parsed_log=parsed)
-
-
 def ensure_nuke_model_file(
     user_id: int,
     is_admin: bool,

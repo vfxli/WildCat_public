@@ -396,7 +396,6 @@ def list_task_models(run_dir_rel: str, cfg: dict = None, parsed_log: dict = None
             "count": 0,
             "items": [],
             "has_eval_sequence": has_eval_seq,
-            "recommendations": None,
         }
 
     total_steps = int(((cfg or {}).get("train") or {}).get("total_steps") or 0)
@@ -473,36 +472,11 @@ def list_task_models(run_dir_rel: str, cfg: dict = None, parsed_log: dict = None
             "count": 0,
             "items": [],
             "has_eval_sequence": has_eval_seq,
-            "recommendations": None,
         }
 
-    from wildcat import recommender as _rec_mod
-
-    saved_rec = _rec_mod.load_saved_recommendations(rdir_abs)
-    role_by_step = {}
-    eval_by_step = {}
-    if saved_rec:
-        for st_k, m_val in (saved_rec.get("evaluated_steps") or {}).items():
-            try:
-                eval_by_step[int(st_k)] = m_val
-            except Exception:
-                pass
-        for role_k in ("balanced", "flicker", "detail"):
-            pk = (saved_rec.get("picks") or {}).get(role_k)
-            if pk and pk.get("step") in step_records:
-                role_by_step.setdefault(int(pk["step"]), []).append(role_k)
-
     max_step = max(step_records.keys())
-    best_val_step = None
-    best_val = None
-    for st in step_records:
-        vm = val_by_step.get(st)
-        if vm is not None and (best_val is None or vm < best_val):
-            best_val = vm
-            best_val_step = st
 
     items = []
-    item_by_step = {}
     for st in sorted(step_records.keys(), reverse=True):
         rec = step_records[st]
         pfx = rec.get("prefix") or nuke_prefix
@@ -530,71 +504,15 @@ def list_task_models(run_dir_rel: str, cfg: dict = None, parsed_log: dict = None
             "loss": loss_by_step.get(st),
             "val_mse": val_by_step.get(st),
             "is_latest": st == max_step,
-            "is_best": (best_val_step is not None and st == best_val_step),
-            "rec_roles": role_by_step.get(st, []),
-            "rec_metrics": eval_by_step.get(st),
         }
         items.append(item)
-        item_by_step[st] = item
-
-    rec_payload = None
-    if saved_rec and saved_rec.get("picks"):
-        enriched_picks = {}
-        for role_k in ("balanced", "flicker", "detail"):
-            pk = (saved_rec.get("picks") or {}).get(role_k)
-            if not pk:
-                continue
-            pst = int(pk.get("step") or 0)
-            matched_it = item_by_step.get(pst)
-            if not matched_it:
-                continue
-            p_copy = dict(pk)
-            p_copy["filename"] = matched_it["filename"]
-            p_copy["pt_filename"] = matched_it["pt_filename"]
-            if not p_copy.get("epoch") and matched_it.get("epoch"):
-                p_copy["epoch"] = matched_it["epoch"]
-            enriched_picks[role_k] = p_copy
-        if enriched_picks:
-            rec_payload = {
-                "available": True,
-                "seq_total_frames": int(saved_rec.get("seq_total_frames") or 0),
-                "seq_evaluated_frames": int(saved_rec.get("seq_evaluated_frames") or 0),
-                "evaluated_checkpoint_count": int(saved_rec.get("evaluated_checkpoint_count") or 0),
-                "initial_epochs": int(saved_rec.get("initial_epochs") or epochs),
-                "final_epochs": int(saved_rec.get("final_epochs") or epochs),
-                "auto_extended": bool(saved_rec.get("auto_extended")),
-                "auto_extended_rounds": int(saved_rec.get("auto_extended_rounds") or 0),
-                "stopped_after_optimal": bool(
-                    saved_rec.get("stopped_after_optimal") or rinfo.get("stopped_after_optimal")
-                ),
-                "stop_after_optimal_epochs": int(
-                    saved_rec.get("stop_after_optimal_epochs") or rinfo.get("stop_after_optimal_epochs") or 0
-                ),
-                "optimal_step": int(saved_rec.get("optimal_step") or rinfo.get("optimal_step") or 0),
-                "stop_reason": str(saved_rec.get("stop_reason") or ""),
-                "updated_at": str(saved_rec.get("updated_at") or ""),
-                "picks": enriched_picks,
-            }
-
-    patience_stop_info = None
-    if rinfo.get("stopped_after_optimal"):
-        patience_stop_info = {
-            "stopped_after_optimal": True,
-            "stop_after_optimal_epochs": int(rinfo.get("stop_after_optimal_epochs") or 0),
-            "optimal_step": int(rinfo.get("optimal_step") or 0),
-            "optimal_epoch": int(rinfo.get("optimal_epoch") or 0),
-            "initial_epochs": int(rinfo.get("initial_epochs") or epochs),
-            "final_epochs": int(epochs),
-        }
 
     return {
         "nuke_prefix": nuke_prefix,
         "zip_filename": f"{nuke_prefix}.zip",
         "count": len(items),
         "items": items,
-        "has_eval_sequence": has_eval_seq or bool(rec_payload),
-        "recommendations": rec_payload,
-        "patience_stop_info": patience_stop_info,
+        "has_eval_sequence": has_eval_seq,
     }
 
 

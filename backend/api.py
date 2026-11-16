@@ -665,25 +665,6 @@ def api_list_task_models(task_id: int, user: dict = Depends(get_current_user)):
     }
 
 
-@router.post("/tasks/{task_id}/recommend-models")
-def api_recommend_task_models(
-    task_id: int,
-    request: Request,
-    force: bool = Query(default=False),
-    user: dict = Depends(get_current_user),
-):
-    security.enforce_rate_limit("export_dl", security.extract_client_ip(request), limit=12, window_sec=60.0)
-    try:
-        models_inv = service.recommend_task_models(user["id"], bool(user.get("is_admin")), task_id, force=bool(force))
-        return {"status": "ok", "models": models_inv}
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post("/tasks/{task_id}/stop")
 def api_stop_task(task_id: int, user: dict = Depends(get_current_user)):
     try:
