@@ -1025,7 +1025,7 @@ class TaskQueueScheduler:
             for raw_k in ("n_feats", "n_resblocks", "k_size"):
                 mo.pop(raw_k, None)
             msize = str(mo.get("model_size") or "Medium").strip()
-            if msize not in ("Small", "Medium", "Large"):
+            if msize not in ("Small", "Medium", "Large", "WildCatLargeV1"):
                 raise ValueError(i18n.t("server.invalidTrainParam", field="model.model_size"))
             mo["model_size"] = msize
 

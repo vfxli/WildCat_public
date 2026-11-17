@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261116_p49" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261118_v300b" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -190,25 +190,27 @@
         <!-- Experiment Lab Sub-Navigation Bar (Two Dedicated Sub-Pages: ① Plan & Batch Queue | ② Results & Sequence Flicker) -->
         <div v-if="topNav === 'lab'"
              class="bg-slate-900/95 border-b border-slate-800 px-5 py-2 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div class="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
-            <button @click="labMode = 'plan'"
-                    class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
-                    :class="labMode === 'plan' ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
-              <span>{{ t('lab.subPlan') }}</span>
-              <span v-if="labStaged.length"
-                    class="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] wc-mono">
-                {{ labStaged.length }}
-              </span>
-            </button>
-            <button @click="labMode = 'analyze'"
-                    class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
-                    :class="labMode === 'analyze' ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
-              <span>{{ t('lab.subAnalyze') }}</span>
-              <span v-if="labSelectedTaskIds.length"
-                    class="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] wc-mono">
-                {{ labSelectedTaskIds.length }}
-              </span>
-            </button>
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+              <button @click="labMode = 'plan'"
+                      class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
+                      :class="labMode === 'plan' ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
+                <span>{{ t('lab.subPlan') }}</span>
+                <span v-if="labStaged.length"
+                      class="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] wc-mono">
+                  {{ labStaged.length }}
+                </span>
+              </button>
+              <button @click="labMode = 'analyze'"
+                      class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
+                      :class="labMode === 'analyze' ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
+                <span>{{ t('lab.subAnalyze') }}</span>
+                <span v-if="labSelectedTaskIds.length"
+                      class="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] wc-mono">
+                  {{ labSelectedTaskIds.length }}
+                </span>
+              </button>
+            </div>
             <help-tip doc="lab_overview"></help-tip>
           </div>
 
@@ -504,8 +506,11 @@
                         </select>
                         <button @click="loadStagedToForm(item)"
                                 type="button"
-                                class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 shrink-0">
-                          {{ t('lab.loadToFormBtn') }}
+                                class="px-2 py-0.5 rounded border shrink-0 transition-all"
+                                :class="editingStagedUid === item.uid
+                                  ? 'bg-amber-600/30 border-amber-400/60 text-amber-200 font-bold'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-indigo-300 border-slate-700'">
+                          {{ editingStagedUid === item.uid ? t('lab.editingItemBadge') : t('lab.loadToFormBtn') }}
                         </button>
                       </div>
                     </div>
@@ -514,8 +519,24 @@
                     </div>
                   </div>
 
-                  <!-- Per-Group Target Selector & Launch Button -->
+                  <!-- Per-Group Unified Epochs Adjuster, Target Selector & Launch Button -->
                   <div class="pt-1 space-y-2" @click.stop>
+                    <div v-if="sgrp.items.length" class="flex items-center gap-1.5 text-[11px]">
+                      <label class="text-slate-400 shrink-0 inline-flex items-center">
+                        <span>{{ t('lab.groupEpochsQuickLabel') }}</span><help-tip doc="epochs"></help-tip>
+                      </label>
+                      <input v-model.number="sgrp.batchEpochs"
+                             type="number"
+                             min="1"
+                             step="10000"
+                             @keyup.enter="applyBatchEpochsToStagedGroup(sgrp.gid)"
+                             class="wc-input wc-input-xs wc-mono !py-1 !px-2 text-[11px] flex-1 min-w-0" />
+                      <button @click="applyBatchEpochsToStagedGroup(sgrp.gid)"
+                              type="button"
+                              class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-slate-700 text-[10px] font-bold shrink-0 transition-all">
+                        {{ t('lab.applyGroupEpochsBtn') }}
+                      </button>
+                    </div>
                     <div v-if="sgrp.items.length && labNamedGroups.length" class="flex items-center gap-1.5 text-[11px]">
                       <span class="text-slate-400 shrink-0 inline-flex items-center">{{ t('lab.submitTargetGroupLabel') }}<help-tip doc="lab_staged_groups"></help-tip></span>
                       <select v-model="sgrp.targetBatchId" class="wc-select !py-1 !px-2 text-[11px] flex-1">
@@ -971,26 +992,49 @@
                 </button>
               </div>
 
-              <!-- LAB EXCLUSIVE: RECOMMENDED BEST-COMBO EXPLORATION STRATEGY GENERATOR (DEFAULT COLLAPSED) -->
-              <section v-if="topNav === 'lab'"
+              <!-- LAB EXCLUSIVE: MUTUALLY EXCLUSIVE PLAN SUB-MODE SWITCHER (COMBO SUITE vs SINGLE CUSTOM TASK) -->
+              <div v-if="topNav === 'lab'" class="bg-slate-900 border border-slate-800 rounded-2xl p-2 flex flex-wrap items-center justify-between gap-2">
+                <div class="grid grid-cols-2 gap-2 flex-1 min-w-[280px]">
+                  <button type="button"
+                          @click="labPlanSubMode = 'combo'"
+                          class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border"
+                          :class="labPlanSubMode === 'combo'
+                            ? 'bg-indigo-600 text-white border-indigo-400/60 shadow-lg shadow-indigo-900/40'
+                            : 'bg-slate-950/75 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'">
+                    <span>{{ t('lab.planSubComboBtn') }}</span>
+                  </button>
+                  <button type="button"
+                          @click="labPlanSubMode = 'custom'"
+                          class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border"
+                          :class="labPlanSubMode === 'custom'
+                            ? 'bg-violet-600 text-white border-violet-400/60 shadow-lg shadow-violet-900/40'
+                            : 'bg-slate-950/75 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'">
+                    <span>{{ t('lab.planSubCustomBtn') }}</span>
+                    <span v-if="editingStagedItem"
+                          class="px-1.5 py-0.5 rounded bg-amber-500/25 border border-amber-400/60 text-[10px] text-amber-200 wc-mono">
+                      {{ t('lab.editingItemBadge') }}
+                    </span>
+                  </button>
+                </div>
+                <div class="px-2 text-[11px] text-slate-400 hidden xl:block">
+                  {{ labPlanSubMode === 'combo' ? t('lab.planSubComboHint') : t('lab.planSubCustomHint') }}
+                </div>
+              </div>
+
+              <!-- LAB SUB-MODE A: SELF-CONTAINED RECOMMENDED COMBO WORKSPACE (NO CONFLICTING SINGLE-TASK FORM BELOW) -->
+              <section v-if="topNav === 'lab' && labPlanSubMode === 'combo'"
                        class="bg-gradient-to-br from-slate-900 via-indigo-950/30 to-violet-950/25 border border-indigo-500/40 rounded-2xl overflow-hidden shadow-xl shadow-indigo-950/20">
-                <div @click="labComboCfg.panelOpen = !labComboCfg.panelOpen"
-                     class="px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-slate-900/40 transition-colors">
+                <div class="px-5 py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80">
                   <div class="space-y-1 min-w-0">
                     <div class="flex flex-wrap items-center gap-2">
-                      <span class="text-xs text-indigo-300 transition-transform duration-150 inline-block"
-                            :class="labComboCfg.panelOpen ? 'rotate-90' : ''">▸</span>
                       <h3 class="text-sm font-bold text-white">{{ t('lab.comboTitle') }}<help-tip doc="lab_combo"></help-tip></h3>
                       <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/35 text-[10px] font-bold text-emerald-300">
                         {{ t('lab.comboOvernightBadge') }}
                       </span>
-                      <span v-if="!labComboCfg.panelOpen" class="text-[11px] text-slate-400 truncate">
-                        · {{ t('lab.comboCollapsedSummaryFmt', { type: t('adv.preset_' + effectiveLabComboTaskType), count: labComboSuitePreview.candidates.length }) }}
-                      </span>
                     </div>
-                    <p v-if="labComboCfg.panelOpen" class="text-xs text-slate-300/90 leading-relaxed">{{ docSummary('lab_combo') }}</p>
+                    <p class="text-xs text-slate-300/90 leading-relaxed">{{ docSummary('lab_combo') }}</p>
                   </div>
-                  <div class="flex items-center gap-2 shrink-0" @click.stop>
+                  <div class="flex items-center gap-2 shrink-0">
                     <button type="button"
                             @click="openHelp('presets')"
                             class="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-indigo-200 transition-all">
@@ -999,11 +1043,11 @@
                   </div>
                 </div>
 
-                <div v-if="labComboCfg.panelOpen" class="px-5 pb-5 pt-3 border-t border-slate-800/80 space-y-4">
-                  <!-- Row 1: Target Dataset + Training Task Type + Exploration Scale -->
+                <div class="p-5 space-y-4">
+                  <!-- Row 1: All Shared Combo Settings in One Self-Contained Grid -->
                   <div class="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
                     <!-- Col 1: Target Dataset -->
-                    <div class="lg:col-span-5 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
+                    <div class="lg:col-span-4 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
                       <div class="flex items-center justify-between gap-2">
                         <label class="text-xs font-bold text-slate-200">{{ t('lab.comboDatasetLabel') }}<help-tip doc="lab_combo_dataset"></help-tip></label>
                         <div class="flex items-center gap-1.5">
@@ -1055,7 +1099,7 @@
                     </div>
 
                     <!-- Col 2: Training Task Type -->
-                    <div class="lg:col-span-4 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
+                    <div class="lg:col-span-3 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
                       <div class="flex items-center justify-between gap-2">
                         <label class="text-xs font-bold text-slate-200">{{ t('lab.comboTaskTypeLabel') }}<help-tip doc="lab_combo_task_type"></help-tip></label>
                         <span v-if="labComboCfg.taskType === 'auto'"
@@ -1083,7 +1127,7 @@
                     </div>
 
                     <!-- Col 3: Exploration Scope -->
-                    <div class="lg:col-span-3 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
+                    <div class="lg:col-span-2 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
                       <label class="text-xs font-bold text-slate-200 block">{{ t('lab.comboScopeLabel') }}<help-tip doc="lab_combo_scope"></help-tip></label>
                       <div class="grid grid-cols-1 gap-1.5">
                         <button v-for="sc in [
@@ -1101,6 +1145,93 @@
                           <span>{{ sc.lbl }}</span>
                           <span v-if="labComboCfg.scope === sc.id" class="text-emerald-300 text-[10px]">✓</span>
                         </button>
+                      </div>
+                    </div>
+
+                    <!-- Col 4: Unified Combo Epochs & Target GPU -->
+                    <div class="lg:col-span-3 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
+                      <div>
+                        <label class="flex items-center justify-between text-xs font-bold text-slate-200 mb-1">
+                          <span class="inline-flex items-center">{{ t('lab.comboEpochsLabel') }}<help-tip doc="epochs"></help-tip></span>
+                          <span v-if="labComboSuitePreview.candidates.length" class="text-[10px] text-emerald-300 wc-mono">
+                            {{ labComboSuitePreview.candidates[0].cfg.train.total_steps.toLocaleString() }} st
+                          </span>
+                        </label>
+                        <input v-model.number="labComboCfg.epochs"
+                               type="number"
+                               min="100"
+                               :max="userMaxEpochs > 0 ? userMaxEpochs : null"
+                               step="10000"
+                               class="wc-input wc-input-sm wc-mono text-xs" />
+                      </div>
+                      <div>
+                        <label class="flex items-center text-xs font-bold text-slate-200 mb-1">
+                          <span>{{ t('wizard.useDeviceLabel') }}</span>
+                          <help-tip doc="device"></help-tip>
+                        </label>
+                        <select v-model="form.preferred_gpu" class="wc-select text-xs">
+                          <option value="auto">
+                            {{ queue.all_gpus_disabled ? t('wizard.autoQueuePaused') : (queue.idle_gpu_count > 0 ? t('wizard.autoQueueIdle') : t('wizard.autoQueueWait', { eta: formatEta(queue.next_auto_wait_sec) })) }}
+                          </option>
+                          <option v-for="g in queue.gpus" :key="'cb-gpu-' + g.gpu_id" :value="g.gpu_id" :disabled="g.enabled === false">
+                            {{ formatGpuOptionLabel(g) }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Row 2: Optional Shared Base Settings (applies uniformly to all tasks in this combo) -->
+                  <div class="bg-slate-950/65 border border-slate-800 rounded-xl overflow-hidden">
+                    <button type="button"
+                            @click="labComboCfg.baseOpen = !labComboCfg.baseOpen"
+                            class="w-full px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-slate-900/60 transition-colors">
+                      <div class="flex flex-wrap items-center gap-2 text-xs">
+                        <span class="text-indigo-300 transition-transform duration-150 inline-block" :class="labComboCfg.baseOpen ? 'rotate-90' : ''">▸</span>
+                        <span class="font-semibold text-slate-200">{{ t('lab.comboSharedBaseTitle') }}</span>
+                        <span class="text-[11px] text-slate-400">{{ t('lab.comboSharedBaseHint') }}</span>
+                      </div>
+                      <span class="text-[11px] text-slate-400 wc-mono">
+                        Batch {{ form.batch_size_mode === 'Auto' ? 'Auto(8)' : form.batch_size }} · Seed {{ form.seed }} · LR {{ form.learning_rate }} · {{ form.precision }}
+                      </span>
+                    </button>
+                    <div v-if="labComboCfg.baseOpen" class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-800/80 grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div>
+                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
+                          <span>Batch Size</span><help-tip doc="batch_size"></help-tip>
+                        </label>
+                        <div class="flex items-center gap-1.5">
+                          <select v-model="form.batch_size_mode" @change="onBsModeChange" class="wc-select text-xs flex-1">
+                            <option value="Auto">{{ t('wizard.batchAutoOpt') }}</option>
+                            <option value="Manual">{{ t('wizard.batchManualOpt') }}</option>
+                          </select>
+                          <input v-if="form.batch_size_mode === 'Manual'"
+                                 v-model.number="form.batch_size"
+                                 type="number" min="1" step="1"
+                                 class="wc-input wc-mono text-xs !w-16 text-center" />
+                        </div>
+                      </div>
+                      <div>
+                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
+                          <span>Seed</span><help-tip doc="seed"></help-tip>
+                        </label>
+                        <input v-model.number="form.seed" type="number" min="0" class="wc-input wc-mono text-xs" />
+                      </div>
+                      <div>
+                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
+                          <span>Learning Rate</span><help-tip doc="learning_rate"></help-tip>
+                        </label>
+                        <input v-model.number="form.learning_rate" type="number" step="0.00001" class="wc-input wc-mono text-xs" />
+                      </div>
+                      <div>
+                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
+                          <span>Mixed Precision</span><help-tip doc="mixed_precision"></help-tip>
+                        </label>
+                        <select v-model="form.precision" class="wc-select text-xs">
+                          <option value="adaptive">{{ t('wizard.precAdaptiveOpt') }}</option>
+                          <option value="fp32">{{ t('wizard.precFp32Opt') }}</option>
+                          <option value="fp16">{{ t('wizard.precFp16Opt') }}</option>
+                        </select>
                       </div>
                     </div>
                   </div>
@@ -1150,9 +1281,15 @@
                             </span>
                             <span class="text-xs font-bold text-white wc-mono truncate">Combo{{ cand.idx }}_{{ cand.code }}</span>
                           </div>
-                          <span class="text-[10px] text-slate-400 wc-mono shrink-0">~{{ formatEta(cand.etaSec) }}</span>
+                          <span class="text-[10px] text-slate-400 wc-mono shrink-0">
+                            {{ cand.cfg.train.epochs.toLocaleString() }} Ep · ~{{ formatEta(cand.etaSec) }}
+                          </span>
                         </div>
                         <div class="flex flex-wrap items-center gap-1">
+                          <span v-if="cand.role === 'anchor'"
+                                class="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-semibold text-emerald-200">
+                            ✓ {{ t('lab.comboPresetActiveBadge', { type: t('adv.preset_' + labComboSuitePreview.effType) }) }}
+                          </span>
                           <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-indigo-300 wc-mono">
                             {{ cand.diff.model_size }}
                           </span>
@@ -1173,10 +1310,10 @@
                     </div>
                   </div>
 
-                  <!-- Row 4: Group Name & 1-Click Stage / Launch Buttons -->
+                  <!-- Row 4: Group Name & 1-Click Launch / Stage Buttons -->
                   <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
                     <div class="flex items-center gap-2 flex-1 min-w-[240px]">
-                      <span class="text-xs text-slate-400 shrink-0 inline-flex items-center">{{ t('lab.comboGroupNameLabel') }}<help-tip doc="lab_group_name"></help-tip></span>
+                      <label class="text-xs text-slate-400 shrink-0 inline-flex items-center">{{ t('lab.comboGroupNameLabel') }}<help-tip doc="lab_group_name"></help-tip></label>
                       <input v-model="labComboCfg.groupName"
                              type="text"
                              class="wc-input wc-input-sm text-xs flex-1"
@@ -1199,6 +1336,29 @@
                   </div>
                 </div>
               </section>
+
+              <!-- SINGLE-TASK CONFIGURATOR (STUDIO CREATE OR LAB SUB-MODE B: CUSTOM SINGLE TASK) -->
+              <template v-if="topNav === 'studio' || labPlanSubMode === 'custom'">
+                <!-- Active Staged-Item Edit Banner (when user clicked Edit on a staged item in Left Sidebar) -->
+                <div v-if="topNav === 'lab' && editingStagedItem"
+                     class="bg-amber-950/35 border border-amber-500/50 rounded-2xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+                  <div class="text-xs text-amber-100">
+                    <span class="font-bold">{{ t('lab.editingBannerTitle', { name: editingStagedItem.node_name }) }}</span>
+                    <span class="text-amber-200/85 ml-2">{{ t('lab.editingBannerDesc') }}</span>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button type="button"
+                            @click="cancelEditStagedItem"
+                            class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold">
+                      {{ t('lab.cancelBtn') }}
+                    </button>
+                    <button type="button"
+                            @click="saveEditedStagedItem"
+                            class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow">
+                      {{ t('lab.saveEditedStagedBtn') }}
+                    </button>
+                  </div>
+                </div>
 
               <!-- STEP 1: Task Name & Single Paired Dataset Selection -->
               <section class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5">
@@ -1521,6 +1681,7 @@
                       <option value="Small">Small</option>
                       <option value="Medium">{{ t('wizard.modelMediumDefault') }}</option>
                       <option value="Large">Large</option>
+                      <option value="WildCatLargeV1">{{ t('wizard.modelWildCatLargeV1Opt') }}</option>
                     </select>
                   </div>
 
@@ -2340,37 +2501,49 @@
                   <div v-else class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
                     <input v-model="labNote"
                            :disabled="!canUseLab"
-                           @keyup.enter="addCurrentToLabList"
+                           @keyup.enter="editingStagedItem ? saveEditedStagedItem() : addCurrentToLabList()"
                            type="text"
                            class="wc-input !w-64 text-xs disabled:opacity-45"
                            :placeholder="t('lab.notePlaceholder')" />
                     <help-tip doc="lab_note"></help-tip>
-                    <button @click="addNukeBaselineToLabList"
-                            :disabled="!canUseLab"
-                            type="button"
-                            class="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed border border-slate-700 text-emerald-300 text-xs font-bold transition-all">
-                      {{ t('lab.addBaselineBtn') }}
-                    </button>
-                    <help-tip doc="lab_native_baseline"></help-tip>
-                    <button @click="addCurrentToLabList"
-                            :disabled="!canUseLab"
-                            type="button"
-                            class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed border border-violet-500/50 text-violet-200 hover:text-white text-xs font-bold transition-all">
-                      {{ t('lab.addToListBtn') }}
-                    </button>
-                    <button @click="submitLabDirectOrStaged"
-                            :disabled="!canUseLab || labSubmitting || userTaskQuotaReached"
-                            type="button"
-                            class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-indigo-600 to-violet-600 hover:from-emerald-500 hover:via-indigo-500 hover:to-violet-500 disabled:opacity-45 disabled:cursor-not-allowed text-white text-xs font-bold shadow-xl shadow-indigo-600/30 transition-all">
-                      {{ labSubmitting
-                          ? t('lab.submittingBatchBtn')
-                          : (labTotalStagedCount > 0
-                              ? t('lab.startStagedNowBtn', { count: labTotalStagedCount })
-                              : t('lab.startNowDirectBtn')) }}
-                    </button>
+                    <template v-if="editingStagedItem">
+                      <button @click="cancelEditStagedItem"
+                              type="button"
+                              class="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold transition-all">
+                        {{ t('lab.cancelBtn') }}
+                      </button>
+                      <button @click="saveEditedStagedItem"
+                              :disabled="!canUseLab"
+                              type="button"
+                              class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-45 text-white text-xs font-bold shadow-lg shadow-emerald-600/25 transition-all">
+                        {{ t('lab.saveEditedStagedBtn') }}
+                      </button>
+                    </template>
+                    <template v-else>
+                      <button @click="addNukeBaselineToLabList"
+                              :disabled="!canUseLab"
+                              type="button"
+                              class="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed border border-slate-700 text-emerald-300 text-xs font-bold transition-all">
+                        {{ t('lab.addBaselineBtn') }}
+                      </button>
+                      <help-tip doc="lab_native_baseline"></help-tip>
+                      <button @click="addCurrentToLabList"
+                              :disabled="!canUseLab"
+                              type="button"
+                              class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed border border-violet-500/50 text-violet-200 hover:text-white text-xs font-bold transition-all">
+                        {{ t('lab.addToListBtn') }}
+                      </button>
+                      <button @click="submitLabSingleCustomNow"
+                              :disabled="!canUseLab || labSubmitting || userTaskQuotaReached"
+                              type="button"
+                              class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-45 disabled:cursor-not-allowed text-white text-xs font-bold shadow-xl shadow-indigo-600/30 transition-all">
+                        {{ labSubmitting ? t('lab.submittingBatchBtn') : t('lab.startSingleCustomNowBtn') }}
+                      </button>
+                    </template>
                   </div>
                 </div>
               </section>
+              </template>
             </div>
 
             <!-- ══════════ STUDIO STAGE B: SELECTED TASK LIVE MONITOR & CONTROLS ══════════ -->
@@ -5269,6 +5442,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261117_v253"></script>
+  <script type="module" src="/static/app.js?v=20261118_v300b"></script>
 </body>
 </html>

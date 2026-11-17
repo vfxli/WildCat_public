@@ -14,6 +14,7 @@ MODEL_SPECS = {
     "Small": {"k_size": 3, "n_resblocks": 1, "params": 1_033_955},
     "Medium": {"k_size": 5, "n_resblocks": 1, "params": 2_578_659},
     "Large": {"k_size": 5, "n_resblocks": 3, "params": 6_881_251},
+    "WildCatLargeV1": {"k_size": 5, "n_resblocks": 2, "params": 5_078_665},
 }
 
 
@@ -339,6 +340,143 @@ class EncoderDecoder(nn.Module):
         return n_outputs
 
 
+def _init_hom_conv(m: nn.Conv2d, gain: float = 1.0) -> None:
+    nn.init.xavier_uniform_(m.weight, gain=gain)
+    if m.bias is not None:
+        nn.init.zeros_(m.bias)
+
+
+class _HomResBlock(nn.Module):
+    """Scale-invariant 1-homogeneous residual block (LeakyReLU 0.05, no normalization)."""
+
+    def __init__(self, dim: int, k_size: int = 3):
+        super().__init__()
+        p = k_size // 2
+        self.c1 = nn.Conv2d(dim, dim, kernel_size=k_size, padding=p, bias=True)
+        self.c2 = nn.Conv2d(dim, dim, kernel_size=k_size, padding=p, bias=True)
+        _init_hom_conv(self.c1, 1.0)
+        _init_hom_conv(self.c2, 1.0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.c2(F.leaky_relu(self.c1(x), 0.05))
+
+
+class _HomFFNBlock(nn.Module):
+    """1-Homogeneous pointwise 1x1 inverted-bottleneck FFN (dim -> expand*dim -> LeakyReLU -> dim)."""
+
+    def __init__(self, dim: int, expand: int = 3):
+        super().__init__()
+        hidden = dim * expand
+        self.pw1 = nn.Conv2d(dim, hidden, kernel_size=1, bias=True)
+        self.pw2 = nn.Conv2d(hidden, dim, kernel_size=1, bias=True)
+        _init_hom_conv(self.pw1, 1.0)
+        _init_hom_conv(self.pw2, 0.5)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.pw2(F.leaky_relu(self.pw1(x), 0.05))
+
+
+class _UpShuffle(nn.Module):
+    """Sub-pixel upsampling: 1x1 projection + PixelShuffle(2)."""
+
+    def __init__(self, c_in: int, c_out: int):
+        super().__init__()
+        self.proj = nn.Conv2d(c_in, c_out * 4, kernel_size=1, bias=True)
+        self.shuffle = nn.PixelShuffle(2)
+        _init_hom_conv(self.proj, 1.0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.shuffle(self.proj(x))
+
+
+class WildCatLargeV1(nn.Module):
+    """WildCat v3 single-pass 4-scale [64, 96, 128, 160] asymmetric 1-homogeneous U-Net + 1x1 FFN tail."""
+
+    def __init__(self, channels_in: int = 3, channels_out: int = 3):
+        super().__init__()
+        self.channels_in = int(channels_in)
+        self.channels_out = int(channels_out)
+        c1, c2, c3, c4 = 64, 96, 128, 160
+
+        self.conv1 = nn.Conv2d(self.channels_in, c1, kernel_size=5, padding=2, bias=True)
+        self.enc1 = nn.Sequential(_HomResBlock(c1, 3), _HomResBlock(c1, 3))
+
+        self.conv2 = nn.Conv2d(c1, c2, kernel_size=5, stride=2, padding=2, bias=True)
+        self.enc2 = nn.Sequential(_HomResBlock(c2, 3), _HomResBlock(c2, 3))
+
+        self.conv3 = nn.Conv2d(c2, c3, kernel_size=5, stride=2, padding=2, bias=True)
+        self.enc3 = nn.Sequential(_HomResBlock(c3, 3), _HomResBlock(c3, 5))
+
+        self.conv4 = nn.Conv2d(c3, c4, kernel_size=3, stride=2, padding=1, bias=True)
+        self.mid = nn.Sequential(_HomResBlock(c4, 5), _HomResBlock(c4, 3))
+
+        self.up3 = _UpShuffle(c4, c3)
+        self.dec3 = nn.Sequential(_HomResBlock(c3, 3), _HomFFNBlock(c3, expand=2))
+
+        self.up2 = _UpShuffle(c3, c2)
+        self.dec2 = nn.Sequential(_HomResBlock(c2, 3), _HomResBlock(c2, 3), _HomFFNBlock(c2, expand=2))
+
+        self.up1 = _UpShuffle(c2, c1)
+        self.dec1 = nn.Sequential(
+            _HomResBlock(c1, 3),
+            _HomResBlock(c1, 3),
+            _HomFFNBlock(c1, expand=3),
+            _HomFFNBlock(c1, expand=3),
+        )
+
+        for m in (self.conv1, self.conv2, self.conv3, self.conv4):
+            _init_hom_conv(m, 1.0)
+
+        self.head_q = nn.Conv2d(c3, self.channels_out, kernel_size=3, padding=1, bias=True)
+        self.head_h = nn.Conv2d(c2, self.channels_out, kernel_size=3, padding=1, bias=True)
+        self.head_f = nn.Conv2d(c1, self.channels_out, kernel_size=3, padding=1, bias=True)
+        for h in (self.head_q, self.head_h, self.head_f):
+            _init_hom_conv(h, 0.05)
+
+    def _encode_decode(self, x: torch.Tensor):
+        e1 = self.enc1(F.leaky_relu(self.conv1(x), 0.05))
+        e2 = self.enc2(F.leaky_relu(self.conv2(e1), 0.05))
+        e3 = self.enc3(F.leaky_relu(self.conv3(e2), 0.05))
+        m = self.mid(F.leaky_relu(self.conv4(e3), 0.05))
+        d3 = self.dec3(F.leaky_relu(self.up3(m), 0.05) + e3)
+        d2 = self.dec2(F.leaky_relu(self.up2(d3), 0.05) + e2)
+        d1 = self.dec1(F.leaky_relu(self.up1(d2), 0.05) + e1)
+        return d3, d2, d1
+
+    def forward_all(self, inputs: torch.Tensor) -> List[torch.Tensor]:
+        h, w = inputs.shape[2], inputs.shape[3]
+        ph = (8 - h % 8) % 8
+        pw = (8 - w % 8) % 8
+        x = F.pad(inputs, (0, pw, 0, ph), mode="replicate") if (ph > 0 or pw > 0) else inputs
+        d3, d2, d1 = self._encode_decode(x)
+        hp, wp = x.shape[2], x.shape[3]
+        same_c = self.channels_out == self.channels_in
+
+        pq = self.head_q(d3)
+        if same_c:
+            xq = F.interpolate(x, size=(hp // 4, wp // 4), mode="bilinear", align_corners=True)
+            pq = xq + pq
+
+        ph_out = self.head_h(d2)
+        if same_c:
+            xh = F.interpolate(x, size=(hp // 2, wp // 2), mode="bilinear", align_corners=True)
+            ph_out = xh + ph_out
+
+        pf = self.head_f(d1)[:, :, :h, :w]
+        if same_c:
+            pf = inputs + pf
+        return [pq, ph_out, pf]
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        h, w = inputs.shape[2], inputs.shape[3]
+        ph = (8 - h % 8) % 8
+        pw = (8 - w % 8) % 8
+        x = F.pad(inputs, (0, pw, 0, ph), mode="replicate") if (ph > 0 or pw > 0) else inputs
+        _, _, d1 = self._encode_decode(x)
+        pf = self.head_f(d1)[:, :, :h, :w]
+        return (inputs + pf) if (self.channels_out == self.channels_in) else pf
+
+
 def build_generator(mo: dict, cudnn_pad: bool = False):
     model_size = mo.get("model_size", "Medium")
     if model_size not in MODEL_SPECS:
@@ -346,6 +484,8 @@ def build_generator(mo: dict, cudnn_pad: bool = False):
     spec = MODEL_SPECS[model_size]
     c_in = int(mo.get("in_channels", 3))
     c_out = int(mo.get("out_channels", c_in))
+    if model_size == "WildCatLargeV1":
+        return WildCatLargeV1(channels_in=c_in, channels_out=c_out), spec["k_size"]
     net = EncoderDecoder(
         channels_in=c_in,
         channels_out=c_out,
@@ -409,13 +549,18 @@ def inspect_weight_source(
                     obj = cat_format._TorchScriptUnpickler(io.BytesIO(z.read(dp_list[0]))).load()
                     if isinstance(obj, dict):
                         sd = obj.get("G", obj)
-                        c1_shape = sd["conv1_1.weight"][2]
-                        d3_shape = sd["deconv3_1.weight"][2]
-                        k_size = int(c1_shape[2])
-                        out_ch = int(d3_shape[1])
-                        in_ch = int(c1_shape[1]) - out_ch
-                        is_large = "block1_3.conv2d_1.weight" in sd
-                        ms = "Large" if is_large else ("Small" if k_size == 3 else "Medium")
+                        if "conv4.weight" in sd and "head_f.weight" in sd:
+                            in_ch = int(sd["conv1.weight"][2][1])
+                            out_ch = int(sd["head_f.weight"][2][0])
+                            ms = "WildCatLargeV1"
+                        else:
+                            c1_shape = sd["conv1_1.weight"][2]
+                            d3_shape = sd["deconv3_1.weight"][2]
+                            k_size = int(c1_shape[2])
+                            out_ch = int(d3_shape[1])
+                            in_ch = int(c1_shape[1]) - out_ch
+                            is_large = "block1_3.conv2d_1.weight" in sd
+                            ms = "Large" if is_large else ("Small" if k_size == 3 else "Medium")
                         cfg = obj.get("config") or {}
                         return {
                             "model_size": ms,
@@ -432,13 +577,18 @@ def inspect_weight_source(
                     else:
                         st = getattr(obj, "state", {})
                         tensors = dict((k, shp) for k, _, shp in cat_format._walk_tensors(obj))
-                        c1_shape = tensors.get("conv1_1.weight", (32, 6, 5, 5))
-                        d3_shape = tensors.get("deconv3_1.weight", (32, 3, 5, 5))
-                        k_size = int(st.get("k_size", c1_shape[2]))
-                        out_ch = int(st.get("channels_out", d3_shape[1]))
-                        in_ch = int(st.get("channels_in", c1_shape[1] - out_ch))
-                        is_large = "block1_3.conv2d_1.weight" in tensors
-                        ms = "Large" if is_large else ("Small" if k_size == 3 else "Medium")
+                        if "conv4.weight" in tensors and "head_f.weight" in tensors:
+                            in_ch = int(st.get("channels_in", tensors["conv1.weight"][1]))
+                            out_ch = int(st.get("channels_out", tensors["head_f.weight"][0]))
+                            ms = "WildCatLargeV1"
+                        else:
+                            c1_shape = tensors.get("conv1_1.weight", (32, 6, 5, 5))
+                            d3_shape = tensors.get("deconv3_1.weight", (32, 3, 5, 5))
+                            k_size = int(st.get("k_size", c1_shape[2]))
+                            out_ch = int(st.get("channels_out", d3_shape[1]))
+                            in_ch = int(st.get("channels_in", c1_shape[1] - out_ch))
+                            is_large = "block1_3.conv2d_1.weight" in tensors
+                            ms = "Large" if is_large else ("Small" if k_size == 3 else "Medium")
                         return {
                             "model_size": ms,
                             "in_channels": in_ch,

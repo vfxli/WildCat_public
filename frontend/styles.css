@@ -623,6 +623,29 @@ input[type="range"] {
 .wc-doc .wc-doc-more {
   margin: 0.7em 0 0;
 }
+.wc-doc .wc-doc-fig {
+  margin: 0.65em 0 0.9em;
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 12px 14px 10px;
+  overflow-x: auto;
+}
+.wc-doc .wc-doc-fig svg {
+  display: block;
+  width: 100%;
+  max-width: 920px;
+  min-width: 620px;
+  height: auto;
+  margin: 0 auto;
+}
+.wc-doc .wc-doc-fig figcaption {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: center;
+  line-height: 1.45;
+}
 .wc-doc-entry {
   scroll-margin-top: 64px;
 }

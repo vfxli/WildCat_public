@@ -1,7 +1,7 @@
 import { createApp, ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch, provide, inject } from '/static/vendor/vue.esm.js';
 import katex from '/static/vendor/katex/katex.esm.js';
 
-const AUTO_BATCH = { Small: 8, Medium: 8, Large: 8 }; // CopyCat 'Auto' batch = 8 (memory permitting)
+const AUTO_BATCH = { Small: 8, Medium: 8, Large: 8, WildCatLargeV1: 8 }; // CopyCat 'Auto' batch = 8 (memory permitting)
 
 const ADV_LATEX = {
   cg_grid: String.raw`g_s = \max\!\left(1,\; \left\lfloor \frac{g_{\mathrm{full}}}{s} \right\rfloor\right), \qquad x_0 = g_s \cdot k_x, \qquad y_0 = (H_s - C_s) - g_s \cdot k_y`,
@@ -153,7 +153,7 @@ function clampKfCommon(kc) {
 // no gradient term and no highlight damping (Patch 56: better on every face shot, seed and keyframe condition tested -
 // unseen frames, edited area, and far fewer changes to the pixels the edit does not touch; evidence.preset_face_edit).
 const FACE_EDIT_PRESET = Object.freeze({
-  model_size: 'Medium',
+  model_size: 'WildCatLargeV1',
   channels: '3->3',
   crop: 256,
   loss: Object.freeze({ charbonnier_ratio: 0.25, grad_weight: 0, hdr_alpha: 0 }),
@@ -200,7 +200,7 @@ const PRESET_SPECS = Object.freeze({
 // "- " lines = list; "|a|b|" lines = table (first row header, "|---|" row skipped); inline **bold**, `code`,
 // [[doc:id]] / [[ev:id]] (optional "|label") = link to another entry. Raw HTML is escaped.
 const DOC_GROUPS = [
-  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
+  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'arch_wildcat_large_v1', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
   { id: 'adv', ids: ['adv_overview', 'adv_crop_grid', 'adv_crop_grid_step', 'adv_crop_grid_anchor', 'adv_loss', 'adv_loss_charbonnier', 'adv_loss_grad', 'adv_loss_hdr', 'adv_loss_eps', 'adv_stages', 'adv_stages_ratio', 'adv_stages_warmup', 'adv_ema', 'adv_ema_decay', 'adv_augment', 'adv_augment_flip', 'adv_augment_exposure', 'adv_kf_common', 'adv_kf_common_threshold', 'adv_kf_common_span', 'adv_kf_common_overall'] },
   { id: 'presets', ids: ['presets_overview', 'preset_nuke', 'preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
   { id: 'lab', ids: ['lab_overview', 'lab_combo', 'lab_combo_dataset', 'lab_combo_task_type', 'lab_combo_scope', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
@@ -212,12 +212,161 @@ const DOC_GROUPS = [
 const EVIDENCE_GROUPS = [
   { id: 'method', ids: ['method', 'appendix_material'] },
   { id: 'adv', ids: ['adv_crop_grid', 'adv_crop_grid_anchor', 'adv_loss_grad', 'adv_loss_charbonnier', 'adv_loss_hdr', 'adv_stages', 'adv_ema', 'adv_augment_flip', 'adv_kf_common'] },
-  { id: 'training', ids: ['model_size', 'crop_size', 'epochs', 'dataset_keyframes', 'speed_options'] },
+  { id: 'training', ids: ['model_size', 'arch_wildcat_large_v1', 'crop_size', 'epochs', 'dataset_keyframes', 'speed_options'] },
   { id: 'presets', ids: ['preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
 ];
 
+// Architecture diagrams rendered inside Help Center entries via [[fig:copycat_arch]] and [[fig:wildcat_large_v1_arch]].
+function renderArchFigure(figId, langCode) {
+  const zh = !langCode || String(langCode).toLowerCase().startsWith('zh');
+  if (figId === 'copycat_arch') {
+    const cap = zh
+      ? '图 1：CopyCat 默认架构（Small / Medium / Large）——同一套 [32, 64, 128] 编解码器在 1/4、1/2、1/1 三个尺度串行前向 3 遍，输出完整目标图像'
+      : 'Figure 1: CopyCat Default Architecture (Small / Medium / Large) — a shared [32, 64, 128] encoder-decoder run across 1/4, 1/2 and 1/1 scales in 3 passes, outputting the full target image';
+    return (
+      '<figure class="wc-doc-fig">' +
+      '<svg viewBox="0 0 880 318" xmlns="http://www.w3.org/2000/svg" role="img">' +
+      '<defs>' +
+      '<marker id="cc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#94a3b8"/></marker>' +
+      '<marker id="cc-arr-w" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#60a5fa"/></marker>' +
+      '</defs>' +
+      '<rect x="4" y="4" width="872" height="310" rx="10" fill="#090f1d" stroke="#1e293b"/>' +
+      `<text x="20" y="27" fill="#e2e8f0" font-size="12.5" font-weight="700" font-family="system-ui,sans-serif">${zh ? 'CopyCat 默认做法：三遍权重共享金字塔（Small 1.0M · Medium 2.6M · Large 6.9M）' : 'CopyCat Default Approach: 3-Pass Weight-Shared Pyramid (Small 1.0M · Medium 2.6M · Large 6.9M)'}</text>` +
+      // Pass 1
+      '<rect x="20" y="44" width="232" height="92" rx="8" fill="#0f172a" stroke="#475569" stroke-width="1.2"/>' +
+      `<text x="32" y="63" fill="#93c5fd" font-size="11" font-weight="700" font-family="monospace">${zh ? '第 1 遍前向（1/4 分辨率）' : 'Pass 1 (1/4 Resolution)'}</text>` +
+      `<text x="32" y="81" fill="#cbd5e1" font-size="10.5" font-family="monospace">${zh ? '输入: concat(原图↓1/4, 初始输入)' : 'In: concat(Input↓1/4, Init)'}</text>` +
+      '<rect x="32" y="90" width="208" height="36" rx="6" fill="#1e1b4b" stroke="#6366f1"/>' +
+      `<text x="136" y="106" text-anchor="middle" fill="#e0e7ff" font-size="10.5" font-weight="700" font-family="monospace">${zh ? '共享 EncoderDecoder Θ' : 'Shared EncoderDecoder Θ'}</text>` +
+      `<text x="136" y="120" text-anchor="middle" fill="#a5b4fc" font-size="9.5" font-family="monospace">32 → 64 → 128 → 64 → 32</text>` +
+      // Arrow 1->2
+      '<line x1="252" y1="90" x2="318" y2="90" stroke="#60a5fa" stroke-width="1.6" marker-end="url(#cc-arr-w)"/>' +
+      `<text x="285" y="79" text-anchor="middle" fill="#93c5fd" font-size="9.5" font-family="monospace">${zh ? 'p₀ 双线性×2' : 'p₀ Bilinear×2'}</text>` +
+      `<text x="285" y="106" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="sans-serif">${zh ? '上采样拼接' : 'upsample & concat'}</text>` +
+      // Pass 2
+      '<rect x="322" y="44" width="232" height="92" rx="8" fill="#0f172a" stroke="#475569" stroke-width="1.2"/>' +
+      `<text x="334" y="63" fill="#93c5fd" font-size="11" font-weight="700" font-family="monospace">${zh ? '第 2 遍前向（1/2 分辨率）' : 'Pass 2 (1/2 Resolution)'}</text>` +
+      `<text x="334" y="81" fill="#cbd5e1" font-size="10.5" font-family="monospace">${zh ? '输入: concat(原图↓1/2, p₀↑)' : 'In: concat(Input↓1/2, p₀↑)'}</text>` +
+      '<rect x="334" y="90" width="208" height="36" rx="6" fill="#1e1b4b" stroke="#6366f1"/>' +
+      `<text x="438" y="106" text-anchor="middle" fill="#e0e7ff" font-size="10.5" font-weight="700" font-family="monospace">${zh ? '同一套权重 Θ 第 2 遍前向' : 'Same Shared Weights Θ (Pass 2)'}</text>` +
+      `<text x="438" y="120" text-anchor="middle" fill="#a5b4fc" font-size="9.5" font-family="monospace">32 → 64 → 128 → 64 → 32</text>` +
+      // Arrow 2->3
+      '<line x1="554" y1="90" x2="620" y2="90" stroke="#60a5fa" stroke-width="1.6" marker-end="url(#cc-arr-w)"/>' +
+      `<text x="587" y="79" text-anchor="middle" fill="#93c5fd" font-size="9.5" font-family="monospace">${zh ? 'p₁ 双线性×2' : 'p₁ Bilinear×2'}</text>` +
+      `<text x="587" y="106" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="sans-serif">${zh ? '上采样拼接' : 'upsample & concat'}</text>` +
+      // Pass 3
+      '<rect x="624" y="44" width="236" height="92" rx="8" fill="#0f172a" stroke="#475569" stroke-width="1.2"/>' +
+      `<text x="636" y="63" fill="#93c5fd" font-size="11" font-weight="700" font-family="monospace">${zh ? '第 3 遍前向（1/1 全分辨率）' : 'Pass 3 (1/1 Full Resolution)'}</text>` +
+      `<text x="636" y="81" fill="#cbd5e1" font-size="10.5" font-family="monospace">${zh ? '输入: concat(原图 1/1, p₁↑)' : 'In: concat(Input 1/1, p₁↑)'}</text>` +
+      '<rect x="636" y="90" width="212" height="36" rx="6" fill="#1e1b4b" stroke="#6366f1"/>' +
+      `<text x="742" y="106" text-anchor="middle" fill="#e0e7ff" font-size="10.5" font-weight="700" font-family="monospace">${zh ? '同一套权重 Θ 第 3 遍前向' : 'Same Shared Weights Θ (Pass 3)'}</text>` +
+      `<text x="742" y="120" text-anchor="middle" fill="#a5b4fc" font-size="9.5" font-family="monospace">${zh ? '输出完整目标图像 C_out' : 'Outputs full target C_out'}</text>` +
+      // Zoom-in box of internal EncoderDecoder design
+      '<rect x="20" y="152" width="840" height="148" rx="8" fill="#0b1324" stroke="#334155" stroke-dasharray="4 3"/>' +
+      `<text x="34" y="172" fill="#f8fafc" font-size="11" font-weight="700" font-family="system-ui,sans-serif">${zh ? '共享子网 Θ 内部结构与设计方式（Small: k=3,n=1 · Medium: k=5,n=1 · Large: k=5,n=3）' : 'Shared Sub-Network Θ Structure & Design (Small: k=3,n=1 · Medium: k=5,n=1 · Large: k=5,n=3)'}</text>` +
+      // Internal chain
+      '<rect x="34" y="183" width="135" height="32" rx="5" fill="#1e293b" stroke="#64748b"/>' +
+      `<text x="101" y="203" text-anchor="middle" fill="#f1f5f9" font-size="10" font-family="monospace">1/1: 32ch (n×k×k)</text>` +
+      '<line x1="169" y1="199" x2="195" y2="199" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#cc-arr)"/>' +
+      '<rect x="197" y="183" width="135" height="32" rx="5" fill="#1e293b" stroke="#64748b"/>' +
+      `<text x="264" y="203" text-anchor="middle" fill="#f1f5f9" font-size="10" font-family="monospace">1/2: 64ch (n×k×k)</text>` +
+      '<line x1="332" y1="199" x2="358" y2="199" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#cc-arr)"/>' +
+      '<rect x="360" y="183" width="150" height="32" rx="5" fill="#1e293b" stroke="#64748b"/>' +
+      `<text x="435" y="203" text-anchor="middle" fill="#f1f5f9" font-size="10" font-family="monospace">1/4: 128ch (2n×k×k)</text>` +
+      '<line x1="510" y1="199" x2="536" y2="199" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#cc-arr)"/>' +
+      '<rect x="538" y="183" width="150" height="32" rx="5" fill="#1e293b" stroke="#64748b"/>' +
+      `<text x="613" y="203" text-anchor="middle" fill="#f1f5f9" font-size="10" font-family="monospace">Deconv4×4 → 64 → 32</text>` +
+      '<line x1="688" y1="199" x2="714" y2="199" stroke="#94a3b8" stroke-width="1.3" marker-end="url(#cc-arr)"/>' +
+      '<rect x="716" y="183" width="130" height="32" rx="5" fill="#1e1b4b" stroke="#6366f1"/>' +
+      `<text x="781" y="203" text-anchor="middle" fill="#e0e7ff" font-size="10" font-family="monospace">${zh ? '直接输出 C_out' : 'Direct C_out'}</text>` +
+      // 3 Neutral Design Bullets
+      `<text x="34" y="238" fill="#cbd5e1" font-size="10.5" font-family="system-ui,sans-serif">${zh ? '① 多尺度做法：同一套编解码器权重在 1/4、1/2、1/1 串行执行 3 遍，级间将上一遍输出双线性放大 2 倍与当前尺度原图拼接。' : '1. Multi-scale pass: runs one shared encoder-decoder across 1/4, 1/2 and 1/1, concatenating 2x bilinearly upsampled predictions.'}</text>` +
+      `<text x="34" y="260" fill="#cbd5e1" font-size="10.5" font-family="system-ui,sans-serif">${zh ? '② 通道与卷积核：三档规格通道宽度均为 32 → 64 → 128，通过卷积核尺寸（k=3 / 5）与残差块层数（n=1 / 3）调节感受野与容量。' : '2. Width & kernels: all three tiers use 32 → 64 → 128 channels, scaling receptive field and capacity via kernel size (k=3/5) and block count (n=1/3).'}</text>` +
+      `<text x="34" y="282" fill="#cbd5e1" font-size="10.5" font-family="system-ui,sans-serif">${zh ? '③ 算子与输出：残差块使用标准卷积与 ReLU 激活，解码采用 4×4 转置卷积上采样，末端直接输出全部目标通道像素。' : '3. Operators & output: uses standard Conv + ReLU residual blocks and 4x4 transposed-conv upsampling, outputting all target channels directly.'}</text>` +
+      '</svg>' +
+      `<figcaption>${escapeHtml(cap)}</figcaption>` +
+      '</figure>'
+    );
+  }
+  if (figId === 'wildcat_large_v1_arch') {
+    const cap = zh
+      ? '图 2：WildCatLargeV1 架构（5.1M）——单遍 4 尺度非对称 U-Net（64→96→128→160）+ PixelShuffle 上采样 + 1×1 逐像素通道混合 + 同通道原图残差叠加'
+      : 'Figure 2: WildCatLargeV1 Architecture (5.1M) — single-pass 4-scale asymmetric U-Net (64→96→128→160) + PixelShuffle + 1x1 channel FFN + input residual skip';
+    return (
+      '<figure class="wc-doc-fig">' +
+      '<svg viewBox="0 0 880 342" xmlns="http://www.w3.org/2000/svg" role="img">' +
+      '<defs>' +
+      '<marker id="wc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#94a3b8"/></marker>' +
+      '<marker id="wc-arr-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#10b981"/></marker>' +
+      '<marker id="wc-arr-v" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#a78bfa"/></marker>' +
+      '</defs>' +
+      '<rect x="4" y="4" width="872" height="334" rx="10" fill="#090f1d" stroke="#1e293b"/>' +
+      `<text x="20" y="27" fill="#e2e8f0" font-size="12.5" font-weight="700" font-family="system-ui,sans-serif">${zh ? 'WildCatLargeV1 做法：单遍 4 尺度非对称 U-Net + 1×1 通道混合（5.1M 参数）' : 'WildCatLargeV1 Approach: Single-Pass 4-Scale Asymmetric U-Net + 1x1 Channel FFN (5.1M Params)'}</text>` +
+      // Identity Skip Highway along top
+      '<rect x="20" y="54" width="88" height="44" rx="7" fill="#0f172a" stroke="#38bdf8" stroke-width="1.4"/>' +
+      `<text x="64" y="73" text-anchor="middle" fill="#bae6fd" font-size="10.5" font-weight="700" font-family="monospace">${zh ? '输入原图 X' : 'Input X'}</text>` +
+      `<text x="64" y="89" text-anchor="middle" fill="#7dd3fc" font-size="9.5" font-family="monospace">1/1 · H×W</text>` +
+      '<path d="M64,54 L64,40 L806,40 L806,56" fill="none" stroke="#10b981" stroke-width="2" marker-end="url(#wc-arr-g)"/>' +
+      `<text x="435" y="35" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700" font-family="system-ui,sans-serif">${zh ? '同通道原图恒等残差直连（C_in = C_out 时仅预测局部编辑增量 Δ 并加回原图 X）' : 'Direct Input Residual Skip (when C_in = C_out: predicts local edit delta Δ added onto input X)'}</text>` +
+      // Encoder 1/1 (64ch)
+      '<line x1="108" y1="76" x2="128" y2="76" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#wc-arr)"/>' +
+      '<rect x="130" y="54" width="128" height="44" rx="7" fill="#172554" stroke="#3b82f6"/>' +
+      `<text x="194" y="72" text-anchor="middle" fill="#dbeafe" font-size="10.5" font-weight="700" font-family="monospace">Enc1 · 1/1 · 64ch</text>` +
+      `<text x="194" y="88" text-anchor="middle" fill="#93c5fd" font-size="9.5" font-family="monospace">${zh ? '2×Res(3×3)' : '2×Res(3×3)'}</text>` +
+      // Skip 1/1
+      '<line x1="258" y1="76" x2="546" y2="76" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#wc-arr)"/>' +
+      `<text x="402" y="70" text-anchor="middle" fill="#94a3b8" font-size="9.5" font-family="monospace">${zh ? '1/1 细节跳连 (+e₁)' : '1/1 fine skip (+e₁)'}</text>` +
+      // Down to 1/2 (96ch)
+      '<line x1="194" y1="98" x2="194" y2="118" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#wc-arr)"/>' +
+      '<rect x="148" y="120" width="128" height="42" rx="7" fill="#172554" stroke="#3b82f6"/>' +
+      `<text x="212" y="137" text-anchor="middle" fill="#dbeafe" font-size="10.5" font-weight="700" font-family="monospace">Enc2 · 1/2 · 96ch</text>` +
+      `<text x="212" y="152" text-anchor="middle" fill="#93c5fd" font-size="9.5" font-family="monospace">2×Res(3×3)</text>` +
+      '<line x1="276" y1="141" x2="508" y2="141" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#wc-arr)"/>' +
+      // Down to 1/4 (128ch)
+      '<line x1="212" y1="162" x2="212" y2="182" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#wc-arr)"/>' +
+      '<rect x="172" y="184" width="136" height="42" rx="7" fill="#1e1b4b" stroke="#6366f1"/>' +
+      `<text x="240" y="201" text-anchor="middle" fill="#e0e7ff" font-size="10.5" font-weight="700" font-family="monospace">Enc3 · 1/4 · 128ch</text>` +
+      `<text x="240" y="216" text-anchor="middle" fill="#a5b4fc" font-size="9.5" font-family="monospace">Res(3×3)+Res(5×5)</text>` +
+      '<line x1="308" y1="205" x2="472" y2="205" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#wc-arr)"/>' +
+      // Bottleneck 1/8 (160ch)
+      '<path d="M240,226 L240,256 L306,256" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#wc-arr-v)"/>' +
+      '<rect x="308" y="236" width="214" height="42" rx="7" fill="#2e1065" stroke="#a855f7" stroke-width="1.4"/>' +
+      `<text x="415" y="253" text-anchor="middle" fill="#f3e8ff" font-size="10.5" font-weight="700" font-family="monospace">${zh ? '瓶颈层 1/8 · 160ch（大范围特征）' : 'Bottleneck 1/8 · 160ch (Pose)'}</text>` +
+      `<text x="415" y="268" text-anchor="middle" fill="#d8b4fe" font-size="9.5" font-family="monospace">Res(5×5) + Res(3×3) · LeakyReLU(0.05)</text>` +
+      // Up to Dec3 1/4
+      '<path d="M522,256 L544,256 L544,228" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#wc-arr-v)"/>' +
+      '<rect x="474" y="184" width="154" height="42" rx="7" fill="#1e1b4b" stroke="#8b5cf6"/>' +
+      `<text x="551" y="201" text-anchor="middle" fill="#ede9fe" font-size="10.5" font-weight="700" font-family="monospace">Dec3 · 1/4 · PS×2</text>` +
+      `<text x="551" y="216" text-anchor="middle" fill="#c4b5fd" font-size="9.5" font-family="monospace">Res(3×3)+FFN(1×1) [+head_q]</text>` +
+      // Up to Dec2 1/2
+      '<line x1="551" y1="184" x2="551" y2="164" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#wc-arr-v)"/>' +
+      '<rect x="510" y="120" width="158" height="42" rx="7" fill="#172554" stroke="#60a5fa"/>' +
+      `<text x="589" y="137" text-anchor="middle" fill="#dbeafe" font-size="10.5" font-weight="700" font-family="monospace">Dec2 · 1/2 · PS×2</text>` +
+      `<text x="589" y="152" text-anchor="middle" fill="#93c5fd" font-size="9.5" font-family="monospace">2×Res(3×3)+FFN [+head_h]</text>` +
+      // Up to Dec1 1/1 + 1x1 FFN Tail
+      '<line x1="612" y1="120" x2="612" y2="100" stroke="#10b981" stroke-width="1.5" marker-end="url(#wc-arr-g)"/>' +
+      '<rect x="548" y="54" width="196" height="44" rx="7" fill="#064e3b" stroke="#10b981" stroke-width="1.4"/>' +
+      `<text x="646" y="72" text-anchor="middle" fill="#d1fae5" font-size="10.5" font-weight="700" font-family="monospace">${zh ? 'Dec1 64ch + 2×1×1 FFN' : 'Dec1 64ch + 2×1×1 FFN'}</text>` +
+      `<text x="646" y="88" text-anchor="middle" fill="#6ee7b7" font-size="9.5" font-family="monospace">64→192→64 · head_f (Δ)</text>` +
+      // Sum node -> Output
+      '<line x1="744" y1="76" x2="786" y2="76" stroke="#10b981" stroke-width="1.6" marker-end="url(#wc-arr-g)"/>' +
+      '<rect x="788" y="58" width="76" height="36" rx="7" fill="#022c22" stroke="#34d399" stroke-width="1.5"/>' +
+      `<text x="826" y="74" text-anchor="middle" fill="#ecfdf5" font-size="10.5" font-weight="700" font-family="monospace">X + Δ</text>` +
+      `<text x="826" y="87" text-anchor="middle" fill="#6ee7b7" font-size="9" font-family="monospace">${zh ? '最终输出' : 'Output'}</text>` +
+      // Bottom summary strip
+      '<rect x="20" y="288" width="844" height="40" rx="6" fill="#0b1324" stroke="#1e293b"/>' +
+      `<text x="32" y="305" fill="#a7f3d0" font-size="10" font-family="system-ui,sans-serif">${zh ? '我们的做法：单遍编码至 1/8（160ch）提取大尺度姿态特征 · 1/1 设 64ch 配合 3×3 窄核合成局部细节 · 训练期三级输出头联合监督' : 'Our approach: single-pass down to 1/8 (160ch) for pose context · 64ch at 1/1 with 3x3 kernels for fine local texture · 3-scale training supervision'}</text>` +
+      `<text x="32" y="321" fill="#cbd5e1" font-size="10" font-family="system-ui,sans-serif">${zh ? 'PixelShuffle(2) 亚像素重排上采样 · 尾部 1×1 逐像素通道混合层拟合线性色彩变换 · 无归一化一阶齐次 LeakyReLU(0.05) · 兼容 Nuke Inference' : 'PixelShuffle(2) sub-pixel upsampling · 1x1 channel FFN for linear colour transfer · norm-free 1-homogeneous LeakyReLU(0.05) · Nuke Inference compatible'}</text>` +
+      '</svg>' +
+      `<figcaption>${escapeHtml(cap)}</figcaption>` +
+      '</figure>'
+    );
+  }
+  return '';
+}
+
 // markup of a doc / evidence body -> HTML. resolve(kind, id) gives the label of a link target ('' = no such entry).
-function renderDocMarkup(src, resolve) {
+function renderDocMarkup(src, resolve, langCode = 'zh-CN') {
   const inline = (s) => {
     let h = escapeHtml(s);
     h = h.replace(/\[\[(doc|ev):([a-z0-9_]+)(?:\|([^\]]*))?\]\]/g, (m, kind, id, label) => {
@@ -256,8 +405,13 @@ function renderDocMarkup(src, resolve) {
   };
   for (const raw of lines) {
     const line = raw.trim();
+    const figMatch = line.match(/^\[\[fig:([a-z0-9_]+)\]\]$/);
     if (!line) {
       flush();
+    } else if (figMatch) {
+      flush();
+      const figHtml = renderArchFigure(figMatch[1], langCode);
+      if (figHtml) out.push(figHtml);
     } else if (/^##\s+/.test(line)) {
       flush();
       out.push(`<h5>${inline(line.replace(/^##\s+/, ''))}</h5>`);
@@ -741,6 +895,8 @@ async function mountWildCatApp() {
       const workspaceReady = ref(false);
       const studioMode = ref('create'); // 'create' | 'monitor'
       const labMode = ref('plan'); // 'plan' | 'analyze'
+      const labPlanSubMode = ref('combo'); // 'combo' | 'custom'
+      const editingStagedUid = ref('');
       const initCategory = ref('scratch'); // 'scratch' | 'checkpoint'
 
       const queue = reactive({
@@ -854,7 +1010,7 @@ async function mountWildCatApp() {
       function docHtml(id) {
         const e = docEntry(id);
         if (!e) return '';
-        let html = renderDocMarkup(e.body, resolveDocLink);
+        let html = renderDocMarkup(e.body, resolveDocLink, currentLang.value);
         if (evEntry(id)) {
           html += `<p class="wc-doc-more"><a href="#ev-${id}" class="wc-doc-link" data-ev="${id}">${escapeHtml(t('help.evidenceLink'))}</a></p>`;
         }
@@ -863,7 +1019,7 @@ async function mountWildCatApp() {
       function evHtml(id) {
         const e = evEntry(id);
         if (!e) return '';
-        let html = renderDocMarkup(e.body, resolveDocLink);
+        let html = renderDocMarkup(e.body, resolveDocLink, currentLang.value);
         if (docEntry(id)) {
           html += `<p class="wc-doc-more"><a href="#doc-${id}" class="wc-doc-link" data-doc="${id}">${escapeHtml(t('help.docLink', { title: docTitle(id) }))}</a></p>`;
         }
@@ -2685,7 +2841,11 @@ async function mountWildCatApp() {
           b2 = calcSps(2);
           b1 = calcSps(1);
         } else {
-          [b4, b2, b1] = msize === 'Small' ? [450, 265, 105] : (msize === 'Large' ? [134, 70, 26] : [295, 158, 62]);
+          [b4, b2, b1] = msize === 'Small'
+            ? [450, 265, 105]
+            : (msize === 'Large'
+                ? [134, 70, 26]
+                : (msize === 'WildCatLargeV1' ? [215, 90, 31] : [295, 158, 62]));
           if (bs !== 8) {
             const f = Math.pow(8 / bs, 0.72);
             b4 *= f; b2 *= f; b1 *= f;
@@ -4970,6 +5130,7 @@ async function mountWildCatApp() {
           name: customName || '',
           collapsed: false,
           targetBatchId: '',
+          batchEpochs: 100000,
           items: [],
         };
       }
@@ -4981,13 +5142,18 @@ async function mountWildCatApp() {
             if (rawV2) {
               const parsedV2 = JSON.parse(rawV2);
               if (Array.isArray(parsedV2) && parsedV2.length > 0) {
-                return parsedV2.map((g, i) => ({
-                  gid: String(g.gid || `sgrp_init_${i}`),
-                  name: String(g.name || ''),
-                  collapsed: !!g.collapsed,
-                  targetBatchId: String(g.targetBatchId || ''),
-                  items: Array.isArray(g.items) ? g.items : [],
-                }));
+                return parsedV2.map((g, i) => {
+                  const items = Array.isArray(g.items) ? g.items : [];
+                  const firstEp = items[0] && items[0].config && items[0].config.train ? Number(items[0].config.train.epochs) : 0;
+                  return {
+                    gid: String(g.gid || `sgrp_init_${i}`),
+                    name: String(g.name || ''),
+                    collapsed: !!g.collapsed,
+                    targetBatchId: String(g.targetBatchId || ''),
+                    batchEpochs: Math.max(100, Math.round(Number(g.batchEpochs) || firstEp || 100000)),
+                    items,
+                  };
+                });
               }
             }
             const rawV1 = localStorage.getItem('wc_lab_staged_v1');
@@ -5454,8 +5620,10 @@ async function mountWildCatApp() {
       ];
 
       const labComboCfg = reactive({
-        panelOpen: false,
+        panelOpen: true,
         previewOpen: true,
+        baseOpen: false,
+        epochs: 100000,
         taskType: 'auto', // 'auto' | 'cleanup_grain' | 'keying_despill' | 'bokeh_focus' | 'degrain_clean' | 'roto_matte' | 'face_edit'
         scope: 'standard', // 'compact' (4) | 'standard' (6) | 'thorough' (8)
         groupName: '',
@@ -5536,8 +5704,8 @@ async function mountWildCatApp() {
         // every other recipe changes ONE thing, and the last one is the CopyCat default as control (same Model Size as the
         // anchor). Charbonnier appears where its tests hold (face-edit preset, a fidelity recipe for clean-up); HDR damping and
         // horizontal flip only in the "previous preset" recipe kept for comparison.
-        // All recipes of a test use the user's current Epochs (equal lengths compare fairly).
-        const comboEp = clampEp(Number(form.epochs) || 100000);
+        // All recipes of a test use the combo workspace's unified Epochs (equal lengths compare fairly).
+        const comboEp = clampEp(Number(labComboCfg.epochs) || 100000);
         const G05 = { cr: 0, gw: 0.05, ha: 0 };
         const STG = [15, 25, 60];
         const mk = (code, role, reasonKey, o = {}) => ({
@@ -5565,27 +5733,29 @@ async function mountWildCatApp() {
         const raftOk = !!kfCommonRaftOffered.value;
         let specs = [];
         if (effType === 'face_edit') {
-          // face edits: anchor = the preset (1px + Charbonnier 0.25 + keyframe commonality + averaged weights); every other
-          // recipe changes one thing of it; the CopyCat default closes the list. Where keyframe commonality cannot take
-          // effect, the recipes with it would repeat the ones without it: they are left out and the panel says why.
+          // face edits: anchor = WildCatLargeV1 preset (1px + Charbonnier 0.25 + keyframe commonality + averaged weights);
+          // Medium_Preset tests CopyCat Medium under identical preset settings; CopyCat Medium native default closes the list.
           const m = FACE_EDIT_PRESET.model_size;
           const FL = FACE_EDIT_PRESET.loss;
           const P = { m, crop: clampCrop(FACE_EDIT_PRESET.crop), ema: true, loss: { cr: FL.charbonnier_ratio, gw: FL.grad_weight, ha: FL.hdr_alpha } };
           specs = kfOk
             ? [
                 mk('Anchor_Preset', 'anchor', 'lab.comboReason_fe_1', Object.assign({}, P, { kf: true })),
+                mk('Medium_Preset', 'relaxed', 'lab.comboReason_fe_med', Object.assign({}, P, { m: 'Medium', kf: true })),
                 mk('No_KfCommon', 'relaxed', 'lab.comboReason_fe_2', P),
                 mk('No_Charb', 'relaxed', 'lab.comboReason_fe_8', Object.assign({}, P, { kf: true, loss: null })),
-                mk('Small_Preset', 'relaxed', 'lab.comboReason_fe_4', Object.assign({}, P, { m: 'Small', kf: true })),
                 mk('Kf_NoOverall', 'relaxed', 'lab.comboReason_fe_5', Object.assign({}, P, { kf: true, kfOverall: false })),
               ]
                 .concat(raftOk ? [mk('Kf_Raft', 'relaxed', 'lab.comboReason_fe_6', Object.assign({}, P, { kf: true, kfFlow: 'raft' }))] : [])
-                .concat([mk('Kf_Grid4', 'relaxed', 'lab.comboReason_fe_3', Object.assign({}, P, { kf: true, grid: 4 })), control(m)])
+                .concat([
+                  mk('Small_Preset', 'relaxed', 'lab.comboReason_fe_4', Object.assign({}, P, { m: 'Small', kf: true })),
+                  control('Medium'),
+                ])
             : [
                 mk('Anchor_NoKf', 'anchor', 'lab.comboReason_fe_nokf', P),
-                mk('Small_NoKf', 'relaxed', 'lab.comboReason_fe_7', Object.assign({}, P, { m: 'Small' })),
+                mk('Medium_NoKf', 'relaxed', 'lab.comboReason_fe_med_nokf', Object.assign({}, P, { m: 'Medium' })),
                 mk('No_Charb', 'relaxed', 'lab.comboReason_fe_9', Object.assign({}, P, { loss: null })),
-                control(m),
+                control('Medium'),
               ];
         } else if (effType === 'cleanup_grain') {
           // paint / erase shots: hand-painted keyframes can disagree like face edits do -> keyframe commonality is offered
@@ -5813,7 +5983,7 @@ async function mountWildCatApp() {
 
       // a face shot in the combination panel: find out whether RAFT can run here, so that its recipe can be offered
       watch(
-        () => labComboCfg.panelOpen && effectiveLabComboTaskType.value === 'face_edit',
+        () => topNav.value === 'lab' && labMode.value === 'plan' && labPlanSubMode.value === 'combo' && effectiveLabComboTaskType.value === 'face_edit',
         (want) => {
           if (want && typeof ensureKfFlowCaps === 'function') ensureKfFlowCaps();
         },
@@ -5927,6 +6097,7 @@ async function mountWildCatApp() {
           };
         });
 
+        targetGrp.batchEpochs = Math.max(100, Math.round(Number(labComboCfg.epochs) || 100000));
         targetGrp.items.push(...stagedItems);
         labActiveStagedGroupId.value = targetGrp.gid;
         form.run_name = nextUniqueExpNodeName();
@@ -5944,14 +6115,81 @@ async function mountWildCatApp() {
         }
       }
 
+      const editingStagedItem = computed(() => {
+        if (!editingStagedUid.value) return null;
+        for (const g of labStagedGroups.value) {
+          const hit = (g.items || []).find((x) => x.uid === editingStagedUid.value);
+          if (hit) return hit;
+        }
+        return null;
+      });
+
+      function cancelEditStagedItem() {
+        editingStagedUid.value = '';
+        form.run_name = nextUniqueExpNodeName();
+      }
+
+      function saveEditedStagedItem() {
+        const target = editingStagedItem.value;
+        if (!target) {
+          editingStagedUid.value = '';
+          return;
+        }
+        if (!prepareFormForStaging()) return;
+        const cfg = buildConfigPayload(false);
+        const cleanName = (form.run_name || target.node_name || '').trim() || target.node_name;
+        cfg.run_name = cleanName;
+        target.node_name = cleanName;
+        target.preferred_gpu = form.preferred_gpu || 'auto';
+        target.dataset_name = selectedDataset.value ? selectedDataset.value.name : target.dataset_name;
+        target.dataset_id = selectedDataset.value ? selectedDataset.value.id : target.dataset_id;
+        target.note = (labNote.value || '').trim();
+        target.config = cfg;
+        target.diff = summarizeClientConfig(cfg);
+        target.formSnap = JSON.parse(JSON.stringify(form));
+        target.advSnap = JSON.parse(JSON.stringify(adv));
+        target.initCategorySnap = initCategory.value;
+        editingStagedUid.value = '';
+        form.run_name = nextUniqueExpNodeName();
+        notify(t('msg.labStagedUpdatedToast', { name: cleanName }), 'success');
+      }
+
+      function applyBatchEpochsToStagedGroup(gid) {
+        const grp = labStagedGroups.value.find((g) => g.gid === gid);
+        if (!grp || !Array.isArray(grp.items) || !grp.items.length) return;
+        let epVal = Math.floor(Number(grp.batchEpochs || 0));
+        if (!Number.isFinite(epVal) || epVal < 1) {
+          notify(t('msg.errInvalidEpochs'), 'error');
+          return;
+        }
+        if (userMaxEpochs.value > 0 && epVal > userMaxEpochs.value) {
+          epVal = userMaxEpochs.value;
+        }
+        grp.batchEpochs = epVal;
+        for (const it of grp.items) {
+          if (!it.config || !it.config.train) continue;
+          const ds = it.dataset_id ? pairedAssets.value.find((a) => a.id === it.dataset_id) : null;
+          const nFrames = Math.max(1, Number((ds && ds.frame_count) || 8));
+          const bs = Math.max(1, Number(it.config.train.batch_size || 8));
+          const effBs = Math.min(nFrames, bs);
+          it.config.train.epochs = epVal;
+          it.config.train.total_steps = Math.max(1, Math.ceil((epVal * nFrames) / effBs));
+          if (it.formSnap) it.formSnap.epochs = epVal;
+          it.diff = summarizeClientConfig(it.config);
+        }
+        notify(t('msg.labGroupEpochsUpdatedToast', { epochs: epVal, count: grp.items.length }), 'success');
+      }
+
       function loadStagedToForm(item) {
         if (!item) return;
+        labPlanSubMode.value = 'custom';
+        editingStagedUid.value = item.uid;
         if (item.dataset_id && pairedAssets.value.some((a) => a.id === item.dataset_id)) {
           selectedDatasetId.value = item.dataset_id;
         }
         if (item.formSnap) {
           Object.assign(form, JSON.parse(JSON.stringify(item.formSnap)));
-          form.run_name = nextUniqueExpNodeName();
+          form.run_name = item.node_name || nextUniqueExpNodeName();
         }
         if (item.initCategorySnap) {
           initCategory.value = item.initCategorySnap;
@@ -6109,6 +6347,62 @@ async function mountWildCatApp() {
 
       async function submitLabBatch() {
         return submitLabStagedGroup(activeStagedGroup.value.gid);
+      }
+
+      async function submitLabSingleCustomNow() {
+        if (!canUseLab.value) {
+          notify(t('server.tempUserLabLocked'), 'warning');
+          return;
+        }
+        if (labSubmitting.value) return;
+        if (!prepareFormForStaging()) return;
+        const cfg = buildConfigPayload(false);
+        const diff = summarizeClientConfig(cfg);
+        const taken = new Set([
+          ...tasks.value.map((x) => x.node_name),
+          ...labStaged.value.map((x) => x.node_name),
+        ]);
+        let nodeName = (form.run_name || '').trim();
+        if (!nodeName || taken.has(nodeName)) {
+          nodeName = nextUniqueExpNodeName(diff.is_nuke_native ? 'NukeBase' : diff.model_size);
+        }
+        cfg.run_name = nodeName;
+        const singleGrp = {
+          gid: 'single_tmp',
+          name: '',
+          targetBatchId: '',
+          items: [
+            {
+              uid: `st_${Date.now()}`,
+              node_name: nodeName,
+              preferred_gpu: form.preferred_gpu || 'auto',
+              dataset_name: selectedDataset.value ? selectedDataset.value.name : '',
+              dataset_id: selectedDataset.value ? selectedDataset.value.id : null,
+              note: (labNote.value || '').trim(),
+              diff,
+              config: cfg,
+            },
+          ],
+        };
+        labSubmitting.value = true;
+        try {
+          const res = await _submitSingleStagedGroupInternal(singleGrp, 1);
+          if (!res) return;
+          labNote.value = '';
+          labActiveBatchId.value = res.batch_id;
+          await Promise.all([fetchQueueAndTasks(), refreshMeQuietly()]);
+          const newIds = (res.tasks || []).map((x) => x.id);
+          if (newIds.length) {
+            labSelectedTaskIds.value = newIds;
+            labBaselineTaskId.value = newIds[0];
+          }
+          form.run_name = nextUniqueExpNodeName();
+          notify(t('msg.labBatchSubmittedToast', { count: res.count }), 'success');
+        } catch (e) {
+          notify(e.message, 'error');
+        } finally {
+          labSubmitting.value = false;
+        }
       }
 
       async function submitLabDirectOrStaged() {
@@ -7486,6 +7780,9 @@ async function mountWildCatApp() {
         workspaceReady,
         studioMode,
         labMode,
+        labPlanSubMode,
+        editingStagedUid,
+        editingStagedItem,
         initCategory,
         accelAll,
         accelAny,
@@ -7722,12 +8019,16 @@ async function mountWildCatApp() {
         labComboKfNote,
         stageRecommendedComboSuite,
         loadStagedToForm,
+        saveEditedStagedItem,
+        cancelEditStagedItem,
+        applyBatchEpochsToStagedGroup,
         removeLabStaged,
         clearLabStaged,
         submitLabStagedGroup,
         submitAllLabStagedGroups,
         submitLabBatch,
         submitLabDirectOrStaged,
+        submitLabSingleCustomNow,
         openBatchInAnalyze,
         labNamedGroups,
         labGroupedTasks,

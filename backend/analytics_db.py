@@ -83,7 +83,7 @@ def _num_int(v, default: int | None = 0) -> int | None:
 
 def _infer_model_size(mo: dict) -> str:
     msize = str(mo.get("model_size") or "").strip()
-    if msize in ("Small", "Medium", "Large"):
+    if msize in ("Small", "Medium", "Large", "WildCatLargeV1"):
         return msize
     nr = int(mo.get("n_resblocks") or 1)
     ks = int(mo.get("k_size") or 5)

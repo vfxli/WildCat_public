@@ -102,7 +102,9 @@ def export_torchscript(state_dict, out_pt, mo=None):
     import torch
     from .models import build_generator
 
-    net, _ = build_generator(mo or {})
+    mo_cfg = mo or {}
+
+    net, _ = build_generator(mo_cfg)
     net.load_state_dict({k: (v.detach().cpu() if hasattr(v, "detach") else torch.from_numpy(v)) for k, v in state_dict.items()})
     net.eval()
     scripted = torch.jit.script(net)

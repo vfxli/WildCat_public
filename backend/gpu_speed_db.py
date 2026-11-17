@@ -44,6 +44,12 @@ def _fallback_curves() -> dict[str, dict[str, Any]]:
                 "ref_engine_mult": 2.15, "warmup_sec": 11.0,
                 "sps_1_4_b8_c256": 134.0, "sps_1_2_b8_c256": 70.0, "sps_1_1_b8_c256": 26.0,
             },
+            "WildCatLargeV1": {
+                "tau_launch_ms": 2.75, "tau_pix_ms": 5.85, "batch_exp": 0.93, "area_exp": 1.00,
+                "adv_loss_mult": 1.055, "adv_ema_mult": 1.015, "adv_aug_mult": 1.015,
+                "ref_engine_mult": 2.05, "warmup_sec": 9.5,
+                "sps_1_4_b8_c256": 215.0, "sps_1_2_b8_c256": 90.0, "sps_1_1_b8_c256": 31.0,
+            },
         }
     }
 
@@ -103,6 +109,27 @@ def _load_db_cached() -> dict[str, Any]:
 
         if "rtx_4090" not in curves:
             curves.update(_fallback_curves())
+
+        for gk, gc in curves.items():
+            if "WildCatLargeV1" not in gc and ("Large" in gc or "Medium" in gc):
+                cl = gc.get("Large") or gc["Medium"]
+                cm = gc.get("Medium") or cl
+                gc["WildCatLargeV1"] = {
+                    "gpu_key": gk,
+                    "model_size": "WildCatLargeV1",
+                    "tau_launch_ms": round(0.85 * float(cm.get("tau_launch_ms", 2.5)) + 0.15 * float(cl.get("tau_launch_ms", 5.4)), 4),
+                    "tau_pix_ms": round(0.81 * float(cl.get("tau_pix_ms", 7.2)), 4),
+                    "batch_exp": 0.93,
+                    "area_exp": 1.00,
+                    "adv_loss_mult": 1.055,
+                    "adv_ema_mult": 1.015,
+                    "adv_aug_mult": 1.015,
+                    "ref_engine_mult": 2.05,
+                    "warmup_sec": 9.5,
+                    "sps_1_4_b8_c256": round(0.68 * float(cm.get("sps_1_4_b8_c256", 295.0)) + 0.32 * float(cl.get("sps_1_4_b8_c256", 134.0)), 1),
+                    "sps_1_2_b8_c256": round(0.32 * float(cm.get("sps_1_2_b8_c256", 158.0)) + 0.68 * float(cl.get("sps_1_2_b8_c256", 70.0)), 1),
+                    "sps_1_1_b8_c256": round(1.18 * float(cl.get("sps_1_1_b8_c256", 26.0)), 1),
+                }
 
         loaded = {
             "meta": meta,
@@ -234,7 +261,7 @@ def eval_profile_stage_sps(profile: dict[str, Any], cfg: dict[str, Any] | None) 
     adv = cfg.get("advanced") or {}
 
     msize = str(mo.get("model_size") or "Medium")
-    if msize not in ("Small", "Medium", "Large"):
+    if msize not in ("Small", "Medium", "Large", "WildCatLargeV1"):
         msize = "Medium"
     bs = max(1, int(tr.get("batch_size") or 8))
     crop = max(32, int(tr.get("crop_size") or 256))
@@ -330,7 +357,7 @@ def get_frontend_speed_payload(gpus_meta: list[tuple[str, str, int]]) -> dict[st
     for gk, gspec in sorted(data["tested_gpus"].items(), key=lambda kv: int(kv[1].get("order_priority", 100))):
         gc = data["curves"].get(gk, {})
         models_summary = {}
-        for ms in ("Small", "Medium", "Large"):
+        for ms in ("Small", "Medium", "Large", "WildCatLargeV1"):
             c = gc.get(ms)
             if c:
                 models_summary[ms] = {
