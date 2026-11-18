@@ -1475,7 +1475,8 @@ async function mountWildCatApp() {
       function applyEmpiricalPresetCore(presetId) {
         const setPresetModelAndCh = (modelSz, chPreset) => {
           if (!isModelSizeLocked.value && modelSz) {
-            form.model_size = modelSz;
+            let nextModel = modelSz;
+            form.model_size = nextModel;
           }
           if (!isChannelsLocked.value && chPreset && isChannelPresetAllowed(chPreset)) {
             const [ic, oc] = chPreset.split('->').map(Number);
@@ -2226,6 +2227,7 @@ async function mountWildCatApp() {
       // ───────── Session, Roaming Passcode & Admin Auth Actions ─────────
       let _sessionEpoch = 0;
       let _fetchTasksInFlight = null;
+      let _fetchTasksInFlightWithTasks = false;
 
       function _applyUserSession(u) {
         if (!u) return;
@@ -2237,6 +2239,7 @@ async function mountWildCatApp() {
         if (switchedUser) {
           _sessionEpoch += 1;
           _fetchTasksInFlight = null;
+          _fetchTasksInFlightWithTasks = false;
         }
         if (typeof localStorage !== 'undefined') {
           if (rc) localStorage.setItem('wc_roam_code', rc);
@@ -2451,14 +2454,18 @@ async function mountWildCatApp() {
       let _lastTasksRef = null;
       async function fetchQueueAndTasks(force = false, withTasks = true) {
         if (!user.value) return;
-        if (!force && _fetchTasksInFlight) return _fetchTasksInFlight;
+        const wantTasks = !!(withTasks || force);
+        if (!force && _fetchTasksInFlight && (!wantTasks || _fetchTasksInFlightWithTasks)) {
+          return _fetchTasksInFlight;
+        }
         const reqEpoch = _sessionEpoch;
         const run = (async () => {
-          const [qSettled, tSettled] = await Promise.allSettled([
+          const [qSettled, tSettledInit] = await Promise.allSettled([
             apiFetch('/api/v1/queue'),
-            withTasks || force ? apiFetch('/api/v1/tasks') : Promise.resolve(null),
+            wantTasks ? apiFetch('/api/v1/tasks') : Promise.resolve(null),
           ]);
           if (reqEpoch !== _sessionEpoch) return;
+          let tSettled = tSettledInit;
           if (qSettled.status === 'fulfilled' && qSettled.value && qSettled.value.queue) {
             Object.assign(queue, qSettled.value.queue);
             if (form.preferred_gpu && form.preferred_gpu !== 'auto') {
@@ -2480,16 +2487,45 @@ async function mountWildCatApp() {
                 .filter((g) => g.enabled === false)
                 .map((g) => String(g.gpu_id));
             }
+            if (!wantTasks) {
+              const qLiveIds = new Set(
+                [...(queue.running || []), ...(queue.queued || [])].map((x) => x && x.id).filter(Boolean)
+              );
+              const localLive = tasks.value.filter((x) => x.status === 'running' || x.status === 'queued');
+              const localChanged =
+                localLive.some((x) => !qLiveIds.has(x.id)) ||
+                tasks.value.some((x) => qLiveIds.has(x.id) && x.status !== 'running' && x.status !== 'queued');
+              if (localChanged) {
+                tSettled = (await Promise.allSettled([apiFetch('/api/v1/tasks')]))[0];
+                if (reqEpoch !== _sessionEpoch) return;
+              }
+            }
           }
           if (tSettled.status === 'fulfilled' && tSettled.value) {
             const tRes = tSettled.value;
             _lastTasksFetchAt = Date.now();
             const list = tRes.tasks || [];
+            const prevLiveIds = new Set(
+              tasks.value.filter((x) => x.status === 'running' || x.status === 'queued').map((x) => x.id)
+            );
+            const nextLiveIds = new Set(
+              list.filter((x) => x.status === 'running' || x.status === 'queued').map((x) => x.id)
+            );
+            let anyFinished = false;
+            for (const id of prevLiveIds) {
+              if (!nextLiveIds.has(id)) {
+                anyFinished = true;
+                break;
+              }
+            }
             const sig = JSON.stringify(list);
             if (sig !== _lastTasksSig || tasks.value !== _lastTasksRef) {
               _lastTasksSig = sig;
               tasks.value = list;
               _lastTasksRef = tasks.value;
+            }
+            if (anyFinished) {
+              fetchCheckpoints();
             }
             // temporary users: the limit counts the tasks in progress (queued + training); a finished task frees its
             // place at once, so the header and the submit check follow the task list instead of the last login
@@ -2513,11 +2549,13 @@ async function mountWildCatApp() {
           }
         })();
         _fetchTasksInFlight = run;
+        _fetchTasksInFlightWithTasks = wantTasks;
         try {
           await run;
         } finally {
           if (_fetchTasksInFlight === run) {
             _fetchTasksInFlight = null;
+            _fetchTasksInFlightWithTasks = false;
           }
         }
       }
@@ -3072,7 +3110,7 @@ async function mountWildCatApp() {
               config: cfg,
             }),
           });
-          await Promise.all([fetchQueueAndTasks(), fetchCheckpoints(), refreshMeQuietly()]);
+          await Promise.all([fetchQueueAndTasks(true), fetchCheckpoints(), refreshMeQuietly()]);
           selectedTaskId.value = res.task.id;
           studioMode.value = 'monitor';
           proposeNextTaskName();
@@ -3107,7 +3145,7 @@ async function mountWildCatApp() {
               config: baseCfg,
             }),
           });
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           selectedTaskId.value = res.task.id;
           studioMode.value = 'monitor';
           const fresh = tasks.value.find((x) => x.id === res.task.id) || res.task;
@@ -3174,7 +3212,7 @@ async function mountWildCatApp() {
               config: baseCfg,
             }),
           });
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           selectedTaskId.value = res.task.id;
           studioMode.value = 'monitor';
           const fresh = tasks.value.find((x) => x.id === res.task.id) || res.task;
@@ -3306,8 +3344,11 @@ async function mountWildCatApp() {
           const idx = tasks.value.findIndex((x) => x.id === d.task.id);
           if (idx >= 0) {
             const prevStatus = tasks.value[idx].status;
+            const wasLive = prevStatus === 'running' || prevStatus === 'queued';
+            const nowLive = d.task.status === 'running' || d.task.status === 'queued';
             tasks.value[idx] = d.task;
-            if (d.task.status === 'failed' && (prevStatus === 'running' || prevStatus === 'queued')) {
+            _lastTasksSig = JSON.stringify(tasks.value);
+            if (d.task.status === 'failed' && wasLive) {
               const lastLine = String(d.task.error_msg || '')
                 .trim()
                 .split('\n')
@@ -3320,6 +3361,10 @@ async function mountWildCatApp() {
                 }),
                 'error'
               );
+            }
+            if (wasLive && !nowLive) {
+              fetchQueueAndTasks(true);
+              fetchCheckpoints();
             }
           }
 
@@ -4014,7 +4059,7 @@ async function mountWildCatApp() {
           } else {
             notify(t('msg.taskPausedSavedToast'), 'warning');
           }
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           await fetchCheckpoints();
           if (topNav.value === 'studio' && studioMode.value === 'monitor') await fetchTelemetry(false);
           if (topNav.value === 'admin') await loadAdminData();
@@ -4028,7 +4073,7 @@ async function mountWildCatApp() {
         try {
           await apiFetch(`/api/v1/tasks/${taskObj.id}`, { method: 'DELETE' });
           notify(t('msg.taskDeletedToast', { node: taskObj.node_name }), 'warning');
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           await fetchCheckpoints();
           if (!tasks.value.length) {
             studioMode.value = 'create';
@@ -4714,6 +4759,28 @@ async function mountWildCatApp() {
         );
       }
 
+      let _lastAdminTasksAt = 0;
+      let _adminTasksInFlight = null;
+      async function refreshAdminTasksQuietly() {
+        if (!adminToken.value) return;
+        if (_adminTasksInFlight) return _adminTasksInFlight;
+        const run = (async () => {
+          try {
+            const tRes = await apiFetch('/api/v1/tasks?all_users=true');
+            _lastAdminTasksAt = Date.now();
+            if (tRes && Array.isArray(tRes.tasks)) {
+              adminTasks.value = tRes.tasks;
+            }
+          } catch (_) {}
+        })();
+        _adminTasksInFlight = run;
+        try {
+          await run;
+        } finally {
+          if (_adminTasksInFlight === run) _adminTasksInFlight = null;
+        }
+      }
+
       async function loadAdminData() {
         if (!adminToken.value) return;
         try {
@@ -4722,6 +4789,7 @@ async function mountWildCatApp() {
             apiFetch('/api/v1/admin/users'),
             apiFetch('/api/v1/tasks?all_users=true'),
           ]);
+          _lastAdminTasksAt = Date.now();
           _applyAdminSettingsPayload(sRes);
           adminUsers.value = _normalizeAdminUsers(uRes.users || []);
           adminTasks.value = tRes.tasks || [];
@@ -4887,7 +4955,7 @@ async function mountWildCatApp() {
           } else {
             notify(t('msg.storagePathSavedToast'), 'success');
           }
-          await Promise.all([fetchAssets(), fetchCheckpoints(), fetchQueueAndTasks(), loadAdminData()]);
+          await Promise.all([fetchAssets(), fetchCheckpoints(), fetchQueueAndTasks(true), loadAdminData()]);
         } catch (e) {
           notify(e.message, 'error');
         } finally {
@@ -5332,6 +5400,11 @@ async function mountWildCatApp() {
         if (crop !== 256) {
           nonDefault = true;
           tags.push(`Crop=${crop}`);
+        }
+        const lr = Number(tr.learning_rate ?? 0.0001);
+        if (Number.isFinite(lr) && lr > 0 && Math.abs(lr - 0.0001) > 1e-9) {
+          nonDefault = true;
+          tags.push(`LR=${lr}`);
         }
         const ep = Number(tr.epochs || 0);
         if (ep > 0 && ep !== 10000) {
@@ -5884,6 +5957,7 @@ async function mountWildCatApp() {
             }
           }
 
+          let spIw = sp.nukeNative ? 'None' : iw;
           const cfg = {
             run_name: `Combo${idx + 1}_${sp.code}`,
             paths: {
@@ -5916,7 +5990,7 @@ async function mountWildCatApp() {
               multi_resolution: true,
               precision: form.precision || 'adaptive',
               seed: Number(form.seed || 0),
-              initial_weights: sp.nukeNative ? 'None' : iw,
+              initial_weights: spIw,
               resume: false,
             },
             optimizations: {
@@ -5959,7 +6033,7 @@ async function mountWildCatApp() {
           formSnap.epochs = ep;
           formSnap.crop_size = sp.crop_size;
           formSnap.multi_resolution = true;
-          if (sp.nukeNative) {
+          if (sp.nukeNative || spIw === 'None') {
             formSnap.initial_weights_mode = 'None';
             formSnap.checkpoint_path = '';
           }
@@ -5974,7 +6048,7 @@ async function mountWildCatApp() {
             cfg,
             formSnap,
             advSnap,
-            initCategorySnap: sp.nukeNative ? 'scratch' : initCategory.value,
+            initCategorySnap: sp.nukeNative || spIw === 'None' ? 'scratch' : initCategory.value,
             diff,
             etaSec,
           };
@@ -6285,7 +6359,7 @@ async function mountWildCatApp() {
             grp.name = '';
             grp.targetBatchId = '';
           }
-          await Promise.all([fetchQueueAndTasks(), refreshMeQuietly()]);
+          await Promise.all([fetchQueueAndTasks(true), refreshMeQuietly()]);
           const newIds = (res.tasks || []).map((x) => x.id);
           if (newIds.length) {
             labSelectedTaskIds.value = newIds;
@@ -6330,7 +6404,7 @@ async function mountWildCatApp() {
           labStagedGroups.value = [createEmptyStagedGroup(1)];
           labActiveStagedGroupId.value = labStagedGroups.value[0].gid;
           if (lastBatchId) labActiveBatchId.value = lastBatchId;
-          await Promise.all([fetchQueueAndTasks(), refreshMeQuietly()]);
+          await Promise.all([fetchQueueAndTasks(true), refreshMeQuietly()]);
           if (firstBatchTaskIds.length) {
             labSelectedTaskIds.value = firstBatchTaskIds;
             const nukeRun = firstBatchTasks.find((x) => summarizeClientConfig(x.config).is_nuke_native);
@@ -6390,7 +6464,7 @@ async function mountWildCatApp() {
           if (!res) return;
           labNote.value = '';
           labActiveBatchId.value = res.batch_id;
-          await Promise.all([fetchQueueAndTasks(), refreshMeQuietly()]);
+          await Promise.all([fetchQueueAndTasks(true), refreshMeQuietly()]);
           const newIds = (res.tasks || []).map((x) => x.id);
           if (newIds.length) {
             labSelectedTaskIds.value = newIds;
@@ -6745,7 +6819,7 @@ async function mountWildCatApp() {
           if (res.batch_id) labCollapsedGroups[res.batch_id] = false;
           labGroupCreateOpen.value = false;
           labNewGroupName.value = '';
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           notify(t('msg.labGroupCreatedToast', { name: res.batch_name || clean }), 'success');
         } catch (e) {
           notify(e.message, 'error');
@@ -6780,7 +6854,7 @@ async function mountWildCatApp() {
           });
           if (res.lab_groups) applyServerLabGroups(res.lab_groups);
           cancelRenameLabGroup();
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           notify(t('msg.labGroupRenamedToast', { name: clean }), 'success');
         } catch (e) {
           notify(e.message, 'error');
@@ -6864,7 +6938,7 @@ async function mountWildCatApp() {
             }),
           });
           if (res.db_summary) Object.assign(labDbSummary, res.db_summary);
-          await Promise.all([fetchQueueAndTasks(), fetchCheckpoints()]);
+          await Promise.all([fetchQueueAndTasks(true), fetchCheckpoints()]);
           if (topNav.value === 'lab' && labMode.value === 'analyze') {
             await fetchLabCompare(true);
           }
@@ -6903,7 +6977,7 @@ async function mountWildCatApp() {
           });
           if (res.lab_groups) applyServerLabGroups(res.lab_groups);
           if (res.batch_id) labCollapsedGroups[res.batch_id] = false;
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           if (!res.batch_id) {
             notify(t('msg.labTasksUngroupedToast', { count: res.moved_count || taskIds.length }), 'success');
           } else {
@@ -6947,7 +7021,7 @@ async function mountWildCatApp() {
           });
           if (res.lab_groups) applyServerLabGroups(res.lab_groups);
           delete labCollapsedGroups[grp.batch_id];
-          await fetchQueueAndTasks();
+          await fetchQueueAndTasks(true);
           notify(t('msg.labGroupDissolvedToast', { name: grp.name }), 'info');
         } catch (e) {
           notify(e.message, 'error');
@@ -7611,13 +7685,21 @@ async function mountWildCatApp() {
       );
 
       watch([topNav, studioMode, labMode], ([nNav, nMode, nLabMode]) => {
-        if (nNav === 'studio' && nMode === 'monitor') fetchTelemetry(true);
+        if (nNav === 'studio' && nMode === 'monitor') {
+          const needReset = !viewer.frames.length && !contactViewer.frames.length;
+          nextTick(() => {
+            drawLossChart();
+            drawQualityChart();
+          });
+          fetchTelemetry(needReset);
+        }
         if (nNav === 'help') loadHelpStaticData();
         if (nNav === 'admin' && adminToken.value) loadAdminData();
         if (nNav === 'lab' && nLabMode === 'analyze') {
           if (!labSelectedTaskIds.value.length && tasks.value.length) {
             selectFirstReadyLabGroup();
           } else {
+            nextTick(() => drawLabCompareChart());
             fetchLabCompare();
           }
         }
@@ -7660,11 +7742,17 @@ async function mountWildCatApp() {
         // list follows fetchQueueAndTasks' rule, and a finished task's telemetry is asked for every 15 s and whenever the
         // task's status changes (a queued or training task: every 1.8 s as before).
         let prevEvalBusy = false;
+        let prevLabAnyRunning = false;
         const isLiveStatus = (st) => st === 'running' || st === 'queued';
         setInterval(() => {
           if (!user.value || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
           const nowMs = Date.now();
-          fetchQueueAndTasks(false, tasks.value.some((x) => isLiveStatus(x.status)) || nowMs - _lastTasksFetchAt >= 10000);
+          fetchQueueAndTasks(
+            false,
+            tasks.value.some((x) => isLiveStatus(x.status)) ||
+              Number(queue.running_count || 0) + Number(queue.queued_count || 0) > 0 ||
+              nowMs - _lastTasksFetchAt >= 10000
+          );
           if (topNav.value === 'studio' && studioMode.value === 'monitor') {
             const at = activeTask.value;
             if (!at || isLiveStatus(at.status) || `${at.id}:${at.status}` !== _telemetryStatusKey || nowMs - _lastTelemetryAt >= 15000) {
@@ -7672,10 +7760,22 @@ async function mountWildCatApp() {
             }
           }
           if (topNav.value === 'lab' && labMode.value === 'analyze' && labSelectedTaskIds.value.length) {
-            const anyRunning = labCompare.runs.some((r) => r.status === 'running' || r.status === 'queued');
-            if (labCompare.eval_runner.busy || prevEvalBusy || anyRunning) {
+            const selSet = new Set(labSelectedTaskIds.value);
+            const anyRunning =
+              labCompare.runs.some((r) => isLiveStatus(r.status)) ||
+              tasks.value.some((tk) => selSet.has(tk.id) && isLiveStatus(tk.status));
+            if (labCompare.eval_runner.busy || prevEvalBusy || anyRunning || prevLabAnyRunning) {
               prevEvalBusy = !!labCompare.eval_runner.busy;
+              prevLabAnyRunning = anyRunning;
               fetchLabCompare(true);
+            }
+          }
+          if (topNav.value === 'admin' && adminToken.value) {
+            const adminHasLive =
+              Number(queue.running_count || 0) + Number(queue.queued_count || 0) > 0 ||
+              adminTasks.value.some((tk) => isLiveStatus(tk.status));
+            if (adminHasLive || nowMs - _lastAdminTasksAt >= 10000) {
+              refreshAdminTasksQuietly();
             }
           }
         }, 1800);
@@ -7685,6 +7785,7 @@ async function mountWildCatApp() {
             if (document.visibilityState !== 'visible' || !user.value) return;
             fetchQueueAndTasks(true);
             if (topNav.value === 'studio' && studioMode.value === 'monitor') fetchTelemetry(false);
+            if (topNav.value === 'admin' && adminToken.value) refreshAdminTasksQuietly();
           });
         }
 
@@ -7724,13 +7825,6 @@ async function mountWildCatApp() {
         }, 30);
 
         if (typeof window !== 'undefined') {
-          window.addEventListener('resize', () => {
-            if (topNav.value === 'studio' && studioMode.value === 'monitor') {
-              drawLossChart();
-              drawQualityChart();
-            }
-            if (topNav.value === 'lab' && labMode.value === 'analyze') drawLabCompareChart();
-          });
           window.addEventListener('popstate', () => {
             if (window.location && window.location.pathname === '/admin') {
               topNav.value = 'admin';

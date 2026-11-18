@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261118_v300b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261118_v301" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -1192,10 +1192,10 @@
                         <span class="text-[11px] text-slate-400">{{ t('lab.comboSharedBaseHint') }}</span>
                       </div>
                       <span class="text-[11px] text-slate-400 wc-mono">
-                        Batch {{ form.batch_size_mode === 'Auto' ? 'Auto(8)' : form.batch_size }} · Seed {{ form.seed }} · LR {{ form.learning_rate }} · {{ form.precision }}
+                        Batch {{ form.batch_size_mode === 'Auto' ? 'Auto(8)' : form.batch_size }} · Seed {{ form.seed }} · LR {{ form.learning_rate }} · {{ form.precision }} · Ckpt {{ form.checkpoint_interval }}
                       </span>
                     </button>
-                    <div v-if="labComboCfg.baseOpen" class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-800/80 grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div v-if="labComboCfg.baseOpen" class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-800/80 grid grid-cols-2 md:grid-cols-3 gap-3">
                       <div>
                         <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
                           <span>Batch Size</span><help-tip doc="batch_size"></help-tip>
@@ -1232,6 +1232,18 @@
                           <option value="fp32">{{ t('wizard.precFp32Opt') }}</option>
                           <option value="fp16">{{ t('wizard.precFp16Opt') }}</option>
                         </select>
+                      </div>
+                      <div>
+                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
+                          <span>Checkpoint Interval</span><help-tip doc="checkpoint_interval"></help-tip>
+                        </label>
+                        <input v-model.number="form.checkpoint_interval" type="number" min="10" step="100" class="wc-input wc-mono text-xs" />
+                      </div>
+                      <div>
+                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
+                          <span>Contact Sheet Interval</span><help-tip doc="contact_sheet_interval"></help-tip>
+                        </label>
+                        <input v-model.number="form.preview_interval" type="number" min="10" step="50" class="wc-input wc-mono text-xs" />
                       </div>
                     </div>
                   </div>
@@ -2858,10 +2870,10 @@
                     <div class="absolute top-3 left-3 px-3 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-xs wc-mono text-slate-200 pointer-events-none">
                       {{ currentFrame.label }} ({{ viewer.index + 1 }} / {{ viewer.frames.length }})
                     </div>
-                    <div v-if="viewer.mode === 'preview'" class="absolute bottom-3 inset-x-12 flex justify-between text-xs font-bold text-slate-300/95 pointer-events-none">
-                      <span class="bg-slate-900/85 px-3 py-0.5 rounded border border-slate-700">Input</span>
-                      <span class="bg-slate-900/85 px-3 py-0.5 rounded border border-indigo-500/40 text-indigo-300">Output</span>
-                      <span class="bg-slate-900/85 px-3 py-0.5 rounded border border-emerald-500/40 text-emerald-300">Target</span>
+                    <div v-if="viewer.mode === 'preview'" class="absolute bottom-3 inset-x-4 grid grid-cols-3 place-items-center text-xs font-bold text-slate-300/95 pointer-events-none">
+                      <span class="bg-slate-900/90 px-3 py-0.5 rounded border border-slate-700 text-slate-200 wc-mono">{{ t('monitor.ffColInput') }}</span>
+                      <span class="bg-indigo-950/90 px-3 py-0.5 rounded border border-indigo-500/45 text-indigo-200 wc-mono">{{ t('monitor.ffColOut') }}</span>
+                      <span class="bg-emerald-950/90 px-3 py-0.5 rounded border border-emerald-500/45 text-emerald-200 wc-mono">{{ t('monitor.ffColGt') }}</span>
                     </div>
                   </template>
                   <div v-else class="text-center text-slate-500 text-xs space-y-1">
@@ -2869,12 +2881,22 @@
                   </div>
                 </div>
 
-                <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
-                  <button @click="stepFrame(-1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏮</button>
-                  <button @click="togglePlay" class="px-3.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold">
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-2.5">
+                  <button @click="viewer.index = 0; viewer.playing = false"
+                          :disabled="!viewer.frames.length || viewer.index <= 0"
+                          class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 whitespace-nowrap">
+                    {{ t('monitor.firstStepBtn') }}
+                  </button>
+                  <button @click="stepFrame(-1)" :title="t('monitor.prevFrameTip')" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">‹</button>
+                  <button @click="togglePlay" class="px-3.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold whitespace-nowrap">
                     {{ viewer.playing ? t('monitor.pausePlayBtn') : t('monitor.startPlayBtn') }}
                   </button>
-                  <button @click="stepFrame(1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏭</button>
+                  <button @click="stepFrame(1)" :title="t('monitor.nextFrameTip')" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">›</button>
+                  <button @click="viewer.index = Math.max(0, viewer.frames.length - 1); viewer.playing = false"
+                          :disabled="!viewer.frames.length || viewer.index >= viewer.frames.length - 1"
+                          class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 whitespace-nowrap">
+                    {{ t('monitor.latestStepBtn') }}
+                  </button>
 
                   <input type="range"
                          :min="0"
@@ -2919,34 +2941,53 @@
                   </div>
                 </div>
 
-                <div class="relative h-[680px] w-full bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center select-none cursor-grab active:cursor-grabbing"
+                <div class="relative h-[708px] pt-8 w-full bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center select-none cursor-grab active:cursor-grabbing"
                      @wheel.prevent="onContactWheel"
                      @mousedown="onContactMouseDown"
                      @mousemove="onContactMouseMove"
                      @mouseup="onContactMouseUp"
                      @mouseleave="onContactMouseUp">
                   <template v-if="currentContactFrame">
-                    <div class="wc-cs-box"
+                    <div class="wc-cs-wrap"
                          :style="{ transform: `translate(${contactViewer.panX}px, ${contactViewer.panY}px) scale(${contactViewer.zoom})` }">
-                      <img :src="currentContactFrame.url"
-                           class="wc-cs-img"
-                           :class="{ 'wc-pixelated': contactViewer.pixelated }" />
-                      <div v-if="contactViewer.showOverlay" class="wc-cs-overlay">
-                        <div v-for="idx in 9" :key="'cs-' + idx" class="wc-cs-cell">
-                          <span v-if="((idx - 1) % 3) === 0" class="wc-cs-tag-top">
-                            crop {{ Math.ceil(idx / 3) }}
-                          </span>
-                          <span v-if="idx >= 7" class="wc-cs-tag-bot">
-                            {{ idx === 7 ? 'input' : (idx === 8 ? 'groundtruth' : 'output') }}
-                          </span>
+                      <div class="wc-cs-col-head">
+                        <div class="wc-cs-col-pill bg-slate-900/95 border border-slate-700 text-slate-200">
+                          {{ t('monitor.csColInput') }}
+                        </div>
+                        <div class="wc-cs-col-pill bg-emerald-950/90 border border-emerald-500/45 text-emerald-200">
+                          {{ t('monitor.csColGt') }}
+                        </div>
+                        <div class="wc-cs-col-pill bg-indigo-950/90 border border-indigo-500/45 text-indigo-200">
+                          {{ t('monitor.csColOut') }}
+                        </div>
+                      </div>
+                      <div class="wc-cs-box">
+                        <img :src="currentContactFrame.url"
+                             class="wc-cs-img"
+                             :class="{ 'wc-pixelated': contactViewer.pixelated }" />
+                        <div v-if="contactViewer.showOverlay" class="wc-cs-overlay">
+                          <div v-for="idx in 9" :key="'cs-' + idx" class="wc-cs-cell">
+                            <span v-if="((idx - 1) % 3) === 0" class="wc-cs-tag-top">
+                              crop {{ Math.ceil(idx / 3) }}
+                            </span>
+                            <span v-if="idx >= 7"
+                                  class="wc-cs-tag-bot px-1.5 py-0.5 rounded border"
+                                  :class="idx === 7
+                                    ? 'bg-slate-900/80 border-slate-600/80 text-slate-100'
+                                    : (idx === 8
+                                        ? 'bg-emerald-950/85 border-emerald-500/60 text-emerald-200'
+                                        : 'bg-indigo-950/85 border-indigo-500/60 text-indigo-200')">
+                              {{ idx === 7 ? '1 · input' : (idx === 8 ? '2 · groundtruth' : '3 · output') }}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    <div class="absolute top-3 left-3 px-3 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-xs wc-mono text-slate-200 pointer-events-none">
+                    <div class="absolute top-2.5 left-3 px-3 py-1 rounded-lg bg-slate-900/90 border border-slate-700 text-xs wc-mono text-slate-200 pointer-events-none">
                       {{ currentContactFrame.label }} ({{ contactViewer.index + 1 }} / {{ contactViewer.frames.length }})
                     </div>
-                    <div class="absolute top-3 right-3 px-3 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-[11px] wc-mono text-indigo-300 pointer-events-none">
+                    <div class="absolute top-2.5 right-3 px-3 py-1 rounded-lg bg-slate-900/90 border border-slate-700 text-[11px] wc-mono text-indigo-300 pointer-events-none">
                       {{ currentContactFrame.nuke_file }}
                     </div>
                   </template>
@@ -2956,12 +2997,22 @@
                   </div>
                 </div>
 
-                <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
-                  <button @click="stepContactFrame(-1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏮</button>
-                  <button @click="toggleContactPlay" class="px-3.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold">
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-2.5">
+                  <button @click="contactViewer.index = 0; contactViewer.playing = false"
+                          :disabled="!contactViewer.frames.length || contactViewer.index <= 0"
+                          class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 whitespace-nowrap">
+                    {{ t('monitor.firstStepBtn') }}
+                  </button>
+                  <button @click="stepContactFrame(-1)" :title="t('monitor.prevFrameTip')" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">‹</button>
+                  <button @click="toggleContactPlay" class="px-3.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold whitespace-nowrap">
                     {{ contactViewer.playing ? t('monitor.pausePlayBtn') : t('monitor.startPlayBtn') }}
                   </button>
-                  <button @click="stepContactFrame(1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏭</button>
+                  <button @click="stepContactFrame(1)" :title="t('monitor.nextFrameTip')" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">›</button>
+                  <button @click="contactViewer.index = Math.max(0, contactViewer.frames.length - 1); contactViewer.playing = false"
+                          :disabled="!contactViewer.frames.length || contactViewer.index >= contactViewer.frames.length - 1"
+                          class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 whitespace-nowrap">
+                    {{ t('monitor.latestStepBtn') }}
+                  </button>
 
                   <input type="range"
                          :min="0"
@@ -5442,6 +5493,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261118_v300b"></script>
+  <script type="module" src="/static/app.js?v=20261118_v301"></script>
 </body>
 </html>

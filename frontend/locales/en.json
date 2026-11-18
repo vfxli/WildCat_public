@@ -326,8 +326,18 @@
     "noPreviewFrames": "No full-frame preview yet. Previews are generated at every Contact Sheet Interval.",
     "pausePlayBtn": "⏸ Pause",
     "startPlayBtn": "▶ Play",
+    "firstStepBtn": "⏮ First",
+    "latestStepBtn": "Latest ⏭",
+    "prevFrameTip": "Previous step",
+    "nextFrameTip": "Next step",
+    "ffColInput": "1 · Input",
+    "ffColOut": "2 · Output (Model)",
+    "ffColGt": "3 · Target (Ground Truth)",
     "contactTitle": "Contact Sheet (3×3 Crops)",
     "contactGridBadge": "3 crops × 3 columns (input | groundtruth | output)",
+    "csColInput": "1 · input",
+    "csColGt": "2 · groundtruth",
+    "csColOut": "3 · output (Model)",
     "contactStageBadge": "Stage 1/{scale} · Crop {crop}×{crop}",
     "showOverlayLabel": "Show grid and labels",
     "pixelatedLabel": "Pixelated zoom",
@@ -1763,7 +1773,7 @@
     "monitor_contact_sheet": {
       "title": "Contact Sheet",
       "summary": "Crop comparison during training: 3 rows of crops, each showing input, groundtruth and output, as in the Nuke CopyCat contact sheet.",
-      "body": "## In Nuke CopyCat\nThe same contact sheet image CopyCat writes, named `Training_YYMMDD_HHMMSS.<step>.png` in the task folder.\n\n## What it does\nOne is saved at every [[doc:contact_sheet_interval]]. The 3 rows are crops of the current training batch at the current resolution stage; the labels show the stage and the Crop Size. Use it to check whether edges, grain and detail are being learned.\n\n## How to read it\nThe closer output is to groundtruth, the better. Crops of the 1/4 and 1/2 stages have a lower resolution; judge detail at 1/1. Scroll to zoom, drag to pan."
+      "body": "## In Nuke CopyCat\nThe same contact sheet image CopyCat writes, named `Training_YYMMDD_HHMMSS.<step>.png` in the task folder.\n\n## What it does\nOne is saved at every [[doc:contact_sheet_interval]]. The 3 rows are crops of the current training batch at the current resolution stage; the labels show the stage and the Crop Size. Use it to check whether edges, grain and detail are being learned.\n\n## How to read it\nEach row follows Nuke CopyCat's 3-column order: Col 1 `input`, Col 2 `groundtruth` and Col 3 `output` (note that Full-Frame Preview above uses `Input | Output | Target`, with Columns 2 and 3 in the opposite order). At converged late steps, Col 3 `output` becomes visually very close to Col 2 `groundtruth`; click `⏮ First` on the timeline or drag the slider left to compare early steps against the final step. Crops of the 1/4 and 1/2 stages have a lower resolution; judge detail at 1/1. Scroll to zoom, drag to pan."
     },
     "monitor_cs_overlay": {
       "title": "Show grid and labels",

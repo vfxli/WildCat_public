@@ -1058,13 +1058,15 @@ class TaskQueueScheduler:
                     raise ValueError(i18n.t("server.invalidTrainParam", field="train.batch_size"))
                 tr["batch_size"] = bs_i
 
-            if "lr" in tr and tr["lr"] is not None:
-                try:
-                    lr_f = float(tr["lr"])
-                except (TypeError, ValueError):
-                    raise ValueError(i18n.t("server.invalidTrainParam", field="train.lr"))
-                if not math.isfinite(lr_f) or lr_f < 1e-7 or lr_f > 1e-2:
-                    raise ValueError(i18n.t("server.invalidTrainParam", field="train.lr"))
+            for lr_k in ("learning_rate", "lr"):
+                if lr_k in tr and tr[lr_k] is not None:
+                    try:
+                        lr_f = float(tr[lr_k])
+                    except (TypeError, ValueError):
+                        raise ValueError(i18n.t("server.invalidTrainParam", field=f"train.{lr_k}"))
+                    if not math.isfinite(lr_f) or lr_f < 1e-7 or lr_f > 1e-2:
+                        raise ValueError(i18n.t("server.invalidTrainParam", field=f"train.{lr_k}"))
+                    tr[lr_k] = lr_f
 
             io_cfg = out["io"]
             for io_k, min_v in (("checkpoint_interval", 1000), ("preview_interval", 100), ("log_interval", 10)):

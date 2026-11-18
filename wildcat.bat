@@ -251,7 +251,16 @@ def do_status():
 
 
 def _pack_tar(out_path):
-    skip_exact = {"tools/make_public.py", "tools/publish_release.sh"}
+    skip_exact = {
+        "tools/make_public.py",
+        "tools/publish_release.sh",
+        "tools/export_public_experiments_db.py",
+        "tools/export_experiments_2026.py",
+        "tools/build_company_pkg.py",
+        "tools/build_company_full_pkg.py",
+        "tools/company_deploy_template.sh",
+        "tools/company_deploy_readme_template.txt",
+    }
 
     def _filter(ti):
         norm = ti.name.replace("\\", "/")

@@ -4,6 +4,7 @@ import collections
 import glob
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -67,6 +68,17 @@ def summarize_config_diff(cfg: dict) -> dict:
     if crop != 256:
         non_default = True
         tags.append(f"Crop={crop}")
+
+    # Learning rate (Nuke default: 1e-4)
+    raw_lr = tr.get("learning_rate") if tr.get("learning_rate") is not None else tr.get("lr")
+    if raw_lr is not None:
+        try:
+            lr_val = float(raw_lr)
+            if math.isfinite(lr_val) and abs(lr_val - 1e-4) > 1e-9:
+                non_default = True
+                tags.append(f"LR={lr_val:g}")
+        except (TypeError, ValueError):
+            pass
 
     # Epochs (Nuke default: 10000)
     ep = int(tr.get("epochs") or 0)
@@ -744,8 +756,12 @@ def resolve_eval_checkpoint(run_dir_rel: str, cfg: dict, ckpt_mode: str = "best"
     target_step = 0
     if items:
         if ckpt_mode == "best":
-            best_items = [it for it in items if it.get("is_best")]
-            target_step = int((best_items[0] if best_items else items[0])["step"])
+            with_val = [
+                it for it in items
+                if it.get("val_mse") is not None and math.isfinite(float(it["val_mse"]))
+            ]
+            picked = min(with_val, key=lambda it: (float(it["val_mse"]), -int(it["step"]))) if with_val else items[0]
+            target_step = int(picked["step"])
         else:
             target_step = int(items[0]["step"])
 

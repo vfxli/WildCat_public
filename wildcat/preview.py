@@ -329,11 +329,23 @@ class PreviewWorker:
         if arr.shape[2] == 1:
             return np.clip(np.repeat(arr, 3, axis=2), 0.0, 1.0)
         if t.use_ocio_display_view:
-            return color.acescg_to_display_srgb(
+            srgb = color.acescg_to_display_srgb(
                 arr[..., :3], src_space=t.working_colorspace, view_mode=t.view_transform,
                 ocio_config_path=t.ocio_config,
             )
-        return np.clip(arr[..., :3], 0.0, 1.0)
+        else:
+            srgb = np.clip(arr[..., :3], 0.0, 1.0)
+        if arr.shape[2] >= 4:
+            alpha = np.clip(arr[..., 3:4], 0.0, 1.0)
+            if float(np.min(alpha)) < 0.995:
+                h, w = srgb.shape[:2]
+                yy = (np.arange(h, dtype=np.int32) // 16)[:, None]
+                xx = (np.arange(w, dtype=np.int32) // 16)[None, :]
+                chk = np.where(((yy + xx) & 1) == 0, 0.11, 0.165).astype(np.float32)[..., None]
+                bg_mask = alpha[..., 0] < 0.01
+                rgb_fg = (srgb * alpha) if (bool(bg_mask.any()) and float(np.mean(srgb[bg_mask])) > 0.02) else srgb
+                return np.clip(rgb_fg + (1.0 - alpha) * chk, 0.0, 1.0)
+        return srgb
 
     def _write_previews(self, step, rendered):
         t = self.t

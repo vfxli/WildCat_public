@@ -326,8 +326,18 @@
     "noPreviewFrames": "暂无整帧预览。预览在每个 Contact Sheet Interval 生成。",
     "pausePlayBtn": "⏸ 暂停",
     "startPlayBtn": "▶ 播放",
+    "firstStepBtn": "⏮ 首步",
+    "latestStepBtn": "末步 ⏭",
+    "prevFrameTip": "上一步",
+    "nextFrameTip": "下一步",
+    "ffColInput": "1 · Input（输入）",
+    "ffColOut": "2 · Output（模型输出）",
+    "ffColGt": "3 · Target（目标真值）",
     "contactTitle": "Contact Sheet（3×3 裁剪块）",
     "contactGridBadge": "3 行裁剪块 × 3 列（input | groundtruth | output）",
+    "csColInput": "1 · input（输入）",
+    "csColGt": "2 · groundtruth（真值）",
+    "csColOut": "3 · output（模型输出）",
     "contactStageBadge": "分辨率阶段 1/{scale} · Crop {crop}×{crop}",
     "showOverlayLabel": "显示格线与标签",
     "pixelatedLabel": "放大显示像素",
@@ -1763,7 +1773,7 @@
     "monitor_contact_sheet": {
       "title": "Contact Sheet",
       "summary": "训练中的裁剪块对比图：3 行裁剪块，每行依次为 input、groundtruth、output，与 Nuke CopyCat 的 Contact Sheet 相同。",
-      "body": "## Nuke CopyCat 中的对应\n与 CopyCat 写出的 Contact Sheet 图像相同，文件名为 `Training_YYMMDD_HHMMSS.<step>.png`，保存在任务目录中。\n\n## 作用\n每到 [[doc:contact_sheet_interval]] 保存一张。3 行为当前训练批次中的裁剪块，取自当前分辨率阶段；标签显示阶段与 Crop Size。用于检查边缘、颗粒和细节是否被学到。\n\n## 如何读数\noutput 与 groundtruth 越接近越好。1/4、1/2 阶段的裁剪块分辨率较低，细节以 1/1 阶段为准。滚轮缩放，拖动平移。"
+      "body": "## Nuke CopyCat 中的对应\n与 CopyCat 写出的 Contact Sheet 图像相同，文件名为 `Training_YYMMDD_HHMMSS.<step>.png`，保存在任务目录中。\n\n## 作用\n每到 [[doc:contact_sheet_interval]] 保存一张。3 行为当前训练批次中的裁剪块，取自当前分辨率阶段；标签显示阶段与 Crop Size。用于检查边缘、颗粒和细节是否被学到。\n\n## 如何读数\n每行 3 列按 Nuke CopyCat 顺序依次为第 1 列 `input`（输入）、第 2 列 `groundtruth`（目标真值）、第 3 列 `output`（模型输出），与上方整帧预览（Input | Output | Target）的第 2、3 列位置相反。训练后期收敛时第 3 列 `output` 会与第 2 列 `groundtruth` 非常接近；可点击下方时间轴的「⏮ 首步」或向左拖动滑条对比早期步数与末步差异。1/4、1/2 阶段的裁剪块分辨率较低，细节以 1/1 阶段为准。滚轮缩放，拖动平移。"
     },
     "monitor_cs_overlay": {
       "title": "显示格线与标签",

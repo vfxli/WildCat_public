@@ -309,7 +309,16 @@ except BaseException:
       out_file="${arg}"
     fi
     # shellcheck disable=SC2046
-    tar --exclude='__pycache__' --exclude='*.pyc' --exclude='tools/make_public.py' --exclude='tools/publish_release.sh' -czf "${out_file}" -C "${APP_DIR}" $(app_code_files)
+    tar --exclude='__pycache__' --exclude='*.pyc' \
+      --exclude='tools/make_public.py' \
+      --exclude='tools/publish_release.sh' \
+      --exclude='tools/export_public_experiments_db.py' \
+      --exclude='tools/export_experiments_2026.py' \
+      --exclude='tools/build_company_pkg.py' \
+      --exclude='tools/build_company_full_pkg.py' \
+      --exclude='tools/company_deploy_template.sh' \
+      --exclude='tools/company_deploy_readme_template.txt' \
+      -czf "${out_file}" -C "${APP_DIR}" $(app_code_files)
     echo "[WildCat] 已生成轻量增量更新包: ${out_file} ($(du -h "${out_file}" | awk '{print $1}'))"
   }
 

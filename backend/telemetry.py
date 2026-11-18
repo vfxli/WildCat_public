@@ -188,7 +188,7 @@ def parse_train_log_full_cached(path: str, max_chart_points: int = 3000) -> dict
 def _cache_key(src: str) -> str:
     try:
         st = os.stat(src)
-        sig = f"{src}|{st.st_size}|{int(st.st_mtime)}"
+        sig = f"{src}|{st.st_size}|{st.st_mtime_ns}"
     except OSError:
         sig = src
     return hashlib.sha1(sig.encode("utf-8")).hexdigest()
@@ -321,7 +321,7 @@ def inspect_ckpt_cached(abs_path: str) -> dict:
 
     try:
         st = os.stat(abs_path)
-        key = (abs_path, int(st.st_mtime), st.st_size)
+        key = (abs_path, st.st_mtime_ns, st.st_size)
     except OSError:
         key = (abs_path, 0, 0)
     if key not in _CKPT_META_CACHE:
@@ -589,6 +589,24 @@ def _mtimes(paths) -> tuple:
     return tuple(out)
 
 
+def _dir_content_sig(d: str) -> tuple:
+    try:
+        d_mt = os.stat(d).st_mtime_ns
+        cnt = 0
+        latest_mt = 0
+        for e in os.scandir(d):
+            if e.name.endswith(".tmp.png") or ".tmp" in e.name:
+                continue
+            if e.is_file():
+                cnt += 1
+                mt = e.stat().st_mtime_ns
+                if mt > latest_mt:
+                    latest_mt = mt
+        return (d_mt, cnt, latest_mt)
+    except OSError:
+        return (None, 0, 0)
+
+
 def _jpg_urls_present(frames: list) -> bool:
     jpg_dir = storage.get_jpg_cache_dir()
     fallback = os.path.join(storage.DEFAULT_CACHE_DIR, "jpg")
@@ -603,15 +621,16 @@ def _jpg_urls_present(frames: list) -> bool:
 
 
 def _frames_cached(key, sig, build):
-    hit = _FRAMES_CACHE.get(key)
+    with _FRAMES_LOCK:
+        hit = _FRAMES_CACHE.get(key)
     if hit is not None and hit[0] == sig and _jpg_urls_present(hit[1].get("frames") or []):
-        return dict(hit[1])
+        return {**hit[1], "frames": list(hit[1].get("frames") or [])}
     res = build()
     with _FRAMES_LOCK:
         while len(_FRAMES_CACHE) >= _FRAMES_CACHE_MAX:
             _FRAMES_CACHE.pop(next(iter(_FRAMES_CACHE)))
         _FRAMES_CACHE[key] = (sig, res)
-    return dict(res)
+    return {**res, "frames": list(res.get("frames") or [])}
 
 
 def get_contact_sheet_frames(run_dir_rel: str, cfg: dict = None) -> dict:
@@ -619,7 +638,7 @@ def get_contact_sheet_frames(run_dir_rel: str, cfg: dict = None) -> dict:
     tr = (cfg or {}).get("train") or {}
     ss = ((cfg or {}).get("advanced") or {}).get("stage_schedule")
     key = ("cs", rdir_abs, json.dumps([tr.get("crop_size"), tr.get("total_steps"), tr.get("multi_resolution", True), ss], sort_keys=True, default=str))
-    sig = _mtimes([rdir_abs, os.path.join(rdir_abs, "contact_sup"), os.path.join(rdir_abs, "run_info.json")])
+    sig = (_mtimes([rdir_abs, os.path.join(rdir_abs, "run_info.json")]), _dir_content_sig(os.path.join(rdir_abs, "contact_sup")))
     return _frames_cached(key, sig, lambda: _build_contact_sheet_frames(run_dir_rel, cfg))
 
 
@@ -704,14 +723,14 @@ def get_viewer_frames(run_dir_rel: str, cfg: dict, mode: str = "preview", pair: 
     rdir_abs = storage.abs_from_root(run_dir_rel)
     if mode == "source" or mode == "target":
         pat = str(((cfg or {}).get("paths") or {}).get(mode) or "")
-        sig = (pat, _mtimes([os.path.dirname(storage.abs_from_root(pat)) if pat else ""]))
+        sig = (pat, _dir_content_sig(os.path.dirname(storage.abs_from_root(pat))) if pat else None)
     else:
         sup_dir = os.path.join(rdir_abs, "preview_sup")
         try:
             subs = sorted(e for e in os.listdir(sup_dir) if os.path.isdir(os.path.join(sup_dir, e)))
         except OSError:
             subs = []
-        sig = (_mtimes([sup_dir]), tuple(subs), _mtimes([os.path.join(sup_dir, e) for e in subs]))
+        sig = (_dir_content_sig(sup_dir), tuple(subs), tuple(_dir_content_sig(os.path.join(sup_dir, e)) for e in subs))
     return _frames_cached(("vw", rdir_abs, mode, pair or ""), sig, lambda: _build_viewer_frames(run_dir_rel, cfg, mode, pair))
 
 

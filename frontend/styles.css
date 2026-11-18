@@ -339,13 +339,37 @@ input[type="range"] {
 }
 
 /* ───────── Nuke CopyCat 3x3 Local Crop Contact Sheet Viewer ───────── */
-.wc-cs-box {
-  position: relative;
-  width: min(644px, calc(100% - 24px));
-  aspect-ratio: 1 / 1;
+.wc-cs-wrap {
+  width: min(612px, calc(100% - 24px));
   flex-shrink: 0;
   transition: transform 75ms ease-out;
   pointer-events: none;
+}
+
+.wc-cs-col-head {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.wc-cs-col-pill {
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, Monaco, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wc-cs-box {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
 }
 
