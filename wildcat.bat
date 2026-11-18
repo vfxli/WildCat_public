@@ -134,7 +134,8 @@ def _code_items():
         "frontend",
         "webui",
         "wildcat",
-        "tools",
+        "tools/benchmark.py",
+        "tools/build_gpu_benchmarks_db.py",
         "data/open_experiments.db",
         "data/gpu_benchmarks.db",
         "train.py",
@@ -264,7 +265,13 @@ def _pack_tar(out_path):
 
     def _filter(ti):
         norm = ti.name.replace("\\", "/")
-        if "__pycache__" in norm or norm.endswith(".pyc") or norm in skip_exact:
+        if (
+            "__pycache__" in norm
+            or norm.endswith(".pyc")
+            or norm in skip_exact
+            or norm == "frontend/locales/local"
+            or norm.startswith("frontend/locales/local/")
+        ):
             return None
         return ti
 

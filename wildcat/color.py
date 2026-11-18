@@ -356,14 +356,15 @@ def write_exr_file(path: str, img_rgb: np.ndarray, bit_depth: str = "half") -> N
     Default `bit_depth='half'` (16-bit half-float ZIP compressed VFX pipeline standard).
     """
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    arr = np.nan_to_num(np.ascontiguousarray(img_rgb, dtype=np.float32), nan=0.0, posinf=65504.0, neginf=-65504.0)
+    use_half = bit_depth.lower() in ("half", "fp16", "float16", "16")
+    inf_cap = 65504.0 if use_half else 1e20
+    arr = np.nan_to_num(np.ascontiguousarray(img_rgb, dtype=np.float32), nan=0.0, posinf=inf_cap, neginf=-inf_cap)
     if arr.ndim == 2:
         arr = arr[..., None]
     h, w, c = arr.shape
 
     if HAS_OPENEXR:
         try:
-            use_half = bit_depth.lower() in ("half", "fp16", "float16", "16")
             pt = Imath.PixelType(Imath.PixelType.HALF if use_half else Imath.PixelType.FLOAT)
             np_dt = np.float16 if use_half else np.float32
 
@@ -387,9 +388,17 @@ def write_exr_file(path: str, img_rgb: np.ndarray, bit_depth: str = "half") -> N
             if not os.name == "nt":
                 raise
 
-    # Fallback to OpenCV EXR writer (convert RGB(A) -> BGR(A))
+    # Fallback to OpenCV EXR writer (convert RGB(A) -> BGR(A)) with lossless ZIP compression
     bgr = arr[..., [2, 1, 0, 3][:c]] if c >= 3 else arr[..., 0]
-    imwrite_unicode(path, bgr.astype(np.float32))
+    exr_params = []
+    if hasattr(cv2, "IMWRITE_EXR_TYPE"):
+        exr_params += [
+            cv2.IMWRITE_EXR_TYPE,
+            cv2.IMWRITE_EXR_TYPE_HALF if use_half else cv2.IMWRITE_EXR_TYPE_FLOAT,
+        ]
+    if hasattr(cv2, "IMWRITE_EXR_COMPRESSION") and hasattr(cv2, "IMWRITE_EXR_COMPRESSION_ZIP"):
+        exr_params += [cv2.IMWRITE_EXR_COMPRESSION, cv2.IMWRITE_EXR_COMPRESSION_ZIP]
+    imwrite_unicode(path, bgr.astype(np.float32), exr_params or None)
 
 
 def read_image_float(

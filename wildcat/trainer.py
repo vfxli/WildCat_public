@@ -692,7 +692,8 @@ class Trainer:
                 parts.append("f%d %.6f" % (i + 1, torch.mean((out - gt) ** 2).item()))
             log("@step %d val(MSE): %s" % (step, "  ".join(parts)))
         if monitor is not None:  # quality monitor: the same weights on the plate frames between the keyframes
-            monitor.run(step, lambda fr: forward_full(eval_net, fr, self.device, None, self.opt_channels_last)[0].permute(1, 2, 0).cpu().numpy())
+            mon_amp = torch.float16 if self.is_cuda else None
+            monitor.run(step, lambda fr: forward_full(eval_net, fr, self.device, mon_amp, self.opt_channels_last)[0].permute(1, 2, 0).cpu().numpy())
         if eval_net is self.raw_G:
             self.raw_G.train()
 

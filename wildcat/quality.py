@@ -63,8 +63,10 @@ ROI_SHARE_MIN = 0.002  # a frame whose edited area covers less of the picture th
 FIT_ROI_SHARE = (0.0005, 0.90)  # keyframe fit inside the edited area: shares of edited pixels for which it is measured
 MAX_FRAMES = 96  # frames evaluated between the first and the last keyframe
 BG_DILATE_PX = 8  # "outside the edited area": this far from it
-BUDGET = 0.03  # the evaluations may take this share of the elapsed training time
+BUDGET = 0.03  # the evaluations may take this share of the elapsed training time when sharing the training card
 FIRST_AFTER = 0.02  # the first evaluation is allowed after this share of the total steps
+MAX_STEP_GAP = 0.10  # progress floor: evaluate at least every 10 % of total steps even on heavy 2K/4K plates
+MIN_ASYNC_GAP = 0.04  # on a dedicated secondary GPU (zero stall on training), pace to about every 4 % of total steps
 FINAL_WAIT_SEC = 60.0  # the evaluation at the end of a run waits this long for a plate that is still being prepared
 MAX_FAILURES = 3  # evaluations that failed in a row before the monitor gives up for the run
 RAM_LIMIT_BYTES = 1024**3  # flow / plate buffers beyond this go to a memory-mapped scratch file in the run folder
@@ -567,6 +569,8 @@ class TrainingMonitor:
         self._owned = []  # [(shot or None, scratch folder or None)] released at the end
         self._busy = 0  # evaluations booked and not finished
         self._steps = set()
+        self._last_step = 0
+        self._async_mode = False
         self._charged = {}  # step -> seconds its evaluation has been charged to the budget
         self._failures = 0
         if not resume:
@@ -663,8 +667,11 @@ class TrainingMonitor:
                     ok = False  # the last step is evaluated anyway: not a second time just before it
                 elif self.last_seconds is None:
                     ok = step >= FIRST_AFTER * total_steps
+                elif self._async_mode:
+                    ok = total_steps <= 0 or (int(step) - self._last_step) >= max(1, int(MIN_ASYNC_GAP * total_steps))
                 else:
-                    ok = self.spent + self.last_seconds <= BUDGET * elapsed
+                    gap_due = total_steps > 0 and (int(step) - self._last_step) >= max(1, int(MAX_STEP_GAP * total_steps))
+                    ok = (self.spent + self.last_seconds <= BUDGET * elapsed) or gap_due
                 if ok:
                     self._busy += 1
                     self._steps.add(int(step))
@@ -673,7 +680,7 @@ class TrainingMonitor:
             return False
 
     # ------------------------------------------------------------------ evaluation (validation worker)
-    def run(self, step, infer):
+    def run(self, step, infer, charge_budget=True):
         """Evaluate the weights behind ``infer`` (see ``evaluate``), write the point and the log line."""
         try:
             th = self._thread
@@ -691,9 +698,16 @@ class TrainingMonitor:
             point.update(figures)
             self._write(point)
             with self._lock:
-                self.spent += seconds
-                self.last_seconds = seconds
-                self._charged[int(step)] = seconds
+                if charge_budget:
+                    self._async_mode = False
+                    self.spent += seconds
+                    self.last_seconds = seconds
+                    self._charged[int(step)] = seconds
+                else:
+                    self._async_mode = True
+                    if self.last_seconds is None:
+                        self.last_seconds = 0.0
+                self._last_step = max(self._last_step, int(step))
                 self.points += 1
                 self._failures = 0
             self.log(log_line(int(step), point, self.prep.floor))

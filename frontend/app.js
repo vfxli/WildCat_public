@@ -206,7 +206,7 @@ const DOC_GROUPS = [
   { id: 'lab', ids: ['lab_overview', 'lab_combo', 'lab_combo_dataset', 'lab_combo_task_type', 'lab_combo_scope', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
   { id: 'datasets', ids: ['dataset_overview', 'dataset_keyframes', 'dataset_validation_sequence', 'dataset_task_type', 'dataset_input_colorspace', 'dataset_check', 'dataset_tolerance', 'dataset_files', 'dataset_name', 'dataset_eval_sequence', 'dataset_demo'] },
   { id: 'monitor', ids: ['monitor_pause_resume', 'monitor_extend', 'monitor_download', 'monitor_delete', 'monitor_progress', 'monitor_stage', 'monitor_speed', 'monitor_eta', 'monitor_queue', 'metric_loss', 'metric_val_mse', 'monitor_failed', 'monitor_kfc', 'metric_kfc_rewritten', 'metric_kfc_common', 'monitor_preview', 'monitor_preview_keyframe', 'monitor_playback', 'monitor_contact_sheet', 'monitor_cs_overlay', 'monitor_cs_pixelated', 'monitor_loss_chart', 'monitor_loss_log', 'monitor_loss_smooth', 'monitor_quality', 'metric_kf_fit', 'metric_q_strength', 'metric_q_detail', 'metric_q_texture', 'metric_q_look_drift', 'metric_q_tex_drift', 'metric_q_bg', 'monitor_quality_chart', 'monitor_quality_strip', 'monitor_quality_table', 'monitor_models', 'monitor_model_file', 'monitor_model_tags', 'monitor_log'] },
-  { id: 'tools', ids: ['api_key'] },
+  { id: 'tools', ids: ['tool_infer_seq', 'tool_infer_dataset', 'tool_infer_model', 'tool_infer_step', 'tool_infer_format', 'api_key'] },
   { id: 'admin', ids: ['admin_max_jobs_per_gpu', 'admin_gpu_pool', 'admin_temp_restrictions', 'admin_default_quotas', 'admin_max_running_per_user', 'admin_users', 'admin_user_quota', 'admin_user_permissions', 'admin_storage_root', 'admin_analytics_db'] },
 ];
 const EVIDENCE_GROUPS = [
@@ -878,7 +878,7 @@ async function mountWildCatApp() {
       const topNav = ref(initialNav); // 'studio' | 'lab' | 'assets' | 'tools' | 'help' | 'admin'
       // The sections of the Tools tab in page order ('api' = the account's API key; an edition may add sections before it)
       // and the one shown.
-      const toolsSections = ['api'];
+      const toolsSections = ['infer', 'api'];
       const toolsSection = ref(toolsSections[0]);
       // the tab itself carries the lock only when all it holds is locked: the API section is its only section
       const toolsTabLocked = computed(() => !!(user.value && !canUseApi.value) && toolsSections.length === 1);
@@ -4376,11 +4376,364 @@ async function mountWildCatApp() {
         return evalSequenceAssets.value.find((a) => a.id === labEvalAssetId.value) || null;
       });
 
+      // ───────── Validation Sequence Inference (Lossless EXR) ─────────
+      const inferUi = reactive({
+        assetId: null,
+        taskId: null,
+        step: 0,
+        modelSteps: [],
+        latestStep: 0,
+        loadingSteps: false,
+        outputFormat: 'exr_float',
+        busy: false,
+        jobId: '',
+        jobState: '',
+        done: 0,
+        total: 0,
+        progress: 0,
+        fps: 0,
+        device: '',
+        error: '',
+        note: '',
+        outputs: [],
+        activeOutput: null,
+        frames: [],
+        loadingFrames: false,
+        seqIndex: 0,
+        playing: false,
+        fpsPlay: 12,
+        compareSideBySide: true,
+      });
+
+      const inferSeqDatasets = computed(() => {
+        return assets.value.filter((a) => a.kind === 'eval_sequence' || !!a.has_eval_sequence);
+      });
+
+      const inferPickedDataset = computed(() => {
+        if (!inferUi.assetId) return null;
+        return inferSeqDatasets.value.find((a) => a.id === Number(inferUi.assetId)) || null;
+      });
+
+      const inferTrainedCount = computed(() => {
+        return tasks.value.filter((tk) => !!tk.has_ckpt).length;
+      });
+
+      const inferPickedTask = computed(() => {
+        if (!inferUi.taskId) return null;
+        return tasks.value.find((tk) => tk.id === Number(inferUi.taskId)) || null;
+      });
+
+      function inferTaskArch(tk) {
+        return (tk && tk.config && tk.config.model && tk.config.model.model_size) || 'Medium';
+      }
+
+      function inferTaskInCh(tk) {
+        return Number((tk && tk.config && tk.config.model && tk.config.model.in_channels) || 3);
+      }
+
+      function inferTaskOutCh(tk) {
+        return Number((tk && tk.config && tk.config.model && tk.config.model.out_channels) || 3);
+      }
+
+      const inferChannelMismatch = computed(() => {
+        const ds = inferPickedDataset.value;
+        const tk = inferPickedTask.value;
+        if (!ds || !tk) return null;
+        const seqCh = Number(ds.in_channels || 3);
+        const modIn = inferTaskInCh(tk);
+        return seqCh < modIn ? { seq_ch: seqCh, model_in: modIn } : null;
+      });
+
+      const inferCanRun = computed(() => {
+        const ds = inferPickedDataset.value;
+        const tk = inferPickedTask.value;
+        return !!(!inferUi.busy && ds && tk && tk.has_ckpt && !inferChannelMismatch.value);
+      });
+
+      const inferCurrentFrame = computed(() => {
+        if (!inferUi.frames.length) return null;
+        const idx = Math.max(0, Math.min(inferUi.frames.length - 1, Number(inferUi.seqIndex) || 0));
+        return inferUi.frames[idx] || null;
+      });
+
+      function inferFormatShort(fmt) {
+        if (fmt === 'exr_half') return '16-bit Half EXR (ZIP)';
+        return '32-bit Float EXR (ZIP)';
+      }
+
+      function _buildInferDownloadQuery() {
+        const qp = [];
+        if (apiKey.value) qp.push(`api_key=${encodeURIComponent(apiKey.value)}`);
+        if (currentLang.value) qp.push(`lang=${encodeURIComponent(currentLang.value)}`);
+        return qp.length ? `?${qp.join('&')}` : '';
+      }
+
+      async function loadInferModelSteps(taskId) {
+        const tid = Number(taskId || 0);
+        if (!tid) {
+          inferUi.modelSteps = [];
+          inferUi.latestStep = 0;
+          return;
+        }
+        inferUi.loadingSteps = true;
+        try {
+          const d = await apiFetch(`/api/v1/tasks/${tid}/models`);
+          const items = (d && d.models && Array.isArray(d.models.items)) ? d.models.items : [];
+          if (Number(inferUi.taskId) === tid) {
+            inferUi.modelSteps = items;
+            const tk = inferPickedTask.value;
+            inferUi.latestStep = items.length ? Number(items[0].step || 0) : Number((tk && tk.last_step) || 0);
+            if (inferUi.step > 0 && !items.some((x) => Number(x.step) === Number(inferUi.step))) {
+              inferUi.step = 0;
+            }
+          }
+        } catch (_) {
+          if (Number(inferUi.taskId) === tid) {
+            inferUi.modelSteps = [];
+          }
+        } finally {
+          if (Number(inferUi.taskId) === tid) {
+            inferUi.loadingSteps = false;
+          }
+        }
+      }
+
+      watch(
+        () => inferUi.taskId,
+        (tid) => {
+          inferUi.step = 0;
+          inferUi.error = '';
+          inferUi.note = '';
+          const tk = tasks.value.find((x) => x.id === Number(tid)) || null;
+          if (tk && tk.has_ckpt) {
+            loadInferModelSteps(tk.id);
+            const srcPath = tk.config && tk.config.paths && tk.config.paths.source;
+            if (srcPath && !inferPickedDataset.value) {
+              const matched = inferSeqDatasets.value.find((a) => a.source_path === srcPath);
+              if (matched) inferUi.assetId = matched.id;
+            }
+          } else {
+            inferUi.modelSteps = [];
+            inferUi.latestStep = 0;
+          }
+        }
+      );
+
+      function ensureInferDefaults() {
+        if (inferUi.busy) return;
+        const dsList = inferSeqDatasets.value;
+        if (!inferPickedDataset.value && dsList.length) {
+          const sel = selectedDataset.value && dsList.find((a) => a.id === selectedDataset.value.id);
+          inferUi.assetId = sel ? sel.id : dsList[0].id;
+        }
+        const curTk = inferPickedTask.value;
+        if (!curTk || !curTk.has_ckpt) {
+          const activeTrained = activeTask.value && activeTask.value.has_ckpt ? activeTask.value : null;
+          const firstTrained = activeTrained || tasks.value.find((tk) => !!tk.has_ckpt) || null;
+          inferUi.taskId = firstTrained ? firstTrained.id : null;
+        } else if (!inferUi.modelSteps.length && !inferUi.loadingSteps) {
+          loadInferModelSteps(curTk.id);
+        }
+      }
+
+      watch([() => assets.value.length, () => tasks.value.length], () => {
+        if (topNav.value === 'tools') ensureInferDefaults();
+      });
+
+      async function openInferOutput(outItem) {
+        if (!outItem || !outItem.task_id || !outItem.out_id) return;
+        inferUi.loadingFrames = true;
+        inferUi.playing = false;
+        try {
+          const d = await apiFetch(
+            `/api/v1/infer-seq/outputs/${outItem.task_id}/${encodeURIComponent(outItem.out_id)}/frames`
+          );
+          inferUi.activeOutput = (d && d.output) || outItem;
+          inferUi.frames = (d && Array.isArray(d.frames)) ? d.frames : [];
+          inferUi.seqIndex = 0;
+        } catch (e) {
+          notify(e.message, 'error');
+        } finally {
+          inferUi.loadingFrames = false;
+        }
+      }
+
+      async function loadInferOutputs(autoOpenFirst = false) {
+        try {
+          const d = await apiFetch('/api/v1/infer-seq/outputs');
+          const list = (d && Array.isArray(d.outputs)) ? d.outputs : [];
+          inferUi.outputs = list;
+          if (inferUi.activeOutput) {
+            const stillThere = list.find(
+              (x) => x.task_id === inferUi.activeOutput.task_id && x.out_id === inferUi.activeOutput.out_id
+            );
+            if (!stillThere) {
+              inferUi.activeOutput = null;
+              inferUi.frames = [];
+              inferUi.seqIndex = 0;
+            }
+          }
+          if (autoOpenFirst && !inferUi.activeOutput && list.length) {
+            await openInferOutput(list[0]);
+          }
+        } catch (_) {}
+      }
+
+      function enterInferToolsTab() {
+        ensureInferDefaults();
+        loadInferOutputs(true);
+      }
+
+      async function startInferSeqJob() {
+        inferUi.error = '';
+        inferUi.note = '';
+        const ds = inferPickedDataset.value;
+        const tk = inferPickedTask.value;
+        if (!ds) return;
+        if (!tk || !tk.has_ckpt) {
+          inferUi.error = t('inferSeq.untrainedBlockedBanner');
+          return;
+        }
+        if (inferChannelMismatch.value) {
+          inferUi.error = t('inferSeq.channelMismatchBanner', inferChannelMismatch.value);
+          return;
+        }
+        if (inferUi.busy) return;
+
+        inferUi.busy = true;
+        inferUi.jobState = 'queued';
+        inferUi.done = 0;
+        inferUi.total = Number(ds.kind === 'eval_sequence' ? ds.frame_count : ds.seq_frame_count) || 0;
+        inferUi.progress = 0;
+        inferUi.fps = 0;
+        inferUi.device = '';
+        try {
+          const startRes = await apiFetch('/api/v1/infer-seq', {
+            method: 'POST',
+            body: JSON.stringify({
+              asset_id: ds.id,
+              task_id: tk.id,
+              step: inferUi.step > 0 ? Number(inferUi.step) : null,
+              output_format: inferUi.outputFormat || 'exr_float',
+            }),
+          });
+          const j0 = startRes && startRes.job;
+          if (!j0 || !j0.job_id) throw new Error(t('server.requestFailed'));
+          inferUi.jobId = j0.job_id;
+          inferUi.total = Number(j0.total || inferUi.total);
+
+          while (true) {
+            await new Promise((r) => setTimeout(r, 450));
+            const poll = await apiFetch(`/api/v1/infer-seq/jobs/${encodeURIComponent(inferUi.jobId)}`);
+            const jb = (poll && poll.job) || {};
+            inferUi.jobState = jb.state || '';
+            inferUi.done = Number(jb.done || 0);
+            inferUi.total = Number(jb.total || inferUi.total);
+            inferUi.progress = Number(jb.progress || 0);
+            inferUi.fps = Number(jb.fps || 0);
+            inferUi.device = jb.device || '';
+            if (jb.state === 'done') {
+              await loadInferOutputs(false);
+              if (jb.output) {
+                await openInferOutput(jb.output);
+                notify(
+                  t('inferSeq.doneToast', {
+                    frames: jb.output.frame_count || jb.total,
+                    sec: jb.output.seconds || jb.seconds || 0,
+                  }),
+                  'success'
+                );
+              }
+              break;
+            }
+            if (jb.state === 'cancelled') {
+              inferUi.note = t('inferSeq.cancelledNote');
+              break;
+            }
+            if (jb.state === 'error') {
+              inferUi.error = jb.error || t('server.requestFailed');
+              break;
+            }
+          }
+        } catch (e) {
+          inferUi.error = e.message || String(e);
+        } finally {
+          inferUi.busy = false;
+          inferUi.jobId = '';
+        }
+      }
+
+      async function cancelInferSeqJob() {
+        if (!inferUi.busy || !inferUi.jobId) return;
+        try {
+          await apiFetch(`/api/v1/infer-seq/jobs/${encodeURIComponent(inferUi.jobId)}/cancel`, { method: 'POST' });
+        } catch (e) {
+          notify(e.message, 'error');
+        }
+      }
+
+      function downloadInferZip(outItem) {
+        if (!outItem) return;
+        const qs = _buildInferDownloadQuery();
+        const url = `/api/v1/infer-seq/outputs/${outItem.task_id}/${encodeURIComponent(outItem.out_id)}/download${qs}`;
+        const zipName = `${outItem.node_name}_${outItem.out_id}.zip`;
+        triggerBrowserDownload(url, zipName);
+      }
+
+      function downloadInferSingleFrame(frameObj) {
+        if (!frameObj || !frameObj.download_url) return;
+        const qs = _buildInferDownloadQuery();
+        triggerBrowserDownload(`${frameObj.download_url}${qs}`, frameObj.name || 'frame.exr');
+      }
+
+      async function deleteInferOutputItem(outItem) {
+        if (!outItem) return;
+        if (typeof window !== 'undefined' && !window.confirm(t('inferSeq.deleteConfirm', { id: outItem.out_id }))) {
+          return;
+        }
+        try {
+          await apiFetch(
+            `/api/v1/infer-seq/outputs/${outItem.task_id}/${encodeURIComponent(outItem.out_id)}`,
+            { method: 'DELETE' }
+          );
+          notify(t('inferSeq.deletedToast'), 'info');
+          await loadInferOutputs(true);
+        } catch (e) {
+          notify(e.message, 'error');
+        }
+      }
+
+      function stepInferFrame(delta) {
+        const n = inferUi.frames.length;
+        if (n <= 0) return;
+        inferUi.playing = false;
+        inferUi.seqIndex = (Number(inferUi.seqIndex || 0) + delta + n) % n;
+      }
+
+      function openInferForTask(tk) {
+        if (!tk || !tk.has_ckpt) {
+          notify(t('monitor.openInferSeqUntrainedTip'), 'warning');
+          return;
+        }
+        inferUi.taskId = tk.id;
+        inferUi.step = 0;
+        const srcPath = tk.config && tk.config.paths && tk.config.paths.source;
+        if (srcPath) {
+          const matched = inferSeqDatasets.value.find((a) => a.source_path === srcPath);
+          if (matched) inferUi.assetId = matched.id;
+        }
+        toolsSection.value = 'infer';
+        topNav.value = 'tools';
+        enterInferToolsTab();
+      }
+
       const pickerBaseDatasets = computed(() => {
+        if (datasetPickerModal.mode === 'infer') return inferSeqDatasets.value;
         return datasetPickerModal.mode === 'lab_eval' ? evalSequenceAssets.value : pairedAssets.value;
       });
 
       const datasetPickerTitle = computed(() => {
+        if (datasetPickerModal.mode === 'infer') return t('inferSeq.pickerTitle');
         return datasetPickerModal.mode === 'lab_eval' ? t('datasets.pickerEvalTitle') : t('datasets.pickerTrainTitle');
       });
 
@@ -4409,7 +4762,12 @@ async function mountWildCatApp() {
       });
 
       function openDatasetPicker(mode = 'train', toolId = '') {
-        datasetPickerModal.mode = mode === 'lab_eval' ? 'lab_eval' : 'train';
+        if (mode === 'infer') {
+          if (inferUi.busy) return;
+          datasetPickerModal.mode = 'infer';
+        } else {
+          datasetPickerModal.mode = mode === 'lab_eval' ? 'lab_eval' : 'train';
+        }
         datasetPickerModal.query = '';
         datasetPickerModal.seqFilter = 'all';
         datasetPickerModal.taskTypeFilter = 'all';
@@ -4417,6 +4775,9 @@ async function mountWildCatApp() {
       }
 
       function isPickerAssetSelected(a) {
+        if (datasetPickerModal.mode === 'infer') {
+          return !!(a && inferUi.assetId === a.id);
+        }
         if (datasetPickerModal.mode === 'lab_eval') {
           if (!a) return labEvalAssetId.value === null;
           return labEvalAssetId.value === a.id;
@@ -4425,6 +4786,11 @@ async function mountWildCatApp() {
       }
 
       function pickDatasetItem(assetOrNull) {
+        if (datasetPickerModal.mode === 'infer') {
+          if (assetOrNull && !inferUi.busy) inferUi.assetId = assetOrNull.id;
+          datasetPickerModal.open = false;
+          return;
+        }
         if (datasetPickerModal.mode === 'lab_eval') {
           labEvalAssetId.value = assetOrNull ? assetOrNull.id : null;
           datasetPickerModal.open = false;
@@ -7727,6 +8093,7 @@ async function mountWildCatApp() {
           fetchTelemetry(needReset);
         }
         if (nNav === 'help') loadHelpStaticData();
+        if (nNav === 'tools') enterInferToolsTab();
         if (nNav === 'admin' && adminToken.value) loadAdminData();
         if (nNav === 'lab' && nLabMode === 'analyze') {
           if (!labSelectedTaskIds.value.length && tasks.value.length) {
@@ -7822,10 +8189,11 @@ async function mountWildCatApp() {
           });
         }
 
-        // Sequence, 3x3 Contact Sheet & Lab Multi-Model player loop
+        // Sequence, 3x3 Contact Sheet, Lab Multi-Model & Tools Sequence Inference player loop
         let lastViewerTick = 0;
         let lastContactTick = 0;
         let lastLabTick = 0;
+        let lastInferTick = 0;
         setInterval(() => {
           const now = performance.now();
           if (topNav.value === 'studio' && studioMode.value === 'monitor') {
@@ -7852,6 +8220,16 @@ async function mountWildCatApp() {
                 labViewer.index = (labViewer.index + 1) % tot;
                 lastLabTick = now;
                 if (isLabPerFrameChart.value) drawLabCompareChart();
+              }
+            }
+          }
+          if (topNav.value === 'tools' && toolsSection.value === 'infer') {
+            const tot = inferUi.frames.length;
+            if (inferUi.playing && tot > 1) {
+              const intervalMs = 1000 / Math.min(60, Math.max(1, Number(inferUi.fpsPlay) || 12));
+              if (now - lastInferTick >= intervalMs) {
+                inferUi.seqIndex = (inferUi.seqIndex + 1) % tot;
+                lastInferTick = now;
               }
             }
           }
@@ -8233,6 +8611,27 @@ async function mountWildCatApp() {
         exportAnalyticsDb,
         copyMyApiKey,
         regenerateApiKey,
+        inferUi,
+        inferSeqDatasets,
+        inferPickedDataset,
+        inferTrainedCount,
+        inferPickedTask,
+        inferTaskArch,
+        inferTaskInCh,
+        inferTaskOutCh,
+        inferChannelMismatch,
+        inferCanRun,
+        inferCurrentFrame,
+        inferFormatShort,
+        openInferOutput,
+        loadInferOutputs,
+        startInferSeqJob,
+        cancelInferSeqJob,
+        downloadInferZip,
+        downloadInferSingleFrame,
+        deleteInferOutputItem,
+        stepInferFrame,
+        openInferForTask,
         switchToAdmin,
         goBackToStudio,
         loadAdminData,

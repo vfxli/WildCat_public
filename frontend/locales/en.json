@@ -365,6 +365,9 @@
     "onDemandExport": "Exported on download",
     "dlSingleTip": "Download {filename}",
     "dlModelPtBtn": "Download .pt",
+    "openInferSeqBtn": "▶ Infer Validation Sequence",
+    "openInferSeqTip": "Run this task's saved model on a validation sequence",
+    "openInferSeqUntrainedTip": "This task has no saved checkpoints yet and cannot be used for inference",
     "liveLogTitle": "Training Log (train.log)",
     "liveLogSub": "Includes the full Python traceback when an error occurs",
     "autoScrollLabel": "Auto-scroll",
@@ -564,7 +567,65 @@
     "copyKeyBtn": "Copy key",
     "regenBtn": "Regenerate",
     "tempUserLockedBanner": "🔒 The API key is not available to temporary users.",
-    "tempUserMaskedKey": "🔒 No API key for temporary users"
+    "tempUserMaskedKey": "🔒 No API key for temporary users",
+    "toolsSectionApi": "API Key"
+  },
+  "inferSeq": {
+    "sectionTab": "Sequence Inference",
+    "title": "Validation Sequence Inference",
+    "subtitle": "Select a dataset with a validation sequence and a trained model that has saved checkpoints, run full FP32 frame-by-frame inference, and export high-precision lossless EXR frames (linear ACEScg · lossless ZIP compression) ready for compositing. Untrained models cannot be used.",
+    "datasetLabel": "Dataset (Validation Sequence)",
+    "datasetPickBtn": "Select Dataset…",
+    "datasetChangeBtn": "Change",
+    "datasetMetaPaired": "Validation sequence {frames} frames · {w}×{h} · {ch}ch ({keys} keyframes)",
+    "datasetMetaSeq": "Standalone validation sequence {frames} frames · {w}×{h} · {ch}ch",
+    "datasetNoneAvailable": "No dataset with a validation sequence is available yet. Upload one or attach a validation sequence on the Datasets page.",
+    "pickerTitle": "Select Dataset for Sequence Inference (datasets with validation sequences)",
+    "modelLabel": "Trained Model (Task)",
+    "modelPlaceholder": "Select a trained model…",
+    "modelOptTrained": "{name} · {arch} ({cin}→{cout}ch, Step {step})",
+    "modelOptUntrained": "{name} · {arch} — Untrained (Unavailable)",
+    "noTasksAtAll": "No training tasks exist yet. Create and train a model on the Train page first.",
+    "noTrainedModelsWarn": "None of your tasks have saved a checkpoint yet (untrained), so inference cannot run. Train a model until at least one checkpoint is saved.",
+    "untrainedBlockedBanner": "The selected model has no saved checkpoints yet and cannot be used for inference.",
+    "channelMismatchBanner": "Channel mismatch: the dataset's validation sequence has {seq_ch} channels, whereas this model requires {model_in} input channels.",
+    "stepLabel": "Checkpoint Step",
+    "stepLatestOpt": "Latest Saved Checkpoint (Step {step})",
+    "stepLatestFallback": "Latest Saved Checkpoint",
+    "stepItemOpt": "Step {step} (Epoch {epoch})",
+    "stepItemNoEpochOpt": "Step {step}",
+    "formatLabel": "Lossless EXR Precision",
+    "formatExrFloat": "32-bit Float Lossless EXR (Full FP32 · ZIP Lossless · Linear ACEScg, Default)",
+    "formatExrHalf": "16-bit Half Lossless EXR (FP16 Half · ZIP Lossless · Linear ACEScg)",
+    "runBtn": "▶ Run Sequence Inference",
+    "runningBtn": "Inferring…",
+    "cancelBtn": "Cancel",
+    "progQueued": "Starting inference process…",
+    "progRunning": "Inferring: {done} / {total} frames ({pct}%) · {fps} fps · {device}",
+    "cancelledNote": "Inference cancelled; temporary files have been cleaned up.",
+    "doneToast": "Validation sequence inference finished: {frames} frames exported ({sec} s)",
+    "viewerTitle": "Rendered Sequence Preview",
+    "viewerMeta": "{model} (Step {step}) → {dataset} · {frames} frames · {w}×{h} · {fmt}",
+    "outputDirLabel": "Output folder:",
+    "modeSideBySide": "Side-by-Side (Input | Output)",
+    "modeOutputOnly": "Output Only",
+    "colInputFrame": "Validation Input",
+    "colOutputFrame": "Model Inference Output",
+    "downloadZipBtn": "📦 Download Full Sequence (.zip · {size} MB)",
+    "downloadFrameBtn": "⬇ Download Current Frame ({name})",
+    "historyTitle": "Saved Sequence Outputs ({count})",
+    "historyEmpty": "No sequence inference outputs yet. Select a dataset and a trained model above, then click Run Sequence Inference.",
+    "colHistModel": "Model / Step",
+    "colHistDataset": "Dataset",
+    "colHistFrames": "Frames / Resolution / Format",
+    "colHistSpeed": "Time / Size",
+    "colHistActions": "Actions",
+    "viewOutputBtn": "Preview",
+    "viewingBadge": "Viewing",
+    "dlShortBtn": "Download .zip",
+    "deleteOutputBtn": "Delete",
+    "deleteConfirm": "Delete rendered sequence \"{id}\" and all of its frame files?",
+    "deletedToast": "Rendered sequence output deleted."
   },
   "help": {
     "bannerTitle": "Help",
@@ -1154,7 +1215,12 @@
     "tempUserStepsExceeded": "Temporary users can train at most {max_steps} steps per task (this setting needs {requested}). Increase Batch Size or reduce Epochs.",
     "tempUserUploadQuotaExceeded": "Temporary users can upload at most {max_assets} datasets (2 GB in total).",
     "tempUserResumeDatasetLocked": "The dataset cannot be changed when resuming or extending a task",
-    "invalidTrainParam": "Invalid or out-of-range training parameter: {field}"
+    "invalidTrainParam": "Invalid or out-of-range training parameter: {field}",
+    "inferModelUntrained": "Task [{name}] has no saved training checkpoints yet and cannot be used for inference.",
+    "inferNoEvalSeq": "Dataset [{name}] has no validation sequence; attach one on the Datasets page first.",
+    "inferChannelMismatch": "The validation sequence has {seq_ch} channels, whereas the selected model requires {model_in} input channels.",
+    "inferBusy": "A validation-sequence inference job is already running; wait for it to finish first.",
+    "inferJobNotFound": "Inference job not found or expired."
   },
   "doc": {
     "task_name": {
@@ -1682,6 +1748,31 @@
       "summary": "Grants a user the Experiments and API features. Users holding both permissions are not restricted as temporary users.",
       "body": "## What it does\n- **Experiments**: use the Experiments page, including comparison sets, batch training and result comparison.\n- **API**: use the API key with the /api/v1 interface, see [[doc:api_key]].\n\nWhile temporary-user restrictions are off, every user can use every feature and the list shows Restrictions off."
     },
+    "tool_infer_seq": {
+      "title": "Validation sequence inference",
+      "summary": "Runs a trained task checkpoint frame by frame over a dataset's full validation sequence and exports the rendered image sequence.",
+      "body": "## What it does\nSelect a dataset with a validation sequence and a trained model that has saved checkpoints. Inference runs frame by frame in an isolated subprocess, writes the rendered sequence under `run/task_name/infer_seq/`, and provides interactive side-by-side playback, single-frame download, and full-sequence ZIP download.\n\n## Requirements\n- **Model must be trained**: any task without saved checkpoints is disabled in the selector and rejected by the backend API.\n- **Dataset must have a validation sequence**: supports paired datasets with an attached validation sequence as well as standalone validation sequences. Sequence channels must be at least the model's input channel count.\n\n## Related settings\n- [[doc:tool_infer_dataset]], [[doc:tool_infer_model]], [[doc:tool_infer_step]], [[doc:tool_infer_format]]."
+    },
+    "tool_infer_dataset": {
+      "title": "Inference dataset (validation sequence)",
+      "summary": "Selects the validation sequence to render: either a paired dataset with an attached validation sequence or a standalone validation sequence.",
+      "body": "## What it does\nEvery frame in the dataset's validation sequence folder is inferred at full resolution and written in frame order using its original stem name.\n\n## Requirements\nIf a paired dataset does not yet have a validation sequence, attach one first on the Datasets page (see [[doc:dataset_validation_sequence]])."
+    },
+    "tool_infer_model": {
+      "title": "Inference model (trained task)",
+      "summary": "Selects the training task whose model weights will be run. Only tasks that have saved at least one checkpoint can be used; untrained tasks are disabled.",
+      "body": "## What it does\nReads the task's architecture (Small / Medium / Large / WildCatLargeV1) and channel configuration, then loads its saved checkpoint weights (preferring EMA shadow weights when EMA was enabled).\n\n## Limitations\nTasks without any saved checkpoint on disk (queued, not yet at the first save point, or cancelled before saving) cannot be used for inference."
+    },
+    "tool_infer_step": {
+      "title": "Checkpoint step",
+      "summary": "Selects whether to run the latest saved checkpoint or a specific historical checkpoint step of the chosen task.",
+      "body": "## What it does\nUses the latest saved checkpoint by default. Switch to an earlier saved step when comparing intermediate checkpoints or avoiding late-stage overfitting."
+    },
+    "tool_infer_format": {
+      "title": "Lossless EXR precision",
+      "summary": "Sets the floating-point bit depth of the lossless ZIP-compressed OpenEXR output sequence: 32-bit Float lossless EXR by default, or 16-bit Half lossless EXR.",
+      "body": "## Precision and lossless compression\nModel forward passes always run in strict IEEE 754 FP32 (with TF32 and mixed precision disabled), preserving unclamped linear ACEScg values and full HDR dynamic range with standard OpenEXR lossless ZIP compression for direct use in Nuke and other compositing tools, see [[doc:color_pipeline]].\n- **32-bit Float Lossless EXR (default)**: writes full 32-bit float channels with zero quantization loss.\n- **16-bit Half Lossless EXR**: writes 16-bit half-float channels with lossless ZIP compression for smaller files."
+    },
     "api_key": {
       "title": "API Key",
       "summary": "The key for using the HTTP interface (/api/v1) as the current user: uploading datasets, submitting training and downloading models. Send it in the X-API-Key request header.",
@@ -1805,7 +1896,7 @@
     "monitor_quality": {
       "title": "Training quality (in-between frames)",
       "summary": "Measures, during training, what the model does on the in-between frames: edit strength, detail kept, drift over time and background change. There is no ground truth: use it to follow trends and find frames where the edit weakens.",
-      "body": "## What it does\nAt checkpoints, the weights of that moment are run on the frames of the validation sequence from the first to the last keyframe and measured (evenly sampled above 96 frames). Measuring does not change the trained weights.\n\n| Measure | Unit and reference | Ideal |\n|---|---|---|\n| [[doc:metric_kf_fit]] | dB (PSNR, peak = linear value 1.0) | higher = closer to the keyframes |\n| [[doc:metric_q_strength]] | %, 100% = as strong as the keyframes on both sides | near 100% |\n| [[doc:metric_q_detail]] / [[doc:metric_q_texture]] | %, 100% = as much as on the keyframes | near 100% |\n| [[doc:metric_q_look_drift]] / [[doc:metric_q_tex_drift]] | change as % of itself | lower = steadier |\n| [[doc:metric_q_bg]] | %, full white (linear 1.0) = 100% | near 0% |\n\n## Requirements\nRGB → RGB training; a dataset with a validation sequence whose frames include the keyframe inputs; in-between frames between the keyframes. Otherwise the card states the reason.\n\n## How to read it\n- The first measurement follows after about 2% of the total steps; later ones are taken at checkpoints, using no more than about 3% of the training time. The last step is always measured.\n- These are reference measures without ground truth, not a score of the final picture; a high keyframe fit does not mean the in-between frames are good.\n- In the 1/4 and 1/2 stages detail is naturally low and strength is still rising; judge the values of the 1/1 stage.\n- The keyframe fit refers to the keyframes used for training (the rewritten ones when keyframe commonality is on).\n- The card gives two hints only, and only in the 1/1 stage: the edit strength of a frame below 60%, or detail kept below 60%."
+      "body": "## What it does\nAt checkpoints, the weights of that moment are run on the frames of the validation sequence from the first to the last keyframe and measured (evenly sampled above 96 frames). Measuring does not change the trained weights.\n\n| Measure | Unit and reference | Ideal |\n|---|---|---|\n| [[doc:metric_kf_fit]] | dB (PSNR, peak = linear value 1.0) | higher = closer to the keyframes |\n| [[doc:metric_q_strength]] | %, 100% = as strong as the keyframes on both sides | near 100% |\n| [[doc:metric_q_detail]] / [[doc:metric_q_texture]] | %, 100% = as much as on the keyframes | near 100% |\n| [[doc:metric_q_look_drift]] / [[doc:metric_q_tex_drift]] | change as % of itself | lower = steadier |\n| [[doc:metric_q_bg]] | %, full white (linear 1.0) = 100% | near 0% |\n\n## Requirements\nRGB → RGB training; a dataset with a validation sequence whose frames include the keyframe inputs; in-between frames between the keyframes. Otherwise the card states the reason.\n\n## How to read it\n- The first measurement follows after about 2% of the total steps; later ones are taken at checkpoints within about 3% of training time, and at least once every 10% of total steps (async secondary-GPU runs do not count against the primary-GPU stall budget). The last step is always measured.\n- These are reference measures without ground truth, not a score of the final picture; a high keyframe fit does not mean the in-between frames are good.\n- In the 1/4 and 1/2 stages detail is naturally low and strength is still rising; judge the values of the 1/1 stage.\n- The keyframe fit refers to the keyframes used for training (the rewritten ones when keyframe commonality is on).\n- The card gives two hints only, and only in the 1/1 stage: the edit strength of a frame below 60%, or detail kept below 60%."
     },
     "metric_kf_fit": {
       "title": "Keyframe fit",

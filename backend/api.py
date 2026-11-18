@@ -8,12 +8,12 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from wildcat.version import BUILD_DATE, BUILD_ID, BUILD_LABEL, BUILD_VERSION
 
-from . import analytics_db, db, experiments, gpu_speed_db, i18n, scheduler, security, service, storage, telemetry
+from . import analytics_db, db, experiments, gpu_speed_db, i18n, infer_runner, scheduler, security, service, storage, telemetry
 
 router = APIRouter(prefix="/api/v1", tags=["WildCat API v1"])
 
@@ -1198,3 +1198,127 @@ def api_admin_delete_user(target_uid: int, admin: dict = Depends(require_admin))
         return {"status": "ok", "deleted_user_id": target_uid}
     except Exception as e:
         raise HTTPException(status_code=400, detail=_log_api_exc("admin/users/delete", e))
+
+
+# ─────────────────────── Validation Sequence Inference ───────────────────────
+
+
+class InferSequenceStartRequest(BaseModel):
+    asset_id: int
+    task_id: int
+    step: Optional[int] = None
+    output_format: str = "exr_float"
+
+
+@router.post("/infer-seq")
+def api_start_infer_seq(
+    req: InferSequenceStartRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    security.enforce_rate_limit("infer_seq", security.extract_client_ip(request), limit=20, window_sec=60.0)
+    try:
+        job = infer_runner.start_infer_job(
+            user_id=user["id"],
+            is_admin=bool(user.get("is_admin")),
+            username=user["username"],
+            asset_id=req.asset_id,
+            task_id=req.task_id,
+            step=req.step,
+            output_format=req.output_format,
+        )
+        return {"status": "ok", "job": job}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except infer_runner.InferNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except infer_runner.InferBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("infer-seq/start", e))
+
+
+@router.get("/infer-seq/jobs/{job_id}")
+def api_get_infer_seq_job(job_id: str, user: dict = Depends(get_current_user)):
+    try:
+        return {"status": "ok", "job": infer_runner.get_infer_job(user["id"], bool(user.get("is_admin")), job_id)}
+    except infer_runner.InferNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/infer-seq/jobs/{job_id}/cancel")
+def api_cancel_infer_seq_job(job_id: str, user: dict = Depends(get_current_user)):
+    try:
+        return {"status": "ok", "job": infer_runner.cancel_infer_job(user["id"], bool(user.get("is_admin")), job_id)}
+    except infer_runner.InferNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/infer-seq/outputs")
+def api_list_infer_seq_outputs(
+    task_id: Optional[int] = Query(default=None),
+    user: dict = Depends(get_current_user),
+):
+    outputs = infer_runner.list_infer_outputs(user["id"], bool(user.get("is_admin")), task_id=task_id)
+    return {"status": "ok", "outputs": outputs}
+
+
+@router.get("/infer-seq/outputs/{task_id}/{out_id}/frames")
+def api_get_infer_seq_frames(task_id: int, out_id: str, user: dict = Depends(get_current_user)):
+    try:
+        res = infer_runner.get_infer_output_frames(user["id"], bool(user.get("is_admin")), task_id, out_id)
+        return {"status": "ok", **res}
+    except infer_runner.InferNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("infer-seq/frames", e))
+
+
+@router.get("/infer-seq/outputs/{task_id}/{out_id}/download")
+def api_download_infer_seq_zip(task_id: int, out_id: str, user: dict = Depends(get_current_user)):
+    try:
+        spool, zip_name = infer_runner.build_infer_output_zip(user["id"], bool(user.get("is_admin")), task_id, out_id)
+    except infer_runner.InferNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("infer-seq/download", e))
+
+    def _iter_spool():
+        try:
+            while True:
+                chunk = spool.read(1024 * 256)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            spool.close()
+
+    return StreamingResponse(
+        _iter_spool(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
+
+
+@router.get("/infer-seq/outputs/{task_id}/{out_id}/file/{filename}")
+def api_download_infer_seq_frame(
+    task_id: int, out_id: str, filename: str, user: dict = Depends(get_current_user)
+):
+    try:
+        fpath = infer_runner.resolve_single_infer_frame(
+            user["id"], bool(user.get("is_admin")), task_id, out_id, filename
+        )
+    except infer_runner.InferNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return FileResponse(fpath, filename=os.path.basename(fpath))
+
+
+@router.delete("/infer-seq/outputs/{task_id}/{out_id}")
+def api_delete_infer_seq_output(task_id: int, out_id: str, user: dict = Depends(get_current_user)):
+    try:
+        infer_runner.delete_infer_output(user["id"], bool(user.get("is_admin")), task_id, out_id)
+        return {"status": "ok"}
+    except infer_runner.InferNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_log_api_exc("infer-seq/delete", e))

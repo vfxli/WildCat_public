@@ -365,6 +365,9 @@
     "onDemandExport": "下载时导出",
     "dlSingleTip": "下载 {filename}",
     "dlModelPtBtn": "下载 .pt",
+    "openInferSeqBtn": "▶ 推理验证序列",
+    "openInferSeqTip": "使用本任务已保存的模型推理验证集序列",
+    "openInferSeqUntrainedTip": "该任务尚未保存任何检查点，无法用于推理",
     "liveLogTitle": "训练日志（train.log）",
     "liveLogSub": "出错时包含完整的 Python Traceback",
     "autoScrollLabel": "自动滚动",
@@ -564,7 +567,65 @@
     "copyKeyBtn": "复制密钥",
     "regenBtn": "重新生成",
     "tempUserLockedBanner": "🔒 临时用户不能使用 API Key。",
-    "tempUserMaskedKey": "🔒 临时用户不提供 API Key"
+    "tempUserMaskedKey": "🔒 临时用户不提供 API Key",
+    "toolsSectionApi": "API Key"
+  },
+  "inferSeq": {
+    "sectionTab": "验证序列推理",
+    "title": "推理验证集序列",
+    "subtitle": "选择一个带验证序列的数据集和一个已训练保存检查点的模型，以 FP32 全精度逐帧执行推理并输出高精度无损 EXR 序列图（线性 ACEScg · ZIP 无损压缩），可直接用于合成。未训练的模型不可选用。",
+    "datasetLabel": "数据集（验证序列）",
+    "datasetPickBtn": "选择数据集…",
+    "datasetChangeBtn": "更换",
+    "datasetMetaPaired": "验证序列 {frames} 帧 · {w}×{h} · {ch}ch（关键帧 {keys} 张）",
+    "datasetMetaSeq": "独立验证序列 {frames} 帧 · {w}×{h} · {ch}ch",
+    "datasetNoneAvailable": "暂无带验证序列的数据集。请前往「数据集」页上传验证序列，或为已有数据集添加验证序列。",
+    "pickerTitle": "选择推理数据集（仅列出带验证序列的数据集）",
+    "modelLabel": "训练模型（任务）",
+    "modelPlaceholder": "请选择已训练的模型…",
+    "modelOptTrained": "{name} · {arch} ({cin}→{cout}ch, Step {step})",
+    "modelOptUntrained": "{name} · {arch} — 未训练（不可用）",
+    "noTasksAtAll": "当前没有任何训练任务。请先在「训练」页创建并训练模型。",
+    "noTrainedModelsWarn": "当前所有任务均尚未保存检查点（未训练），暂时无法执行推理。请先训练模型并等待至少保存一个检查点。",
+    "untrainedBlockedBanner": "所选模型尚未训练保存任何检查点，不能用于推理。",
+    "channelMismatchBanner": "通道数不匹配：所选数据集验证序列为 {seq_ch} 通道，而该模型需要 {model_in} 通道输入。",
+    "stepLabel": "检查点版本",
+    "stepLatestOpt": "最新保存版本（Step {step}）",
+    "stepLatestFallback": "最新保存版本",
+    "stepItemOpt": "Step {step}（Epoch {epoch}）",
+    "stepItemNoEpochOpt": "Step {step}",
+    "formatLabel": "无损 EXR 输出精度",
+    "formatExrFloat": "32-bit Float 无损 EXR（FP32 全精度 · ZIP 无损压缩 · 线性 ACEScg，默认）",
+    "formatExrHalf": "16-bit Half 无损 EXR（FP16 半精度 · ZIP 无损压缩 · 线性 ACEScg）",
+    "runBtn": "▶ 开始推理序列",
+    "runningBtn": "推理中…",
+    "cancelBtn": "取消推理",
+    "progQueued": "准备启动推理进程…",
+    "progRunning": "正在推理：{done} / {total} 帧（{pct}%）· {fps} fps · {device}",
+    "cancelledNote": "已取消推理，未完成的临时文件已清理。",
+    "doneToast": "验证序列推理完成：共输出 {frames} 帧（{sec} 秒）",
+    "viewerTitle": "推理结果序列预览",
+    "viewerMeta": "{model}（Step {step}）→ {dataset} · 共 {frames} 帧 · {w}×{h} · {fmt}",
+    "outputDirLabel": "输出目录：",
+    "modeSideBySide": "并排对比（输入 | 推理结果）",
+    "modeOutputOnly": "仅看推理结果",
+    "colInputFrame": "验证序列输入（Input）",
+    "colOutputFrame": "模型推理输出（Output）",
+    "downloadZipBtn": "📦 下载整段输出序列（.zip · {size} MB）",
+    "downloadFrameBtn": "⬇ 下载当前帧（{name}）",
+    "historyTitle": "已输出的推理序列（{count}）",
+    "historyEmpty": "暂无推理输出记录。选择上方数据集与已训练模型后点击「开始推理序列」即可生成。",
+    "colHistModel": "模型 / 步数",
+    "colHistDataset": "验证序列数据集",
+    "colHistFrames": "帧数 / 分辨率 / 格式",
+    "colHistSpeed": "耗时 / 大小",
+    "colHistActions": "操作",
+    "viewOutputBtn": "预览",
+    "viewingBadge": "当前预览",
+    "dlShortBtn": "下载 .zip",
+    "deleteOutputBtn": "删除",
+    "deleteConfirm": "确定删除推理输出序列「{id}」及其全部序列图文件吗？",
+    "deletedToast": "已删除推理序列输出。"
   },
   "help": {
     "bannerTitle": "帮助",
@@ -1154,7 +1215,12 @@
     "tempUserStepsExceeded": "临时用户每个任务最多 {max_steps} 步（当前设置需要 {requested} 步）。请增大 Batch Size 或减少 Epochs。",
     "tempUserUploadQuotaExceeded": "临时用户最多上传 {max_assets} 个数据集（总容量 2 GB）。",
     "tempUserResumeDatasetLocked": "继续或追加训练时不能更换数据集",
-    "invalidTrainParam": "训练参数无效或超出范围：{field}"
+    "invalidTrainParam": "训练参数无效或超出范围：{field}",
+    "inferModelUntrained": "模型任务 [{name}] 尚未保存任何训练检查点，无法用于推理。",
+    "inferNoEvalSeq": "数据集 [{name}] 没有验证序列，请先在「数据集」页添加验证序列。",
+    "inferChannelMismatch": "验证序列为 {seq_ch} 通道，而所选模型需要 {model_in} 通道输入。",
+    "inferBusy": "当前已有一个验证序列推理任务正在运行，请等待完成后再提交。",
+    "inferJobNotFound": "推理任务不存在或已过期。"
   },
   "doc": {
     "task_name": {
@@ -1682,6 +1748,31 @@
       "summary": "为单个用户开通实验与 API 功能。同时拥有两项权限的用户不受临时用户限制。",
       "body": "## 作用\n- **实验**：使用实验页，包括对照组合、批量训练和结果对比。\n- **API**：使用 API Key 调用 /api/v1 接口，见 [[doc:api_key]]。\n\n关闭临时用户限制时，所有用户均可使用全部功能，列表中显示「限制已关闭」。"
     },
+    "tool_infer_seq": {
+      "title": "验证序列推理",
+      "summary": "使用已训练保存检查点的任务模型，对数据集的整段验证序列逐帧执行全分辨率推理并输出序列图。",
+      "body": "## 作用\n选择一个带验证序列的数据集和一个已训练保存检查点的模型，在独立推理子进程中逐帧渲染整段验证序列，输出保存在 `run/任务名/infer_seq/` 下，支持在线逐帧对比预览、单帧下载与整段序列 ZIP 打包下载。\n\n## 要求\n- **模型必须已训练**：尚未保存任何检查点的任务（未开始训练或尚未到达首个保存点）在列表中显示为未训练不可选，后端接口同样拒绝调用。\n- **数据集需带验证序列**：支持配对数据集附带的验证序列或独立验证序列资产；验证序列通道数须不少于模型的输入通道数。\n\n## 关联设置\n- [[doc:tool_infer_dataset]]、[[doc:tool_infer_model]]、[[doc:tool_infer_step]]、[[doc:tool_infer_format]]。"
+    },
+    "tool_infer_dataset": {
+      "title": "推理数据集（验证序列）",
+      "summary": "选择要执行推理的验证序列来源：带验证序列的配对数据集，或独立的验证序列资产。",
+      "body": "## 作用\n推理进程会读取该数据集验证序列目录中的全部帧，并保持原文件名顺序逐帧写出结果。\n\n## 要求\n如果数据集尚未添加验证序列，请先在「数据集」页为其上传验证序列（见 [[doc:dataset_validation_sequence]]）。"
+    },
+    "tool_infer_model": {
+      "title": "推理模型（训练任务）",
+      "summary": "选择用于推理的训练任务。只有已经训练并保存过检查点的模型才能选用；未训练的任务自动禁用。",
+      "body": "## 作用\n自动读取所选任务的模型架构（Small / Medium / Large / WildCatLargeV1）与输入输出通道数，并加载已保存的权重（若开启了 EMA 平均权重则优先使用 EMA 权重）。\n\n## 限制\n尚未保存任何检查点的任务（状态为排队中、刚启动尚未落盘或已取消且无检查点）不可用于推理。"
+    },
+    "tool_infer_step": {
+      "title": "推理检查点版本",
+      "summary": "选择使用该模型的最新检查点，或指定某一个已保存步数的历史检查点。",
+      "body": "## 作用\n默认使用最新保存的检查点；当训练后期出现过拟合或希望对比某一中间步数的序列效果时，可切换为任意已保存的 Step 版本。"
+    },
+    "tool_infer_format": {
+      "title": "无损 EXR 输出精度",
+      "summary": "设置推理输出序列图的无损 OpenEXR 浮点位深：默认 32-bit Float 全精度无损 EXR，可选 16-bit Half 无损 EXR。",
+      "body": "## 精度与无损压缩\n前向推理全程在 IEEE 754 FP32 全精度下运行（关闭 TF32 与混合精度），保持线性 ACEScg 色域与完整 HDR 动态范围（不做 0–1 截断），采用 OpenEXR 标准 ZIP 无损压缩写出，可直接导入 Nuke 等合成软件使用，见 [[doc:color_pipeline]]。\n- **32-bit Float 无损 EXR（默认）**：每通道 32 位全精度浮点写出，零量化损耗。\n- **16-bit Half 无损 EXR**：每通道 16 位半精度浮点加 ZIP 无损压缩，文件体积更小。"
+    },
     "api_key": {
       "title": "API Key",
       "summary": "通过 HTTP 接口（/api/v1）以当前用户身份上传数据集、提交训练和下载模型时使用的密钥，在请求头 X-API-Key 中传入。",
@@ -1805,7 +1896,7 @@
     "monitor_quality": {
       "title": "训练质量（中间帧）",
       "summary": "训练过程中在关键帧之间的中间帧上测量模型效果：效果强度、细节保留、随时间的漂移和背景改动。没有真值对照，用于观察趋势和定位效果减弱的帧。",
-      "body": "## 作用\n在保存检查点时，用当时的权重对验证序列中第一张到最后一张关键帧之间的帧做推理并测量（超过 96 帧时均匀抽取）。测量不改变训练出的权重。\n\n| 指标 | 单位与参考 | 理想值 |\n|---|---|---|\n| [[doc:metric_kf_fit]] | dB（PSNR，峰值为线性值 1.0） | 越高越接近关键帧 |\n| [[doc:metric_q_strength]] | %，100% = 与两侧关键帧同样强 | 接近 100% |\n| [[doc:metric_q_detail]] / [[doc:metric_q_texture]] | %，100% = 与关键帧上的一样多 | 接近 100% |\n| [[doc:metric_q_look_drift]] / [[doc:metric_q_tex_drift]] | 变化量占自身的 % | 越低越稳定 |\n| [[doc:metric_q_bg]] | %，满白（线性值 1.0）= 100% | 接近 0% |\n\n## 要求\nRGB → RGB 的训练；数据集带验证序列，关键帧的输入是验证序列中的帧；关键帧之间有中间帧。不满足时卡片显示原因。\n\n## 如何读数\n- 第一次测量在总步数的约 2% 之后，之后在检查点处测量，测量用时不超过训练时间的约 3%；最后一步总会测量。\n- 这些是没有真值对照的参考指标，不代表最终画面质量；关键帧拟合高不代表中间帧好。\n- 1/4、1/2 阶段的细节偏低、强度仍在上升，以 1/1 阶段的数值为准。\n- 关键帧拟合以训练所用的关键帧为准（开启关键帧共性时为改写后的版本）。\n- 卡片只在 1/1 阶段给出两种提示：某一帧的效果强度低于 60%，或细节保留低于 60%。"
+      "body": "## 作用\n在保存检查点时，用当时的权重对验证序列中第一张到最后一张关键帧之间的帧做推理并测量（超过 96 帧时均匀抽取）。测量不改变训练出的权重。\n\n| 指标 | 单位与参考 | 理想值 |\n|---|---|---|\n| [[doc:metric_kf_fit]] | dB（PSNR，峰值为线性值 1.0） | 越高越接近关键帧 |\n| [[doc:metric_q_strength]] | %，100% = 与两侧关键帧同样强 | 接近 100% |\n| [[doc:metric_q_detail]] / [[doc:metric_q_texture]] | %，100% = 与关键帧上的一样多 | 接近 100% |\n| [[doc:metric_q_look_drift]] / [[doc:metric_q_tex_drift]] | 变化量占自身的 % | 越低越稳定 |\n| [[doc:metric_q_bg]] | %，满白（线性值 1.0）= 100% | 接近 0% |\n\n## 要求\nRGB → RGB 的训练；数据集带验证序列，关键帧的输入是验证序列中的帧；关键帧之间有中间帧。不满足时卡片显示原因。\n\n## 如何读数\n- 第一次测量在总步数的约 2% 之后，之后在检查点处测量，兼顾约 3% 的训练耗时预算与每 10% 训练步数的保底更新（双卡副卡异步测量不计入主卡停顿预算）；最后一步总会测量。\n- 这些是没有真值对照的参考指标，不代表最终画面质量；关键帧拟合高不代表中间帧好。\n- 1/4、1/2 阶段的细节偏低、强度仍在上升，以 1/1 阶段的数值为准。\n- 关键帧拟合以训练所用的关键帧为准（开启关键帧共性时为改写后的版本）。\n- 卡片只在 1/1 阶段给出两种提示：某一帧的效果强度低于 60%，或细节保留低于 60%。"
     },
     "metric_kf_fit": {
       "title": "关键帧拟合",

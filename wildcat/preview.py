@@ -175,7 +175,7 @@ class PreviewWorker:
                     # written (the training thread may be waiting for it, see Trainer._preview) and outside the lock
                     # above - only each inference takes it (_monitor_infer), never a whole evaluation.
                     booked, monitor = monitor, None
-                    booked.run(step, self._monitor_infer)
+                    booked.run(step, self._monitor_infer, charge_budget=(done is not None))
                 if done is not None:
                     done.set()
                 with self.t.gpu_lock:
@@ -190,11 +190,12 @@ class PreviewWorker:
                     done.set()
 
     def _monitor_infer(self, frame):
-        """quality monitor: one full frame (HxWx3 float32) through the weights the last job loaded, as validation does
-        it (eval mode, no_grad, FP32, this worker's stream).  The GPU lock is held for this one frame only."""
+        """quality monitor: one full frame (HxWx3 float32) through the weights the last job loaded (eval mode, no_grad,
+        FP16 on CUDA for fast full-frame sweep, FP32 on CPU for bit-reproducible tests).  Lock held per frame only."""
+        mon_amp = torch.float16 if self.device.type == "cuda" else self.amp_dtype
         with self.t.gpu_lock:
             with (torch.cuda.stream(self._stream) if self._stream is not None else _Null()):
-                return forward_full(self.net, frame, self.device, self.amp_dtype)[0].permute(1, 2, 0).cpu().numpy()
+                return forward_full(self.net, frame, self.device, mon_amp)[0].permute(1, 2, 0).cpu().numpy()
 
     def _do_infer(self, step, snapshot, ready_event, do_preview, do_val):
         """load the snapshot into this worker's network, validate / render the keyframes; returns what to write."""

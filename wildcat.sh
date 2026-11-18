@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
-# ==============================================================================
 # WildCat 离线环境部署与热更新管理脚本 (Linux / CUDA 12.8)
-# ==============================================================================
 # 用法:
-#   ./wildcat.sh start | stop | restart | status   # 服务启停与状态管理
-#   ./wildcat.sh update [文件名.tar.gz]            # 从 update/ 目录自动读取更新包执行热更新
-#   ./wildcat.sh rollback                          # 一键回滚到上一个代码版本
-#   ./wildcat.sh pack-patch [输出文件名.tar.gz]    # 打包轻量增量热更新包至 update/ 目录
-# ==============================================================================
+#   ./wildcat.sh start | stop | restart | status | update [包.tar.gz] | rollback | pack-patch [包.tar.gz]
 
-# 使用 main() 包裹全部逻辑，确保热更新覆盖 wildcat.sh 自身时 Bash 不会因文件偏移变化报错
 main() {
   set -euo pipefail
 
@@ -184,7 +177,7 @@ EOF
   # Code files shipped in patches / backed up before updates (only those that exist).
   app_code_files() {
     local f out=""
-    for f in wildcat.sh wildcat.bat set_admin_password.sh set_admin_password.bat update/README.txt backend frontend webui wildcat tools data/open_experiments.db data/gpu_benchmarks.db train.py infer.py export_cat.py config/default.json; do
+    for f in wildcat.sh wildcat.bat set_admin_password.sh set_admin_password.bat update/README.txt backend frontend webui wildcat tools/benchmark.py tools/build_gpu_benchmarks_db.py data/open_experiments.db data/gpu_benchmarks.db train.py infer.py export_cat.py config/default.json; do
       [ -e "${APP_DIR}/${f}" ] && out="${out} ${f}"
     done
     echo "${out}"
@@ -275,9 +268,9 @@ except BaseException:
     do_stop || true
     rm -rf "${BASE_DIR}/WildCat" "${APP_DIR}/WildCat" 2>/dev/null || true
     if (set +o pipefail; tar -tzf "${pkg}" 2>/dev/null | head -n 5 | grep -q '^WildCat/'); then
-      tar -xzf "${pkg}" --strip-components=1 -C "${APP_DIR}"
+      tar --keep-directory-symlink --no-same-owner -xzf "${pkg}" --strip-components=1 -C "${APP_DIR}"
     else
-      tar -xzf "${pkg}" -C "${APP_DIR}"
+      tar --keep-directory-symlink --no-same-owner -xzf "${pkg}" -C "${APP_DIR}"
     fi
     chmod +x "${APP_DIR}/wildcat.sh" "${APP_DIR}/set_admin_password.sh" 2>/dev/null || true
     if [ "${APP_DIR}" != "${BASE_DIR}" ] && [ -f "${APP_DIR}/wildcat.sh" ]; then
@@ -310,6 +303,7 @@ except BaseException:
     fi
     # shellcheck disable=SC2046
     tar --exclude='__pycache__' --exclude='*.pyc' \
+      --exclude='frontend/locales/local' \
       --exclude='tools/make_public.py' \
       --exclude='tools/publish_release.sh' \
       --exclude='tools/export_public_experiments_db.py' \
@@ -378,6 +372,7 @@ except BaseException:
       exit 1
       ;;
   esac
+  exit 0
 }
 
-main "$@"
+main "$@"; exit $?

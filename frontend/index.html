@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261118_v303" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261118_v304" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -3291,12 +3291,24 @@
                     </span>
                   </div>
 
-                  <div v-if="taskModels.count > 0" class="flex flex-wrap items-center gap-2">
-                    <button @click="downloadAllModels(activeTask.id, 'pt')"
-                            class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
-                      {{ t('monitor.dlAllPtZipBtn', { zip: taskModels.zip_filename }) }}
-                    </button>
-                    <help-tip doc="monitor_download"></help-tip>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="inline-flex items-center gap-1">
+                      <button type="button"
+                              @click="openInferForTask(activeTask)"
+                              :disabled="!(activeTask.has_ckpt || taskModels.count > 0)"
+                              :title="(activeTask.has_ckpt || taskModels.count > 0) ? t('monitor.openInferSeqTip') : t('monitor.openInferSeqUntrainedTip')"
+                              class="px-3.5 py-1.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600 disabled:opacity-40 disabled:cursor-not-allowed text-cyan-300 hover:text-white text-xs font-bold border border-cyan-500/40 transition-all">
+                        {{ t('monitor.openInferSeqBtn') }}
+                      </button>
+                      <help-tip doc="tool_infer_seq"></help-tip>
+                    </span>
+                    <template v-if="taskModels.count > 0">
+                      <button @click="downloadAllModels(activeTask.id, 'pt')"
+                              class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
+                        {{ t('monitor.dlAllPtZipBtn', { zip: taskModels.zip_filename }) }}
+                      </button>
+                      <help-tip doc="monitor_download"></help-tip>
+                    </template>
                   </div>
                 </div>
 
@@ -4140,7 +4152,368 @@
         <div class="max-w-5xl mx-auto space-y-5">
           <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
             <h2 class="text-lg font-bold text-white">{{ t('header.navTools') }}</h2>
+            <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+              <button type="button"
+                      @click="toolsSection = 'infer'"
+                      class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap"
+                      :class="toolsSection === 'infer' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
+                {{ t('inferSeq.sectionTab') }}
+              </button>
+              <button type="button"
+                      @click="toolsSection = 'api'"
+                      class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5"
+                      :class="toolsSection === 'api' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
+                <span>{{ t('api.toolsSectionApi') }}</span>
+                <span v-if="user && !canUseApi" class="text-[10px] opacity-80">🔒</span>
+              </button>
+            </div>
           </div>
+
+          <!-- Section 'infer': validation sequence inference (32-bit float lossless EXR, trained models only) -->
+          <template v-if="toolsSection === 'infer'">
+            <section class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 select-text">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="space-y-1">
+                  <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <span>{{ t('inferSeq.title') }}<help-tip doc="tool_infer_seq"></help-tip></span>
+                    <span class="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-bold text-emerald-300 wc-mono">
+                      32-bit Float · ZIP Lossless EXR · ACEScg
+                    </span>
+                  </h3>
+                  <p class="text-xs text-slate-400 leading-relaxed">{{ t('inferSeq.subtitle') }}</p>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- 1. Dataset with validation sequence -->
+                <div class="space-y-1.5">
+                  <label class="wc-label">
+                    <span class="wc-label-inline">
+                      <span>{{ t('inferSeq.datasetLabel') }}</span>
+                      <help-tip doc="tool_infer_dataset"></help-tip>
+                    </span>
+                  </label>
+                  <div v-if="!inferSeqDatasets.length"
+                       class="p-3 rounded-xl bg-amber-950/50 border border-amber-500/35 text-xs text-amber-200 leading-relaxed">
+                    {{ t('inferSeq.datasetNoneAvailable') }}
+                  </div>
+                  <button v-else
+                          type="button"
+                          @click="openDatasetPicker('infer')"
+                          :disabled="inferUi.busy"
+                          class="w-full text-left px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-950/80 border border-slate-700 hover:border-indigo-500/60 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between gap-3 transition-all">
+                    <div class="flex items-center gap-3 min-w-0">
+                      <img v-if="inferPickedDataset && (inferPickedDataset.seq_thumb_url || inferPickedDataset.source_thumb_url)"
+                           :src="inferPickedDataset.seq_thumb_url || inferPickedDataset.source_thumb_url"
+                           class="w-12 h-8 object-cover rounded border border-slate-800 bg-black shrink-0" />
+                      <div class="min-w-0">
+                        <div class="text-xs font-bold text-white wc-mono truncate">
+                          {{ inferPickedDataset ? inferPickedDataset.name : t('inferSeq.datasetPickBtn') }}
+                        </div>
+                        <div v-if="inferPickedDataset" class="text-[11px] text-slate-400 truncate">
+                          {{ inferPickedDataset.kind === 'eval_sequence'
+                            ? t('inferSeq.datasetMetaSeq', { frames: inferPickedDataset.frame_count, w: inferPickedDataset.width, h: inferPickedDataset.height, ch: inferPickedDataset.in_channels })
+                            : t('inferSeq.datasetMetaPaired', { frames: inferPickedDataset.seq_frame_count, w: inferPickedDataset.width, h: inferPickedDataset.height, ch: inferPickedDataset.in_channels, keys: inferPickedDataset.frame_count })
+                          }}
+                        </div>
+                      </div>
+                    </div>
+                    <span class="px-2.5 py-1 rounded-lg bg-slate-800 text-indigo-300 text-[11px] font-semibold shrink-0">
+                      {{ inferPickedDataset ? t('inferSeq.datasetChangeBtn') : t('inferSeq.datasetPickBtn') }}
+                    </span>
+                  </button>
+                </div>
+
+                <!-- 2. Trained Model (Task) — untrained tasks strictly disabled -->
+                <div class="space-y-1.5">
+                  <label class="wc-label">
+                    <span class="wc-label-inline">
+                      <span>{{ t('inferSeq.modelLabel') }}</span>
+                      <help-tip doc="tool_infer_model"></help-tip>
+                    </span>
+                  </label>
+                  <select v-model="inferUi.taskId"
+                          :disabled="inferUi.busy || !tasks.length"
+                          class="wc-select wc-mono text-xs disabled:opacity-50">
+                    <option :value="null" disabled>{{ t('inferSeq.modelPlaceholder') }}</option>
+                    <option v-for="tk in tasks"
+                            :key="'inf-tk-' + tk.id"
+                            :value="tk.id"
+                            :disabled="!tk.has_ckpt">
+                      {{ tk.has_ckpt
+                        ? t('inferSeq.modelOptTrained', { name: tk.node_name, arch: inferTaskArch(tk), cin: inferTaskInCh(tk), cout: inferTaskOutCh(tk), step: tk.last_step || 0 })
+                        : t('inferSeq.modelOptUntrained', { name: tk.node_name, arch: inferTaskArch(tk) })
+                      }}
+                    </option>
+                  </select>
+                  <div v-if="!tasks.length" class="text-[11px] text-amber-300">
+                    {{ t('inferSeq.noTasksAtAll') }}
+                  </div>
+                  <div v-else-if="inferTrainedCount === 0" class="text-[11px] text-amber-300">
+                    {{ t('inferSeq.noTrainedModelsWarn') }}
+                  </div>
+                </div>
+
+                <!-- 3. Checkpoint Step -->
+                <div class="space-y-1.5">
+                  <label class="wc-label">
+                    <span class="wc-label-inline">
+                      <span>{{ t('inferSeq.stepLabel') }}</span>
+                      <help-tip doc="tool_infer_step"></help-tip>
+                    </span>
+                  </label>
+                  <select v-model.number="inferUi.step"
+                          :disabled="inferUi.busy || !inferPickedTask || !inferPickedTask.has_ckpt"
+                          class="wc-select wc-mono text-xs disabled:opacity-50">
+                    <option :value="0">
+                      {{ inferUi.latestStep > 0 ? t('inferSeq.stepLatestOpt', { step: inferUi.latestStep }) : t('inferSeq.stepLatestFallback') }}
+                    </option>
+                    <option v-for="ms in inferUi.modelSteps"
+                            :key="'inf-ms-' + ms.step"
+                            :value="ms.step">
+                      {{ ms.epoch ? t('inferSeq.stepItemOpt', { step: ms.step, epoch: ms.epoch }) : t('inferSeq.stepItemNoEpochOpt', { step: ms.step }) }}
+                    </option>
+                  </select>
+                </div>
+
+                <!-- 4. Lossless EXR Bit Depth -->
+                <div class="space-y-1.5">
+                  <label class="wc-label">
+                    <span class="wc-label-inline">
+                      <span>{{ t('inferSeq.formatLabel') }}</span>
+                      <help-tip doc="tool_infer_format"></help-tip>
+                    </span>
+                  </label>
+                  <select v-model="inferUi.outputFormat"
+                          :disabled="inferUi.busy"
+                          class="wc-select text-xs disabled:opacity-50">
+                    <option value="exr_float">{{ t('inferSeq.formatExrFloat') }}</option>
+                    <option value="exr_half">{{ t('inferSeq.formatExrHalf') }}</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Validation / Channel Mismatch / Untrained Banners -->
+              <div v-if="inferPickedTask && !inferPickedTask.has_ckpt"
+                   class="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 font-medium">
+                {{ t('inferSeq.untrainedBlockedBanner') }}
+              </div>
+              <div v-else-if="inferChannelMismatch"
+                   class="p-3 rounded-xl bg-amber-950/60 border border-amber-500/40 text-xs text-amber-200 font-medium">
+                {{ t('inferSeq.channelMismatchBanner', inferChannelMismatch) }}
+              </div>
+
+              <!-- Action Row & Live Progress -->
+              <div class="flex flex-wrap items-center gap-3 pt-1">
+                <button type="button"
+                        @click="startInferSeqJob"
+                        :disabled="!inferCanRun"
+                        class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">
+                  {{ inferUi.busy ? t('inferSeq.runningBtn') : t('inferSeq.runBtn') }}
+                </button>
+                <button v-if="inferUi.busy && inferUi.jobId"
+                        type="button"
+                        @click="cancelInferSeqJob"
+                        class="px-4 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white text-xs font-semibold border border-rose-500/35 transition-all">
+                  {{ t('inferSeq.cancelBtn') }}
+                </button>
+                <span v-if="inferUi.note" class="text-xs text-amber-300">{{ inferUi.note }}</span>
+              </div>
+
+              <div v-if="inferUi.busy" class="space-y-2 bg-slate-950 border border-slate-800 rounded-xl p-3.5">
+                <div class="flex items-center justify-between text-xs wc-mono text-slate-300">
+                  <span>
+                    {{ inferUi.done > 0
+                      ? t('inferSeq.progRunning', { done: inferUi.done, total: inferUi.total, pct: Math.round(inferUi.progress * 100), fps: inferUi.fps.toFixed(2), device: inferUi.device || 'GPU' })
+                      : t('inferSeq.progQueued')
+                    }}
+                  </span>
+                  <span class="text-indigo-300 font-bold">{{ Math.round(inferUi.progress * 100) }}%</span>
+                </div>
+                <div class="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                  <div class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-200"
+                       :style="{ width: Math.min(100, Math.round(inferUi.progress * 100)) + '%' }"></div>
+                </div>
+              </div>
+
+              <div v-if="inferUi.error"
+                   class="p-3.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 wc-mono whitespace-pre-wrap">
+                {{ inferUi.error }}
+              </div>
+            </section>
+
+            <!-- Interactive Sequence Output Viewer -->
+            <section v-if="inferUi.activeOutput && inferUi.frames.length"
+                     class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 select-text">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="space-y-0.5 min-w-0">
+                  <h4 class="text-sm font-bold text-white">{{ t('inferSeq.viewerTitle') }}</h4>
+                  <div class="text-xs text-slate-400 wc-mono truncate">
+                    {{ t('inferSeq.viewerMeta', {
+                      model: inferUi.activeOutput.node_name,
+                      step: inferUi.activeOutput.step,
+                      dataset: inferUi.activeOutput.asset_name,
+                      frames: inferUi.activeOutput.frame_count,
+                      w: inferUi.activeOutput.width,
+                      h: inferUi.activeOutput.height,
+                      fmt: inferFormatShort(inferUi.activeOutput.output_format)
+                    }) }}
+                  </div>
+                  <div class="text-[11px] text-slate-500 wc-mono truncate">
+                    {{ t('inferSeq.outputDirLabel') }} <span class="text-indigo-300">{{ inferUi.activeOutput.output_rel }}</span>
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                    <button type="button"
+                            @click="inferUi.compareSideBySide = true"
+                            class="px-2.5 py-1 rounded-lg font-semibold transition-all"
+                            :class="inferUi.compareSideBySide ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'">
+                      {{ t('inferSeq.modeSideBySide') }}
+                    </button>
+                    <button type="button"
+                            @click="inferUi.compareSideBySide = false"
+                            class="px-2.5 py-1 rounded-lg font-semibold transition-all"
+                            :class="!inferUi.compareSideBySide ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'">
+                      {{ t('inferSeq.modeOutputOnly') }}
+                    </button>
+                  </div>
+                  <button type="button"
+                          @click="downloadInferZip(inferUi.activeOutput)"
+                          class="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
+                    {{ t('inferSeq.downloadZipBtn', { size: inferUi.activeOutput.size_mb }) }}
+                  </button>
+                  <button v-if="inferCurrentFrame"
+                          type="button"
+                          @click="downloadInferSingleFrame(inferCurrentFrame)"
+                          class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all">
+                    {{ t('inferSeq.downloadFrameBtn', { name: inferCurrentFrame.name }) }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Frame Stage -->
+              <div v-if="inferCurrentFrame"
+                   class="bg-black rounded-xl border border-slate-800 overflow-hidden"
+                   :class="inferUi.compareSideBySide && inferCurrentFrame.in_url ? 'grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800' : ''">
+                <div v-if="inferUi.compareSideBySide && inferCurrentFrame.in_url" class="relative flex items-center justify-center p-2 min-h-[260px] max-h-[540px]">
+                  <img :src="inferCurrentFrame.in_url" class="max-w-full max-h-[520px] object-contain" />
+                  <span class="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-900/90 border border-indigo-500/40 text-[11px] font-bold text-indigo-300">
+                    {{ t('inferSeq.colInputFrame') }}
+                  </span>
+                </div>
+                <div class="relative flex items-center justify-center p-2 min-h-[260px] max-h-[540px]">
+                  <img :src="inferCurrentFrame.out_url" class="max-w-full max-h-[520px] object-contain" />
+                  <span class="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-900/90 border border-emerald-500/40 text-[11px] font-bold text-emerald-300">
+                    {{ t('inferSeq.colOutputFrame') }} · {{ inferCurrentFrame.name }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Playback Bar -->
+              <div class="flex flex-wrap items-center gap-3 bg-slate-950 px-3.5 py-2.5 rounded-xl border border-slate-800">
+                <button type="button"
+                        @click="stepInferFrame(-1)"
+                        class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold">
+                  ◀
+                </button>
+                <button type="button"
+                        @click="inferUi.playing = !inferUi.playing"
+                        class="px-3.5 py-1 rounded-lg text-xs font-bold transition-all"
+                        :class="inferUi.playing ? 'bg-amber-600 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'">
+                  {{ inferUi.playing ? t('monitor.pausePlayBtn') : t('monitor.startPlayBtn') }}
+                </button>
+                <button type="button"
+                        @click="stepInferFrame(1)"
+                        class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold">
+                  ▶
+                </button>
+                <input type="range"
+                       min="0"
+                       :max="Math.max(0, inferUi.frames.length - 1)"
+                       v-model.number="inferUi.seqIndex"
+                       @input="inferUi.playing = false"
+                       class="flex-1 min-w-[140px] accent-indigo-500 seqIndex" />
+                <span class="text-xs text-slate-300 wc-mono">
+                  {{ (inferUi.seqIndex + 1) }} / {{ inferUi.frames.length }}
+                  <span v-if="inferCurrentFrame" class="text-slate-500 ml-1">({{ inferCurrentFrame.name }})</span>
+                </span>
+                <label class="flex items-center gap-1.5 text-xs text-slate-400">
+                  <span>FPS<help-tip doc="monitor_playback"></help-tip></span>
+                  <select v-model.number="inferUi.fpsPlay" class="wc-select wc-select-sm !w-20 wc-mono text-xs">
+                    <option :value="6">6</option>
+                    <option :value="12">12</option>
+                    <option :value="24">24</option>
+                    <option :value="25">25</option>
+                    <option :value="30">30</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <!-- History of Exported Lossless EXR Sequences -->
+            <section class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden select-text">
+              <div class="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+                <h4 class="text-xs font-bold text-white">{{ t('inferSeq.historyTitle', { count: inferUi.outputs.length }) }}</h4>
+              </div>
+              <div v-if="!inferUi.outputs.length" class="p-6 text-center text-xs text-slate-500">
+                {{ t('inferSeq.historyEmpty') }}
+              </div>
+              <div v-else class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-xs">
+                  <thead class="bg-slate-950 text-slate-400 border-b border-slate-800">
+                    <tr>
+                      <th class="py-2.5 px-4">{{ t('inferSeq.colHistModel') }}</th>
+                      <th class="py-2.5 px-4">{{ t('inferSeq.colHistDataset') }}</th>
+                      <th class="py-2.5 px-4">{{ t('inferSeq.colHistFrames') }}</th>
+                      <th class="py-2.5 px-4">{{ t('inferSeq.colHistSpeed') }}</th>
+                      <th class="py-2.5 px-4 text-right">{{ t('inferSeq.colHistActions') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/70">
+                    <tr v-for="item in inferUi.outputs"
+                        :key="item.task_id + ':' + item.out_id"
+                        class="hover:bg-slate-800/40 transition-colors">
+                      <td class="py-2.5 px-4 wc-mono">
+                        <div class="font-bold text-white">{{ item.node_name }}</div>
+                        <div class="text-[11px] text-slate-400">Step {{ item.step }} · {{ item.model_size }} ({{ item.in_channels }}→{{ item.out_channels }}ch)</div>
+                      </td>
+                      <td class="py-2.5 px-4 wc-mono text-indigo-200">{{ item.asset_name }}</td>
+                      <td class="py-2.5 px-4 wc-mono text-slate-300">
+                        <div>{{ item.frame_count }} {{ t('wizard.framesUnit') }} · {{ item.width }}×{{ item.height }}</div>
+                        <div class="text-[11px] text-emerald-300">{{ inferFormatShort(item.output_format) }}</div>
+                      </td>
+                      <td class="py-2.5 px-4 wc-mono text-slate-400">
+                        <div>{{ item.seconds }}s ({{ item.fps }} fps)</div>
+                        <div class="text-[11px]">{{ item.size_mb }} MB</div>
+                      </td>
+                      <td class="py-2.5 px-4 text-right space-x-2 whitespace-nowrap">
+                        <button type="button"
+                                @click="openInferOutput(item)"
+                                class="px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
+                                :class="inferUi.activeOutput && inferUi.activeOutput.task_id === item.task_id && inferUi.activeOutput.out_id === item.out_id
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'">
+                          {{ (inferUi.activeOutput && inferUi.activeOutput.task_id === item.task_id && inferUi.activeOutput.out_id === item.out_id) ? t('inferSeq.viewingBadge') : t('inferSeq.viewOutputBtn') }}
+                        </button>
+                        <button type="button"
+                                @click="downloadInferZip(item)"
+                                class="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white text-xs font-semibold border border-emerald-500/40 transition-all">
+                          {{ t('inferSeq.dlShortBtn') }}
+                        </button>
+                        <button type="button"
+                                @click="deleteInferOutputItem(item)"
+                                class="px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white text-xs border border-rose-500/30 transition-all">
+                          {{ t('inferSeq.deleteOutputBtn') }}
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </template>
 
           <!-- Section 'api': the account's API key -->
           <template v-if="toolsSection === 'api'">
@@ -5497,6 +5870,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261118_v303"></script>
+  <script type="module" src="/static/app.js?v=20261118_v304"></script>
 </body>
 </html>

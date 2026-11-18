@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""WildCat inference CLI (supports 1:1 baseline as well as Lossless & Lossy speedups).
-Usage: python infer.py config/xxx.json [sequence_dir_or_pattern] [step]"""
+"""WildCat inference CLI & streaming sequence runner.
+Usage:
+  python infer.py config/xxx.json [sequence_dir_or_pattern] [step]
+  python infer.py --spec /path/to/spec.json
+"""
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import signal
 import sys
 import time
 
@@ -32,16 +36,219 @@ for _s in (sys.stdout, sys.stderr):
 import cv2
 import numpy as np
 import torch
-import torch.nn.functional as F
 
-from wildcat import color
-from wildcat.data import load_sequence
+from wildcat import color, models
+from wildcat.data import _read, expand_pattern
 from wildcat.models import build_generator
 from wildcat.preview import infer_image
 
 
+def _atomic_json(path: str, payload: dict) -> None:
+    if not path:
+        return
+    tmp = f"{path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _match_channels(im: np.ndarray, channels: int) -> np.ndarray:
+    arr = np.asarray(im, dtype=np.float32)
+    if arr.ndim == 2:
+        arr = arr[..., None]
+    c = int(channels)
+    if arr.shape[2] == c:
+        return np.ascontiguousarray(arr, dtype=np.float32)
+    if arr.shape[2] > c:
+        return np.ascontiguousarray(arr[..., :c], dtype=np.float32)
+    if c == 4 and arr.shape[2] == 3:
+        alpha = np.ones((arr.shape[0], arr.shape[1], 1), dtype=np.float32)
+        return np.ascontiguousarray(np.concatenate([arr, alpha], axis=2), dtype=np.float32)
+    pad = np.zeros((arr.shape[0], arr.shape[1], c - arr.shape[2]), dtype=np.float32)
+    return np.ascontiguousarray(np.concatenate([arr, pad], axis=2), dtype=np.float32)
+
+
+def _load_model_for_infer(ckpt_path: str, task_cfg: dict, device: str, opt_nhwc: bool = False):
+    mo = dict((task_cfg or {}).get("model") or {})
+    ck = None
+    try:
+        ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    except Exception:
+        ck = None
+
+    if isinstance(ck, dict) and "G" in ck:
+        ck_mo = (ck.get("config") or {}).get("model") or {}
+        if ck_mo:
+            mo = dict(ck_mo)
+        net, _ = build_generator(mo, cudnn_pad=True)
+        net.load_state_dict(ck["G"], strict=True)
+        net = net.to(device).eval()
+        if opt_nhwc and str(device).startswith("cuda"):
+            net = net.to(memory_format=torch.channels_last)
+        return net, mo, int(ck.get("step") or 0), (ck.get("config") or {})
+
+    # Fallback: exported model file (TorchScript .pt or preset/exported model via load_weights_into_model)
+    try:
+        w_spec = models.inspect_weight_source(
+            ckpt_path,
+            fallback_model_size=mo.get("model_size", "Medium"),
+            fallback_in=int(mo.get("in_channels", 3)),
+            fallback_out=int(mo.get("out_channels", mo.get("in_channels", 3))),
+        )
+        if w_spec.get("model_size"):
+            mo["model_size"] = w_spec["model_size"]
+        if w_spec.get("in_channels"):
+            mo["in_channels"] = w_spec["in_channels"]
+        if w_spec.get("out_channels"):
+            mo["out_channels"] = w_spec["out_channels"]
+        net, _ = build_generator(mo, cudnn_pad=True)
+        models.load_weights_into_model(net, ckpt_path, model_size=mo.get("model_size", "Medium"), device="cpu")
+        net = net.to(device).eval()
+        if opt_nhwc and str(device).startswith("cuda"):
+            net = net.to(memory_format=torch.channels_last)
+        return net, mo, 0, {}
+    except Exception:
+        jit_net = torch.jit.load(ckpt_path, map_location=device)
+        jit_net.eval()
+        return jit_net, mo, 0, {}
+
+
+def _save_output_atomic(out_path: str, arr_rgb: np.ndarray, write_as_exr: bool, exr_depth: str) -> None:
+    stem, ext = os.path.splitext(out_path)
+    tmp_path = f"{stem}.tmp_{os.getpid()}{ext}"
+    try:
+        if write_as_exr:
+            color.write_exr_file(tmp_path, arr_rgb, bit_depth=exr_depth)
+        else:
+            clipped = np.clip(arr_rgb, 0.0, 1.0)
+            ext_low = ext.lower()
+            if ext_low in (".jpg", ".jpeg"):
+                if clipped.shape[2] >= 3:
+                    bgr = clipped[..., [2, 1, 0]]
+                else:
+                    bgr = clipped[:, :, 0]
+                u8 = (bgr * 255.0 + 0.5).astype(np.uint8)
+                color.imwrite_unicode(tmp_path, u8, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            else:
+                if clipped.shape[2] >= 3:
+                    clipped = clipped[..., [2, 1, 0] + list(range(3, clipped.shape[2]))]
+                elif clipped.shape[2] == 1:
+                    clipped = clipped[:, :, 0]
+                u16 = (clipped * 65535.0 + 0.5).astype(np.uint16)
+                color.imwrite_unicode(tmp_path, u16)
+        os.replace(tmp_path, out_path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        raise
+
+
+@torch.no_grad()
+def run_spec(spec_path: str) -> int:
+    with open(spec_path, "r", encoding="utf-8") as fh:
+        spec = json.load(fh)
+
+    ckpt_path = spec["ckpt_path"]
+    task_cfg = spec.get("task_config") or {}
+    input_dir = spec["input_dir"]
+    out_dir = spec["output_dir"]
+    prog_path = spec.get("progress_path") or ""
+    cancel_path = spec.get("cancel_path") or ""
+    out_fmt = str(spec.get("output_format") or "exr_float")
+    os.makedirs(out_dir, exist_ok=True)
+
+    stop = {"flag": False}
+
+    def _on_sig(*_):
+        stop["flag"] = True
+
+    for sig_name in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        sig = getattr(signal, sig_name, None)
+        if sig is not None:
+            try:
+                signal.signal(sig, _on_sig)
+            except Exception:
+                pass
+
+    req_dev = str(spec.get("device") or "cuda:0")
+    if torch.cuda.is_available() and req_dev.startswith("cuda"):
+        device = req_dev
+    elif torch.cuda.is_available():
+        device = "cuda:0"
+    else:
+        device = "cpu"
+
+    # Production delivery sequence inference: strict IEEE 754 FP32 (no TF32 rounding, no AMP quantization)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+
+    net, mo, ck_step, ck_cfg = _load_model_for_infer(ckpt_path, task_cfg, device, opt_nhwc=False)
+    c_in = int(mo.get("in_channels", 3))
+    col = (task_cfg.get("color") or ck_cfg.get("color") or {})
+    working_cs = col.get("working_colorspace", "ACEScg")
+    source_cs = col.get("source_colorspace", "auto")
+    ocio_cfg = col.get("ocio_config", "")
+    view_mode = col.get("view_transform", "sRGB")
+
+    files = expand_pattern(input_dir)
+    if not files:
+        raise ValueError(f"No sequence frames found in: {input_dir}")
+
+    total = len(files)
+    t0 = time.time()
+    _atomic_json(prog_path, {"done": 0, "total": total, "fps": 0.0, "device": device, "step": int(spec.get("ckpt_step") or ck_step)})
+
+    write_exr = out_fmt in ("exr", "exr_half", "exr_float")
+    exr_depth = "float" if out_fmt == "exr_float" else "half"
+    out_ext = ".exr" if write_exr else (".jpg" if out_fmt == "jpg_95" else ".png")
+
+    for idx, path in enumerate(files, start=1):
+        if stop["flag"] or (cancel_path and os.path.exists(cancel_path)):
+            return 130
+        im = _read(path, input_colorspace=source_cs, working_colorspace=working_cs, ocio_config_path=ocio_cfg, is_data_pass=(c_in == 1))
+        im = _match_channels(im, c_in)
+        x = torch.from_numpy(im).permute(2, 0, 1)[None].to(device)
+        y = infer_image(net, x, amp_dtype=None, channels_last=False)[0].permute(1, 2, 0).cpu().numpy()
+
+        if not write_exr and y.shape[2] >= 3 and working_cs != "Raw":
+            rgb_disp = color.acescg_to_display_srgb(y[..., :3], src_space=working_cs, view_mode=view_mode, ocio_config_path=ocio_cfg)
+            if y.shape[2] >= 4:
+                y = np.concatenate([rgb_disp, np.clip(y[..., 3:4], 0.0, 1.0)], axis=2)
+            else:
+                y = rgb_disp
+
+        stem = os.path.splitext(os.path.basename(path))[0]
+        out_path = os.path.join(out_dir, stem + out_ext)
+        _save_output_atomic(out_path, y, write_exr, exr_depth)
+
+        dt = max(time.time() - t0, 1e-6)
+        _atomic_json(
+            prog_path,
+            {
+                "done": idx,
+                "total": total,
+                "fps": round(idx / dt, 2),
+                "seconds": round(dt, 2),
+                "device": device,
+                "width": int(y.shape[1]),
+                "height": int(y.shape[0]),
+                "out_channels": int(y.shape[2]),
+            },
+        )
+    return 0
+
+
 @torch.no_grad()
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "--spec":
+        sys.exit(run_spec(sys.argv[2]))
+
     with open(sys.argv[1], "r", encoding="utf-8") as _f:
         cfg = json.load(_f)
     args = sys.argv[2:]
@@ -53,9 +260,7 @@ def main():
     paths_cfg = cfg.get("paths") or {}
     run_dir = paths_cfg.get("run_dir") or os.path.join("run", cfg["run_name"])
     ck_name = "latest.pt" if step_arg is None else "step_%06d.pt" % step_arg
-    ck = torch.load(
-        os.path.join(run_dir, "ckpt", ck_name), map_location="cpu", weights_only=False
-    )
+    ckpt_path = os.path.join(run_dir, "ckpt", ck_name)
     out_dir = paths_cfg.get("output") or os.path.join(run_dir, "infer")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -67,75 +272,47 @@ def main():
     opt_nhwc = bool(lossless.get("channels_last", False))
 
     torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cuda.allow_tf32 = True
 
-    mo = ck.get("config", cfg).get("model", {})
-    net, _ = build_generator(mo, cudnn_pad=True)
-    net.load_state_dict(ck["G"])
     req_dev = str((cfg.get("train") or {}).get("device") or "")
     if torch.cuda.is_available():
         device = req_dev if req_dev.startswith("cuda") else "cuda"
     else:
         device = "cpu"
-    net = net.to(device).eval()
-    if opt_nhwc and device.startswith("cuda"):
-        net = net.to(memory_format=torch.channels_last)
 
-    amp_dtype = {
-        "fp16": torch.float16,
-        "fp32": None,
-    }.get(prec, None)
-    ac = dict(dtype=amp_dtype, enabled=(amp_dtype is not None and device.startswith("cuda")))
+    net, mo, ck_step, ck_cfg = _load_model_for_infer(ckpt_path, cfg, device, opt_nhwc=opt_nhwc)
+    amp_dtype = {"fp16": torch.float16, "fp32": None}.get(prec, None)
+    ac_enabled = amp_dtype is not None and device.startswith("cuda")
 
     c_in = int(mo.get("in_channels", 3))
-    col = cfg.get("color") or ck.get("config", {}).get("color") or {}
+    col = cfg.get("color") or ck_cfg.get("color") or {}
     working_cs = col.get("working_colorspace", "ACEScg")
     source_cs = col.get("source_colorspace", "auto")
     raw_output_cs = col.get("output_colorspace", "")
-    output_cs = raw_output_cs or working_cs
     ocio_cfg = col.get("ocio_config", "")
     out_fmt = col.get("output_format", "auto")  # 'exr_half' | 'exr_float' | 'png_16' | 'auto'
 
     print(
         "ckpt step %d | input %s | color=%s->%s | prec=%s nhwc=%s"
-        % (ck.get("step", -1), pattern, source_cs, working_cs, prec, opt_nhwc)
+        % (ck_step if ck_step else -1, pattern, source_cs, working_cs, prec, opt_nhwc)
     )
 
-    files, frames = load_sequence(
-        pattern,
-        c_in,
-        input_colorspace=source_cs,
-        working_colorspace=working_cs,
-        ocio_config_path=ocio_cfg,
-    )
+    files = expand_pattern(pattern)
+    if not files:
+        raise IOError("no frames match: " + str(pattern))
+
     pool = ThreadPoolExecutor(max_workers=4) if opt_async_io else None
     t0 = time.time()
 
-    def _save_output(out_path, arr_rgb, write_as_exr, exr_depth):
-        if write_as_exr:
-            color.write_exr_file(out_path, arr_rgb, bit_depth=exr_depth)
-        else:
-            clipped = np.clip(arr_rgb, 0.0, 1.0)
-            ext_low = os.path.splitext(out_path)[1].lower()
-            if ext_low in (".jpg", ".jpeg"):
-                if clipped.shape[2] >= 3:
-                    bgr = clipped[..., [2, 1, 0]]
-                else:
-                    bgr = clipped[:, :, 0]
-                u8 = (bgr * 255.0 + 0.5).astype(np.uint8)
-                color.imwrite_unicode(out_path, u8, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            else:
-                if clipped.shape[2] >= 3:
-                    clipped = clipped[..., [2, 1, 0] + list(range(3, clipped.shape[2]))]
-                elif clipped.shape[2] == 1:
-                    clipped = clipped[:, :, 0]
-                u16 = (clipped * 65535.0 + 0.5).astype(np.uint16)
-                color.imwrite_unicode(out_path, u16)
+    def _save_cli(out_path, arr_rgb, write_as_exr, exr_depth):
+        _save_output_atomic(out_path, arr_rgb, write_as_exr, exr_depth)
         print(out_path)
 
-    for path, img in zip(files, frames):
-        x = torch.from_numpy(np.asarray(img, dtype=np.float32)).permute(2, 0, 1)[None].to(device)
-        y = infer_image(net, x, amp_dtype if ac["enabled"] else None, opt_nhwc and device.startswith("cuda"))
+    for path in files:
+        im = _read(path, input_colorspace=source_cs, working_colorspace=working_cs, ocio_config_path=ocio_cfg, is_data_pass=(c_in == 1))
+        im = _match_channels(im, c_in)
+        x = torch.from_numpy(im).permute(2, 0, 1)[None].to(device)
+        y = infer_image(net, x, amp_dtype if ac_enabled else None, opt_nhwc and device.startswith("cuda"))
         y = y[0].permute(1, 2, 0).cpu().numpy()
 
         stem, ext = os.path.splitext(os.path.basename(path))
@@ -154,17 +331,14 @@ def main():
         out_ext = ".exr" if write_exr else (".png" if out_fmt == "png_16" else ext)
         out = os.path.join(out_dir, stem + out_ext)
         if pool is not None:
-            pool.submit(_save_output, out, y, write_exr, exr_depth)
+            pool.submit(_save_cli, out, y, write_exr, exr_depth)
         else:
-            _save_output(out, y, write_exr, exr_depth)
+            _save_cli(out, y, write_exr, exr_depth)
 
     if pool is not None:
         pool.shutdown(wait=True)
     dt = max(time.time() - t0, 1e-6)
-    print(
-        "Rendered %d frames in %.2fs (%.1f fps)"
-        % (len(files), dt, len(files) / dt)
-    )
+    print("Rendered %d frames in %.2fs (%.1f fps)" % (len(files), dt, len(files) / dt))
 
 
 if __name__ == "__main__":
@@ -172,6 +346,8 @@ if __name__ == "__main__":
 
     try:
         main()
+    except SystemExit:
+        raise
     except KeyboardInterrupt:
         sys.exit(130)
     except BaseException:
@@ -179,7 +355,7 @@ if __name__ == "__main__":
         sys.stderr.write(tb + "\n")
         sys.stderr.flush()
         try:
-            if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
+            if len(sys.argv) > 1 and sys.argv[1] != "--spec" and os.path.isfile(sys.argv[1]):
                 with open(sys.argv[1], "r", encoding="utf-8") as _f:
                     _c = json.load(_f)
                 if isinstance(_c, dict) and _c.get("run_name"):
