@@ -443,6 +443,7 @@ class WildCatLargeV1(nn.Module):
         d1 = self.dec1(F.leaky_relu(self.up1(d2), 0.05) + e1)
         return d3, d2, d1
 
+    @torch.jit.ignore
     def forward_all(self, inputs: torch.Tensor) -> List[torch.Tensor]:
         h, w = inputs.shape[2], inputs.shape[3]
         ph = (8 - h % 8) % 8
@@ -468,13 +469,15 @@ class WildCatLargeV1(nn.Module):
         return [pq, ph_out, pf]
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        inputs = inputs.contiguous()
         h, w = inputs.shape[2], inputs.shape[3]
-        ph = (8 - h % 8) % 8
-        pw = (8 - w % 8) % 8
-        x = F.pad(inputs, (0, pw, 0, ph), mode="replicate") if (ph > 0 or pw > 0) else inputs
+        ph = (16 - h % 16) % 16
+        pw = (16 - w % 16) % 16
+        x = torch.ops.aten.replication_pad2d(inputs, [0, pw, 0, ph]) if (ph > 0 or pw > 0) else inputs
         _, _, d1 = self._encode_decode(x)
         pf = self.head_f(d1)[:, :, :h, :w]
-        return (inputs + pf) if (self.channels_out == self.channels_in) else pf
+        out = (inputs + pf) if (self.channels_out == self.channels_in) else pf
+        return out.contiguous()
 
 
 def build_generator(mo: dict, cudnn_pad: bool = False):

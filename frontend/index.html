@@ -2643,14 +2643,16 @@
 
                     <template v-if="activeTask.has_ckpt || taskModels.count > 0">
                       <button @click="downloadModel(activeTask.id, 'pt', null)"
+                              :disabled="!!exportingModelKey"
                               :title="taskModels.items.length ? t('monitor.dlLatestTip', { filename: taskModels.items[0].pt_filename }) : t('monitor.dlLatestPtFallbackTip')"
-                              class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">
-                        {{ t('monitor.dlLatestPtBtn') }}
+                              class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-55 disabled:cursor-wait text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">
+                        {{ isExportingModel(activeTask.id, 'pt', null) ? t('monitor.exportingModelBtn') : t('monitor.dlLatestPtBtn') }}
                       </button>
                       <button @click="downloadAllModels(activeTask.id, 'pt')"
+                              :disabled="!!exportingModelKey"
                               :title="t('monitor.dlAllModelsTip', { zip: taskModels.zip_filename || 'Training.zip' })"
-                              class="px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white text-xs font-bold border border-emerald-500/40 transition-all">
-                        {{ t('monitor.dlAllModelsBtn', { count: taskModels.count || 1 }) }}
+                              class="px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 disabled:opacity-55 disabled:cursor-wait text-emerald-300 hover:text-white text-xs font-bold border border-emerald-500/40 transition-all">
+                        {{ exportingModelKey === (activeTask.id + ':all:pt') ? t('monitor.exportingModelBtn') : t('monitor.dlAllModelsBtn', { count: taskModels.count || 1 }) }}
                       </button>
                       <help-tip doc="monitor_download"></help-tip>
                     </template>
@@ -2845,8 +2847,9 @@
                   <div class="flex items-center gap-2.5">
                     <select v-if="viewer.mode === 'preview' && viewer.pairs.length"
                             v-model="viewer.selectedPair"
-                            @change="fetchTelemetry(true)"
-                            class="wc-select !w-40 text-xs">
+                            :disabled="viewer.loading"
+                            @change="onChangeSupervisedPair"
+                            class="wc-select !w-44 text-xs disabled:opacity-60">
                       <option v-for="p in viewer.pairs" :key="p" :value="p">{{ p }}</option>
                     </select>
                     <help-tip v-if="viewer.mode === 'preview' && viewer.pairs.length" doc="monitor_preview_keyframe"></help-tip>
@@ -2865,10 +2868,12 @@
                      @mouseleave="onViewerMouseUp">
                   <template v-if="currentFrame">
                     <img :src="currentFrame.url"
+                         @load="onViewerImgLoad(currentFrame.url)"
+                         @error="onViewerImgLoad(currentFrame.url)"
                          class="max-h-full max-w-full object-contain transition-transform duration-75 pointer-events-none"
                          :style="{ transform: `translate(${viewer.panX}px, ${viewer.panY}px) scale(${viewer.zoom})` }" />
                     <div class="absolute top-3 left-3 px-3 py-1 rounded-lg bg-slate-900/85 border border-slate-700 text-xs wc-mono text-slate-200 pointer-events-none">
-                      {{ currentFrame.label }} ({{ viewer.index + 1 }} / {{ viewer.frames.length }})
+                      <span v-if="viewer.mode === 'preview' && viewer.selectedPair" class="text-indigo-300 font-semibold mr-1.5">{{ viewer.selectedPair }} ·</span>{{ currentFrame.label }} ({{ viewer.index + 1 }} / {{ viewer.frames.length }})
                     </div>
                     <div v-if="viewer.mode === 'preview'" class="absolute bottom-3 inset-x-4 grid grid-cols-3 place-items-center text-xs font-bold text-slate-300/95 pointer-events-none">
                       <span class="bg-slate-900/90 px-3 py-0.5 rounded border border-slate-700 text-slate-200 wc-mono">{{ t('monitor.ffColInput') }}</span>
@@ -2876,8 +2881,20 @@
                       <span class="bg-emerald-950/90 px-3 py-0.5 rounded border border-emerald-500/45 text-emerald-200 wc-mono">{{ t('monitor.ffColGt') }}</span>
                     </div>
                   </template>
-                  <div v-else class="text-center text-slate-500 text-xs space-y-1">
+                  <div v-else-if="!viewer.loading && !telemetryLoading" class="text-center text-slate-500 text-xs space-y-1">
                     <div>{{ t('monitor.noPreviewFrames') }}</div>
+                  </div>
+                  <div v-if="viewer.loading || viewer.imgLoading || telemetryLoading"
+                       class="absolute inset-0 bg-slate-950/60 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-10">
+                    <div class="px-4 py-2 rounded-xl bg-slate-900/95 border border-indigo-500/50 shadow-xl flex items-center gap-2.5 text-xs font-semibold text-indigo-200 wc-mono">
+                      <span class="inline-block w-3.5 h-3.5 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>
+                      <span>
+                        {{ (viewer.loading && viewer.mode === 'preview' && viewer.selectedPair)
+                          ? t('monitor.switchingKeyframe', { pair: viewer.selectedPair })
+                          : (telemetryLoading ? t('monitor.loadingTelemetry') : t('monitor.loadingPreviewFrame'))
+                        }}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -2963,6 +2980,8 @@
                       </div>
                       <div class="wc-cs-box">
                         <img :src="currentContactFrame.url"
+                             @load="onContactImgLoad(currentContactFrame.url)"
+                             @error="onContactImgLoad(currentContactFrame.url)"
                              class="wc-cs-img"
                              :class="{ 'wc-pixelated': contactViewer.pixelated }" />
                         <div v-if="contactViewer.showOverlay" class="wc-cs-overlay">
@@ -2991,9 +3010,16 @@
                       {{ currentContactFrame.nuke_file }}
                     </div>
                   </template>
-                  <div v-else class="text-center text-slate-500 text-xs space-y-1.5">
+                  <div v-else-if="!telemetryLoading" class="text-center text-slate-500 text-xs space-y-1.5">
                     <div>{{ t('monitor.noContactFrames') }}</div>
                     <div class="text-[11px] text-slate-600">{{ t('monitor.noContactHint') }}</div>
+                  </div>
+                  <div v-if="contactViewer.imgLoading || telemetryLoading"
+                       class="absolute inset-0 bg-slate-950/60 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-10">
+                    <div class="px-4 py-2 rounded-xl bg-slate-900/95 border border-emerald-500/50 shadow-xl flex items-center gap-2.5 text-xs font-semibold text-emerald-200 wc-mono">
+                      <span class="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin"></span>
+                      <span>{{ telemetryLoading ? t('monitor.loadingTelemetry') : t('monitor.loadingPreviewFrame') }}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -3304,8 +3330,9 @@
                     </span>
                     <template v-if="taskModels.count > 0">
                       <button @click="downloadAllModels(activeTask.id, 'pt')"
-                              class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
-                        {{ t('monitor.dlAllPtZipBtn', { zip: taskModels.zip_filename }) }}
+                              :disabled="!!exportingModelKey"
+                              class="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-55 disabled:cursor-wait text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
+                        {{ exportingModelKey === (activeTask.id + ':all:pt') ? t('monitor.exportingModelBtn') : t('monitor.dlAllPtZipBtn', { zip: taskModels.zip_filename }) }}
                       </button>
                       <help-tip doc="monitor_download"></help-tip>
                     </template>
@@ -3347,9 +3374,10 @@
                         </td>
                         <td class="py-2.5 px-5 text-right space-x-2">
                           <button @click="downloadModel(activeTask.id, 'pt', m.step)"
+                                  :disabled="!!exportingModelKey"
                                   :title="t('monitor.dlSingleTip', { filename: m.pt_filename })"
-                                  class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all">
-                            {{ t('monitor.dlModelPtBtn') }}
+                                  class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-55 disabled:cursor-wait text-white text-xs font-semibold transition-all">
+                            {{ isExportingModel(activeTask.id, 'pt', m.step) ? t('monitor.exportingModelBtn') : t('monitor.dlModelPtBtn') }}
                           </button>
                         </td>
                       </tr>
@@ -4013,6 +4041,13 @@
                   <span class="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-900/90 text-[10px] font-bold text-amber-300 border border-amber-500/40">
                     {{ t('wizard.scrubSeqTag') }}
                   </span>
+                  <div v-if="getAssetScrubber(a).loading"
+                       class="absolute inset-0 bg-slate-950/55 flex items-center justify-center pointer-events-none">
+                    <span class="px-2.5 py-1 rounded-lg bg-slate-900/95 border border-amber-500/40 text-[11px] text-amber-200 wc-mono flex items-center gap-1.5">
+                      <span class="inline-block w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin"></span>
+                      {{ t('monitor.loadingPreviewFrame') }}
+                    </span>
+                  </div>
                 </div>
                 <div v-else class="grid grid-cols-2 h-48 bg-black/65 border-b border-slate-800 divide-x divide-slate-800 relative">
                   <div class="relative overflow-hidden flex items-center justify-center p-1">
@@ -4025,6 +4060,13 @@
                     <img v-if="currentAssetPairFrame(a).tgt_url" :src="currentAssetPairFrame(a).tgt_url" class="max-w-full max-h-full object-contain" />
                     <span class="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-900/90 text-[10px] font-bold text-emerald-300 border border-emerald-500/35">
                       {{ t('wizard.scrubTargetTag') }}
+                    </span>
+                  </div>
+                  <div v-if="getAssetScrubber(a).loading"
+                       class="absolute inset-0 bg-slate-950/55 flex items-center justify-center pointer-events-none">
+                    <span class="px-2.5 py-1 rounded-lg bg-slate-900/95 border border-indigo-500/40 text-[11px] text-indigo-200 wc-mono flex items-center gap-1.5">
+                      <span class="inline-block w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>
+                      {{ t('monitor.loadingPreviewFrame') }}
                     </span>
                   </div>
                 </div>
@@ -4169,33 +4211,54 @@
             </div>
           </div>
 
-          <!-- Section 'infer': validation sequence inference (32-bit float lossless EXR, trained models only) -->
+          <!-- Section 'infer': single-frame & validation sequence inference (32-bit float lossless EXR, trained models only) -->
           <template v-if="toolsSection === 'infer'">
             <section class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 select-text">
               <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="space-y-1">
-                  <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                <div class="space-y-1 max-w-3xl">
+                  <h3 class="text-sm font-bold text-white flex flex-wrap items-center gap-2">
                     <span>{{ t('inferSeq.title') }}<help-tip doc="tool_infer_seq"></help-tip></span>
                     <span class="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-bold text-emerald-300 wc-mono">
                       32-bit Float · ZIP Lossless EXR · ACEScg
                     </span>
                   </h3>
                   <p class="text-xs text-slate-400 leading-relaxed">{{ t('inferSeq.subtitle') }}</p>
+                  <div v-if="inferUi.inferDir" class="pt-0.5 text-[11px] text-indigo-300 wc-mono truncate">
+                    {{ t('inferSeq.storageDirBadge', { path: inferUi.inferDir }) }}
+                  </div>
+                </div>
+
+                <!-- Segmented Mode Switch: Single Frame vs Full Sequence -->
+                <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
+                  <button type="button"
+                          @click="setInferMode('single')"
+                          :disabled="inferUi.busy"
+                          class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                          :class="inferUi.mode === 'single' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
+                    {{ t('inferSeq.modeTabSingle') }}
+                  </button>
+                  <button type="button"
+                          @click="setInferMode('sequence')"
+                          :disabled="inferUi.busy"
+                          class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                          :class="inferUi.mode === 'sequence' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
+                    {{ t('inferSeq.modeTabSequence') }}
+                  </button>
                 </div>
               </div>
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- 1. Dataset with validation sequence -->
+                <!-- 1. Dataset -->
                 <div class="space-y-1.5">
                   <label class="wc-label">
                     <span class="wc-label-inline">
-                      <span>{{ t('inferSeq.datasetLabel') }}</span>
+                      <span>{{ inferUi.mode === 'single' ? t('inferSeq.datasetLabelSingle') : t('inferSeq.datasetLabel') }}</span>
                       <help-tip doc="tool_infer_dataset"></help-tip>
                     </span>
                   </label>
                   <div v-if="!inferSeqDatasets.length"
                        class="p-3 rounded-xl bg-amber-950/50 border border-amber-500/35 text-xs text-amber-200 leading-relaxed">
-                    {{ t('inferSeq.datasetNoneAvailable') }}
+                    {{ inferUi.mode === 'single' ? t('inferSeq.datasetNoneSingle') : t('inferSeq.datasetNoneAvailable') }}
                   </div>
                   <button v-else
                           type="button"
@@ -4213,7 +4276,9 @@
                         <div v-if="inferPickedDataset" class="text-[11px] text-slate-400 truncate">
                           {{ inferPickedDataset.kind === 'eval_sequence'
                             ? t('inferSeq.datasetMetaSeq', { frames: inferPickedDataset.frame_count, w: inferPickedDataset.width, h: inferPickedDataset.height, ch: inferPickedDataset.in_channels })
-                            : t('inferSeq.datasetMetaPaired', { frames: inferPickedDataset.seq_frame_count, w: inferPickedDataset.width, h: inferPickedDataset.height, ch: inferPickedDataset.in_channels, keys: inferPickedDataset.frame_count })
+                            : (inferPickedDataset.has_eval_sequence
+                                ? t('inferSeq.datasetMetaPaired', { frames: inferPickedDataset.seq_frame_count, w: inferPickedDataset.width, h: inferPickedDataset.height, ch: inferPickedDataset.in_channels, keys: inferPickedDataset.frame_count })
+                                : t('inferSeq.datasetMetaKeysOnly', { keys: inferPickedDataset.frame_count, w: inferPickedDataset.width, h: inferPickedDataset.height, ch: inferPickedDataset.in_channels }))
                           }}
                         </div>
                       </div>
@@ -4293,6 +4358,72 @@
                 </div>
               </div>
 
+              <!-- Single-Frame Selector & Input Preview -->
+              <div v-if="inferUi.mode === 'single' && inferPickedDataset"
+                   class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <label class="wc-label !mb-0">
+                    <span class="wc-label-inline">
+                      <span>{{ t('inferSeq.singleFrameLabel') }}</span>
+                      <help-tip doc="tool_infer_seq"></help-tip>
+                    </span>
+                  </label>
+                  <span v-if="getAssetScrubber(inferPickedDataset).loading"
+                        class="text-[11px] text-indigo-300 wc-mono flex items-center gap-1.5">
+                    <span class="inline-block w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>
+                    {{ t('inferSeq.singleFrameLoading') }}
+                  </span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-center">
+                  <div class="lg:col-span-2 space-y-2.5">
+                    <div class="flex items-center gap-2">
+                      <button type="button"
+                              @click="stepInferSingleInput(-1)"
+                              :disabled="inferUi.busy || inferSingleFrameList.length <= 1"
+                              class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs text-slate-200 font-bold">
+                        ◀
+                      </button>
+                      <select v-model.number="inferUi.singleFrameIdx"
+                              :disabled="inferUi.busy || !inferSingleFrameList.length"
+                              class="wc-select wc-mono text-xs flex-1 disabled:opacity-50">
+                        <option v-for="fr in inferSingleFrameList"
+                                :key="'inf-sf-' + fr.idx"
+                                :value="fr.idx">
+                          {{ t('inferSeq.singleFrameOpt', { idx: fr.idx + 1, name: fr.name }) }}
+                        </option>
+                      </select>
+                      <button type="button"
+                              @click="stepInferSingleInput(1)"
+                              :disabled="inferUi.busy || inferSingleFrameList.length <= 1"
+                              class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs text-slate-200 font-bold">
+                        ▶
+                      </button>
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <input type="range"
+                             min="0"
+                             :max="Math.max(0, inferSingleFrameList.length - 1)"
+                             :disabled="inferUi.busy || inferSingleFrameList.length <= 1"
+                             v-model.number="inferUi.singleFrameIdx"
+                             class="flex-1 accent-indigo-500 singleFrameIndex" />
+                      <span class="text-xs text-slate-400 wc-mono shrink-0">
+                        {{ (inferUi.singleFrameIdx + 1) }} / {{ Math.max(1, inferSingleFrameList.length) }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="h-36 bg-black rounded-xl border border-slate-800 relative overflow-hidden flex items-center justify-center p-1.5">
+                    <img v-if="inferSingleSelectedFrame && inferSingleSelectedFrame.url"
+                         :src="inferSingleSelectedFrame.url"
+                         class="max-w-full max-h-full object-contain" />
+                    <span class="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-slate-900/90 border border-indigo-500/40 text-[10px] font-bold text-indigo-300">
+                      {{ t('inferSeq.singleFrameInputPreview') }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               <!-- Validation / Channel Mismatch / Untrained Banners -->
               <div v-if="inferPickedTask && !inferPickedTask.has_ckpt"
                    class="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 font-medium">
@@ -4309,7 +4440,7 @@
                         @click="startInferSeqJob"
                         :disabled="!inferCanRun"
                         class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">
-                  {{ inferUi.busy ? t('inferSeq.runningBtn') : t('inferSeq.runBtn') }}
+                  {{ inferUi.busy ? t('inferSeq.runningBtn') : (inferUi.mode === 'single' ? t('inferSeq.runSingleBtn') : t('inferSeq.runBtn')) }}
                 </button>
                 <button v-if="inferUi.busy && inferUi.jobId"
                         type="button"
@@ -4342,12 +4473,26 @@
               </div>
             </section>
 
-            <!-- Interactive Sequence Output Viewer -->
-            <section v-if="inferUi.activeOutput && inferUi.frames.length"
-                     class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 select-text">
+            <!-- Interactive Sequence / Single-Frame Output Viewer -->
+            <section v-if="(inferUi.activeOutput && inferUi.frames.length) || inferUi.loadingFrames"
+                     class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 select-text relative">
+              <div v-if="inferUi.loadingFrames"
+                   class="p-8 text-center text-xs text-indigo-200 wc-mono flex items-center justify-center gap-2.5">
+                <span class="inline-block w-4 h-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>
+                <span>{{ t('inferSeq.loadingOutputFrames') }}</span>
+              </div>
+              <template v-else-if="inferUi.activeOutput && inferUi.frames.length">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="space-y-0.5 min-w-0">
-                  <h4 class="text-sm font-bold text-white">{{ t('inferSeq.viewerTitle') }}</h4>
+                  <div class="flex items-center gap-2">
+                    <h4 class="text-sm font-bold text-white">{{ t('inferSeq.viewerTitle') }}</h4>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold wc-mono border"
+                          :class="inferUi.activeOutput.infer_mode === 'single'
+                            ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                            : 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300'">
+                      {{ inferUi.activeOutput.infer_mode === 'single' ? t('inferSeq.badgeSingle') : t('inferSeq.badgeSequence') }}
+                    </span>
+                  </div>
                   <div class="text-xs text-slate-400 wc-mono truncate">
                     {{ t('inferSeq.viewerMeta', {
                       model: inferUi.activeOutput.node_name,
@@ -4379,7 +4524,8 @@
                       {{ t('inferSeq.modeOutputOnly') }}
                     </button>
                   </div>
-                  <button type="button"
+                  <button v-if="inferUi.activeOutput.frame_count > 1"
+                          type="button"
                           @click="downloadInferZip(inferUi.activeOutput)"
                           class="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all">
                     {{ t('inferSeq.downloadZipBtn', { size: inferUi.activeOutput.size_mb }) }}
@@ -4395,7 +4541,7 @@
 
               <!-- Frame Stage -->
               <div v-if="inferCurrentFrame"
-                   class="bg-black rounded-xl border border-slate-800 overflow-hidden"
+                   class="bg-black rounded-xl border border-slate-800 overflow-hidden relative"
                    :class="inferUi.compareSideBySide && inferCurrentFrame.in_url ? 'grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800' : ''">
                 <div v-if="inferUi.compareSideBySide && inferCurrentFrame.in_url" class="relative flex items-center justify-center p-2 min-h-[260px] max-h-[540px]">
                   <img :src="inferCurrentFrame.in_url" class="max-w-full max-h-[520px] object-contain" />
@@ -4404,15 +4550,26 @@
                   </span>
                 </div>
                 <div class="relative flex items-center justify-center p-2 min-h-[260px] max-h-[540px]">
-                  <img :src="inferCurrentFrame.out_url" class="max-w-full max-h-[520px] object-contain" />
+                  <img :src="inferCurrentFrame.out_url"
+                       @load="onInferOutImgLoad(inferCurrentFrame.out_url)"
+                       @error="onInferOutImgLoad(inferCurrentFrame.out_url)"
+                       class="max-w-full max-h-[520px] object-contain" />
                   <span class="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-900/90 border border-emerald-500/40 text-[11px] font-bold text-emerald-300">
                     {{ t('inferSeq.colOutputFrame') }} · {{ inferCurrentFrame.name }}
                   </span>
                 </div>
+                <div v-if="inferUi.outImgLoading"
+                     class="absolute inset-0 bg-slate-950/60 flex items-center justify-center pointer-events-none z-10">
+                  <div class="px-4 py-2 rounded-xl bg-slate-900/95 border border-emerald-500/50 shadow-xl flex items-center gap-2 text-xs font-semibold text-emerald-200 wc-mono">
+                    <span class="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin"></span>
+                    <span>{{ t('inferSeq.loadingOutputFrames') }}</span>
+                  </div>
+                </div>
               </div>
 
-              <!-- Playback Bar -->
-              <div class="flex flex-wrap items-center gap-3 bg-slate-950 px-3.5 py-2.5 rounded-xl border border-slate-800">
+              <!-- Playback Bar (shown when output has multiple frames) -->
+              <div v-if="inferUi.frames.length > 1"
+                   class="flex flex-wrap items-center gap-3 bg-slate-950 px-3.5 py-2.5 rounded-xl border border-slate-800">
                 <button type="button"
                         @click="stepInferFrame(-1)"
                         class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold">
@@ -4450,6 +4607,7 @@
                   </select>
                 </label>
               </div>
+              </template>
             </section>
 
             <!-- History of Exported Lossless EXR Sequences -->
@@ -4479,9 +4637,20 @@
                         <div class="font-bold text-white">{{ item.node_name }}</div>
                         <div class="text-[11px] text-slate-400">Step {{ item.step }} · {{ item.model_size }} ({{ item.in_channels }}→{{ item.out_channels }}ch)</div>
                       </td>
-                      <td class="py-2.5 px-4 wc-mono text-indigo-200">{{ item.asset_name }}</td>
+                      <td class="py-2.5 px-4 wc-mono">
+                        <div class="text-indigo-200">{{ item.asset_name }}</div>
+                        <div class="text-[10px] text-slate-500 truncate max-w-[260px]" :title="item.output_rel">{{ item.output_rel }}</div>
+                      </td>
                       <td class="py-2.5 px-4 wc-mono text-slate-300">
-                        <div>{{ item.frame_count }} {{ t('wizard.framesUnit') }} · {{ item.width }}×{{ item.height }}</div>
+                        <div class="flex items-center gap-1.5">
+                          <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                                :class="item.infer_mode === 'single'
+                                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                  : 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300'">
+                            {{ item.infer_mode === 'single' ? t('inferSeq.badgeSingle') : t('inferSeq.badgeSequence') }}
+                          </span>
+                          <span>{{ item.frame_count }} {{ t('wizard.framesUnit') }} · {{ item.width }}×{{ item.height }}</span>
+                        </div>
                         <div class="text-[11px] text-emerald-300">{{ inferFormatShort(item.output_format) }}</div>
                       </td>
                       <td class="py-2.5 px-4 wc-mono text-slate-400">
@@ -5110,9 +5279,10 @@
                   }) }}
                 </div>
                 <div class="text-[11px] text-slate-400">
-                  {{ t('admin.storageUsageBreakdownFmt', {
+                  {{ t('admin.storageUsageBreakdownV2Fmt', {
                     users: adminSettings.storage.disk.users_mb || 0,
                     run: adminSettings.storage.disk.run_mb || 0,
+                    infer: adminSettings.storage.disk.infer_mb || 0,
                     cache: adminSettings.storage.disk.cache_mb || 0,
                     db: adminSettings.storage.disk.db_mb || 0
                   }) }}
@@ -5157,6 +5327,10 @@
               <div class="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800 flex items-center justify-between gap-2">
                 <span class="text-slate-400 shrink-0">{{ t('admin.storagePathRunLabel') }}:</span>
                 <span class="text-slate-200 truncate" :title="adminSettings.storage.effective_paths.run_dir">{{ adminSettings.storage.effective_paths.run_dir || '-' }}</span>
+              </div>
+              <div class="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800 flex items-center justify-between gap-2">
+                <span class="text-slate-400 shrink-0">{{ t('admin.storagePathInferLabel') }}:</span>
+                <span class="text-slate-200 truncate" :title="adminSettings.storage.effective_paths.infer_dir">{{ adminSettings.storage.effective_paths.infer_dir || '-' }}</span>
               </div>
               <div class="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800 flex items-center justify-between gap-2">
                 <span class="text-slate-400 shrink-0">{{ t('admin.storagePathCacheLabel') }}:</span>

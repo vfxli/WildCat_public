@@ -262,6 +262,23 @@ def serve_run_file(rel_path: str, request: Request):
     return FileResponse(fpath)
 
 
+@app.api_route("/f/run_lazy_jpg/{rel_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+def serve_run_lazy_jpg(rel_path: str, request: Request):
+    if not _may_read_run_file(request, rel_path):
+        raise HTTPException(status_code=404, detail="Not found")
+    fpath = _resolve_safe_file(
+        rel_path,
+        [storage.get_run_root(), storage.DEFAULT_RUN_ROOT],
+        allowed_exts=SAFE_PREVIEW_IMAGE_EXTS,
+    )
+    if fpath.lower().endswith((".jpg", ".jpeg")):
+        return FileResponse(fpath)
+    jpg_path = telemetry.ensure_jpg_file(fpath, quality=90)
+    if not jpg_path or not os.path.isfile(jpg_path):
+        return FileResponse(fpath)
+    return FileResponse(jpg_path, media_type="image/jpeg")
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend_static")
 
 

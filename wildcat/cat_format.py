@@ -91,6 +91,27 @@ def load_pt_state_dict_numpy(pt_path):
 
 
 
+def is_legacy_wildcat_v1_export(path: str) -> bool:
+    """True when an already-exported WildCatLargeV1 model on disk was written with the pre-v3.0.5
+    TorchScript graph (`torch.pad` / non-contiguous slice)."""
+    if not path or not os.path.isfile(path):
+        return False
+    low = path.lower()
+    if low.endswith(".pt") and zipfile.is_zipfile(path):
+        try:
+            with zipfile.ZipFile(path, "r") as z:
+                names = z.namelist()
+                if any("v3_unet_hom_" in n for n in names):
+                    return True
+                for n in names:
+                    if n.endswith("functional.py"):
+                        if b"torch.pad(" in z.read(n):
+                            return True
+        except Exception:
+            pass
+    return False
+
+
 def export_torchscript(state_dict, out_pt, mo=None):
     """Write a TorchScript (.pt) model from a WildCat state_dict.
 

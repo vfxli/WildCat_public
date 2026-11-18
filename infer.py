@@ -194,11 +194,16 @@ def run_spec(spec_path: str) -> int:
     working_cs = col.get("working_colorspace", "ACEScg")
     source_cs = col.get("source_colorspace", "auto")
     ocio_cfg = col.get("ocio_config", "")
-    view_mode = col.get("view_transform", "sRGB")
+    view_mode = col.get("view_transform", "ACES 1.0 - SDR Video")
 
     files = expand_pattern(input_dir)
     if not files:
         raise ValueError(f"No sequence frames found in: {input_dir}")
+
+    raw_fidx = spec.get("frame_index")
+    if raw_fidx is not None:
+        fidx = max(0, min(len(files) - 1, int(raw_fidx)))
+        files = [files[fidx]]
 
     total = len(files)
     t0 = time.time()

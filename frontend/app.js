@@ -1670,6 +1670,9 @@ async function mountWildCatApp() {
         dragging: false,
         dragStartX: 0,
         dragStartY: 0,
+        loading: false,
+        imgLoading: false,
+        loadedUrl: '',
       });
       const contactViewer = reactive({
         frames: [],
@@ -1686,7 +1689,11 @@ async function mountWildCatApp() {
         pixelated: true,
         cropSize: 256,
         nukePrefix: '',
+        imgLoading: false,
+        loadedUrl: '',
       });
+      const telemetryLoading = ref(false);
+      const exportingModelKey = ref('');
       const taskModels = reactive({
         nuke_prefix: '',
         zip_filename: '',
@@ -1766,6 +1773,7 @@ async function mountWildCatApp() {
           effective_paths: {
             users_dir: '',
             run_dir: '',
+            infer_dir: '',
             config_dir: '',
             cache_dir: '',
             db_path: '',
@@ -1776,6 +1784,7 @@ async function mountWildCatApp() {
             free_gb: 0,
             users_mb: 0,
             run_mb: 0,
+            infer_mb: 0,
             cache_mb: 0,
             db_mb: 0,
           },
@@ -2110,6 +2119,65 @@ async function mountWildCatApp() {
         const idx = Math.min(Math.max(0, contactViewer.index), contactViewer.frames.length - 1);
         return contactViewer.frames[idx];
       });
+
+      let _viewerImgTimer = null;
+      let _contactImgTimer = null;
+      function onViewerImgLoad(url) {
+        if (_viewerImgTimer) {
+          clearTimeout(_viewerImgTimer);
+          _viewerImgTimer = null;
+        }
+        viewer.loadedUrl = url || '';
+        viewer.imgLoading = false;
+      }
+      function onContactImgLoad(url) {
+        if (_contactImgTimer) {
+          clearTimeout(_contactImgTimer);
+          _contactImgTimer = null;
+        }
+        contactViewer.loadedUrl = url || '';
+        contactViewer.imgLoading = false;
+      }
+      watch(
+        () => (currentFrame.value ? currentFrame.value.url : ''),
+        (u) => {
+          if (_viewerImgTimer) {
+            clearTimeout(_viewerImgTimer);
+            _viewerImgTimer = null;
+          }
+          if (!u || u === viewer.loadedUrl) {
+            viewer.imgLoading = false;
+            return;
+          }
+          if (viewer.loading) {
+            viewer.imgLoading = true;
+          } else {
+            _viewerImgTimer = setTimeout(() => {
+              if (currentFrame.value && currentFrame.value.url === u && viewer.loadedUrl !== u) {
+                viewer.imgLoading = true;
+              }
+            }, 120);
+          }
+        }
+      );
+      watch(
+        () => (currentContactFrame.value ? currentContactFrame.value.url : ''),
+        (u) => {
+          if (_contactImgTimer) {
+            clearTimeout(_contactImgTimer);
+            _contactImgTimer = null;
+          }
+          if (!u || u === contactViewer.loadedUrl) {
+            contactViewer.imgLoading = false;
+            return;
+          }
+          _contactImgTimer = setTimeout(() => {
+            if (currentContactFrame.value && currentContactFrame.value.url === u && contactViewer.loadedUrl !== u) {
+              contactViewer.imgLoading = true;
+            }
+          }, 120);
+        }
+      );
 
       const latestValMse = computed(() => {
         if (!telemetry.vals || !telemetry.vals.length) return null;
@@ -2465,6 +2533,15 @@ async function mountWildCatApp() {
       let _lastTasksFetchAt = 0;
       let _lastTasksSig = '';
       let _lastTasksRef = null;
+      function _computeTasksSig(list) {
+        if (!Array.isArray(list) || !list.length) return '0';
+        return list
+          .map(
+            (t) =>
+              `${t.id}:${t.status}:${t.last_step || 0}:${t.total_steps || 0}:${t.last_loss ?? ''}:${t.assigned_gpu ?? ''}:${t.queue_position ?? ''}:${t.estimated_remaining_sec ?? ''}:${t.estimated_wait_sec ?? ''}:${t.has_ckpt ? 1 : 0}:${t.batch_id || ''}:${t.sort_order ?? ''}`
+          )
+          .join(';');
+      }
       async function fetchQueueAndTasks(force = false, withTasks = true) {
         if (!user.value) return;
         const wantTasks = !!(withTasks || force);
@@ -2531,7 +2608,7 @@ async function mountWildCatApp() {
                 break;
               }
             }
-            const sig = JSON.stringify(list);
+            const sig = _computeTasksSig(list);
             if (sig !== _lastTasksSig || tasks.value !== _lastTasksRef) {
               _lastTasksSig = sig;
               tasks.value = list;
@@ -2665,6 +2742,8 @@ async function mountWildCatApp() {
         viewer.playing = false;
         contactViewer.playing = false;
         if (switchedTask) {
+          telemetryLoading.value = true;
+          viewer.loading = true;
           telemetry.steps = [];
           telemetry.vals = [];
           telemetry.tail = [];
@@ -2672,8 +2751,10 @@ async function mountWildCatApp() {
           viewer.pairs = [];
           viewer.frames = [];
           viewer.index = 0;
+          viewer.loadedUrl = '';
           contactViewer.frames = [];
           contactViewer.index = 0;
+          contactViewer.loadedUrl = '';
           taskKfCommon.value = null;
           taskQuality.value = null;
           qualityUi.hoverPoint = -1;
@@ -2682,7 +2763,7 @@ async function mountWildCatApp() {
         taskModels.has_eval_sequence = false;
         resetViewerZoom();
         resetContactZoom();
-        fetchTelemetry(true);
+        fetchTelemetry(true, { forceRefresh: true });
       }
 
       // ───────── Initial Weights & Strict Model Structure Locking ─────────
@@ -3325,37 +3406,91 @@ async function mountWildCatApp() {
 
       // ───────── Monitor, Telemetry & Loss Chart ─────────
       function switchViewerMode(m) {
+        if (viewer.mode === m && !viewer.loading) return;
         viewer.mode = m;
-        fetchTelemetry(true);
+        viewer.playing = false;
+        viewer.loading = true;
+        fetchTelemetry(true, { forceRefresh: true });
+      }
+
+      function onChangeSupervisedPair() {
+        viewer.playing = false;
+        viewer.loading = true;
+        viewer.imgLoading = true;
+        const wasAtEnd = !viewer.frames.length || viewer.index >= viewer.frames.length - 1;
+        const keepStep = !wasAtEnd && currentFrame.value && currentFrame.value.step != null
+          ? Number(currentFrame.value.step)
+          : null;
+        fetchTelemetry(wasAtEnd, { forceRefresh: true, keepStep });
       }
 
       let _telemetryReqSeq = 0;
+      let _telemetryManualInFlight = 0;
       let _lastTelemetryAt = 0;
       let _telemetryStatusKey = '';
       let _lastTelemetrySig = '';
 
-      async function fetchTelemetry(resetToLatest = false) {
+      async function fetchTelemetry(resetToLatest = false, opts = {}) {
         if (!selectedTaskId.value || !user.value) return;
+        const isManual = !!(resetToLatest || (opts && opts.forceRefresh));
+        if (!isManual && _telemetryManualInFlight > 0) return;
         const reqTaskId = selectedTaskId.value;
         const reqMode = viewer.mode;
+        const reqPair = viewer.selectedPair || '';
         const reqSeq = ++_telemetryReqSeq;
+        if (isManual) _telemetryManualInFlight++;
         try {
-          const pairParam = viewer.selectedPair ? `&pair=${encodeURIComponent(viewer.selectedPair)}` : '';
+          const pairParam = reqPair ? `&pair=${encodeURIComponent(reqPair)}` : '';
           const d = await apiFetch(`/api/v1/tasks/${reqTaskId}/telemetry?mode=${reqMode}${pairParam}`);
-          if (reqSeq !== _telemetryReqSeq || selectedTaskId.value !== reqTaskId || viewer.mode !== reqMode) {
+          if (
+            reqSeq !== _telemetryReqSeq ||
+            selectedTaskId.value !== reqTaskId ||
+            viewer.mode !== reqMode ||
+            (reqPair && viewer.selectedPair && viewer.selectedPair !== reqPair)
+          ) {
             return;
           }
           _lastTelemetryAt = Date.now();
           _telemetryStatusKey = d.task ? `${d.task.id}:${d.task.status}` : '';
-          // nothing changed since the last answer (a finished task): leave the page, its lists and charts as they are
-          const sig = `${reqTaskId}|${reqMode}|${JSON.stringify(d)}`;
-          if (!resetToLatest && sig === _lastTelemetrySig) return;
+          const vw = d.viewer || {};
+          const cs = d.contact_sheet || {};
+          const md = d.models || {};
+          const stepsArr = d.steps || [];
+          const valsArr = d.vals || [];
+          const tailArr = d.tail || [];
+          const vwFrames = vw.frames || [];
+          const csFrames = cs.frames || [];
+          const qPts = (d.quality && d.quality.points) || [];
+          const sig = [
+            reqTaskId,
+            reqMode,
+            vw.selected_pair || '',
+            d.task
+              ? `${d.task.status}:${d.task.last_step || 0}:${d.task.total_steps || 0}:${d.task.queue_position || 0}:${d.task.error_msg ? d.task.error_msg.length : 0}`
+              : '',
+            stepsArr.length,
+            stepsArr.length ? stepsArr[stepsArr.length - 1].step : 0,
+            valsArr.length,
+            valsArr.length ? valsArr[valsArr.length - 1].step : 0,
+            tailArr.length,
+            tailArr.length ? tailArr[tailArr.length - 1] : '',
+            vwFrames.length,
+            vwFrames.length ? vwFrames[vwFrames.length - 1].url : '',
+            csFrames.length,
+            csFrames.length ? csFrames[csFrames.length - 1].url : '',
+            md.count || 0,
+            md.items && md.items[0] ? `${md.items[0].step}:${md.items[0].has_cat ? 1 : 0}:${md.items[0].has_pt ? 1 : 0}` : '',
+            d.kf_common ? `${d.kf_common.applied}:${d.kf_common.json_url || ''}` : '',
+            qPts.length,
+            qPts.length ? qPts[qPts.length - 1].step : 0,
+          ].join('|');
+          if (!isManual && sig === _lastTelemetrySig) return;
           _lastTelemetrySig = sig;
           const prevTailLen = telemetry.tail.length;
           const prevLastLine = prevTailLen ? telemetry.tail[prevTailLen - 1] : '';
-          telemetry.steps = d.steps || [];
-          telemetry.vals = d.vals || [];
-          telemetry.tail = d.tail || [];
+          telemetry.steps = stepsArr;
+          telemetry.vals = valsArr;
+          telemetry.tail = tailArr;
           telemetry.latest = d.latest || {};
           const newLastLine = telemetry.tail.length ? telemetry.tail[telemetry.tail.length - 1] : '';
           const tailChanged = telemetry.tail.length !== prevTailLen || newLastLine !== prevLastLine;
@@ -3366,7 +3501,7 @@ async function mountWildCatApp() {
             const wasLive = prevStatus === 'running' || prevStatus === 'queued';
             const nowLive = d.task.status === 'running' || d.task.status === 'queued';
             tasks.value[idx] = d.task;
-            _lastTasksSig = JSON.stringify(tasks.value);
+            _lastTasksSig = _computeTasksSig(tasks.value);
             if (d.task.status === 'failed' && wasLive) {
               const lastLine = String(d.task.error_msg || '')
                 .trim()
@@ -3388,25 +3523,40 @@ async function mountWildCatApp() {
           }
 
           // 1. Full-Frame Sequence Viewer
-          const vw = d.viewer || {};
           viewer.pairs = vw.pairs || [];
           viewer.selectedPair = vw.selected_pair || null;
           const prevLen = viewer.frames.length;
           const wasAtViewerEnd = prevLen === 0 || viewer.index >= prevLen - 1;
-          viewer.frames = vw.frames || [];
-          if (resetToLatest || (viewer.mode === 'preview' && viewer.frames.length > prevLen && !viewer.playing && wasAtViewerEnd)) {
+          viewer.frames = vwFrames;
+          if (opts && opts.keepStep != null && vwFrames.length) {
+            let bestIdx = vwFrames.length - 1;
+            let bestDiff = Infinity;
+            for (let i = 0; i < vwFrames.length; i++) {
+              const st = Number(vwFrames[i].step || 0);
+              const diff = Math.abs(st - opts.keepStep);
+              if (diff < bestDiff) {
+                bestDiff = diff;
+                bestIdx = i;
+              }
+            }
+            viewer.index = bestIdx;
+          } else if (resetToLatest || (viewer.mode === 'preview' && viewer.frames.length > prevLen && !viewer.playing && wasAtViewerEnd)) {
             viewer.index = Math.max(0, viewer.frames.length - 1);
           } else if (viewer.index >= viewer.frames.length) {
             viewer.index = Math.max(0, viewer.frames.length - 1);
           }
+          if (!viewer.frames.length) {
+            viewer.imgLoading = false;
+          } else if (currentFrame.value && currentFrame.value.url === viewer.loadedUrl) {
+            viewer.imgLoading = false;
+          }
 
           // 2. Nuke 3x3 Contact Sheet Viewer
-          const cs = d.contact_sheet || {};
           const prevCsLen = contactViewer.frames.length;
           const wasAtCsEnd = prevCsLen === 0 || contactViewer.index >= prevCsLen - 1;
           contactViewer.cropSize = Number(cs.crop_size || 256);
           contactViewer.nukePrefix = cs.nuke_prefix || '';
-          contactViewer.frames = cs.frames || [];
+          contactViewer.frames = csFrames;
           if (resetToLatest || (contactViewer.frames.length > prevCsLen && !contactViewer.playing && wasAtCsEnd)) {
             contactViewer.index = Math.max(0, contactViewer.frames.length - 1);
           } else if (contactViewer.index >= contactViewer.frames.length) {
@@ -3414,7 +3564,6 @@ async function mountWildCatApp() {
           }
 
           // 3. Task Model Versions Inventory (Nuke Naming)
-          const md = d.models || {};
           taskModels.nuke_prefix = md.nuke_prefix || '';
           taskModels.zip_filename = md.zip_filename || (md.nuke_prefix ? `${md.nuke_prefix}.zip` : '');
           taskModels.count = Number(md.count || 0);
@@ -3435,7 +3584,17 @@ async function mountWildCatApp() {
           if (logAutoScroll.value && logPreRef.value && (resetToLatest || tailChanged)) {
             logPreRef.value.scrollTop = logPreRef.value.scrollHeight;
           }
-        } catch (_) {}
+        } catch (_) {
+        } finally {
+          if (isManual) _telemetryManualInFlight = Math.max(0, _telemetryManualInFlight - 1);
+          if (reqSeq === _telemetryReqSeq) {
+            viewer.loading = false;
+            telemetryLoading.value = false;
+            if (!currentFrame.value || currentFrame.value.url === viewer.loadedUrl) {
+              viewer.imgLoading = false;
+            }
+          }
+        }
       }
 
       // Steps at which the task on screen changes its resolution stage (1/4 -> 1/2 -> 1/1); none for a single-stage run.
@@ -4115,7 +4274,15 @@ async function mountWildCatApp() {
         }, 1500);
       }
 
+      function isExportingModel(taskId, ext = 'pt', step = null) {
+        const key = `${taskId}:${ext}:${step == null ? 'latest' : step}`;
+        return exportingModelKey.value === key;
+      }
+
       async function downloadModel(taskId, ext = 'pt', step = null) {
+        if (exportingModelKey.value) return;
+        const expKey = `${taskId}:${ext}:${step == null ? 'latest' : step}`;
+        exportingModelKey.value = expKey;
         try {
           const item = step != null
             ? taskModels.items.find((x) => x.step === step)
@@ -4134,7 +4301,7 @@ async function mountWildCatApp() {
             const q = step != null ? `?step=${encodeURIComponent(step)}` : '';
             const expRes = await apiFetch(`/api/v1/tasks/${taskId}/export-cat${q}`, { method: 'POST' });
             if (ext === 'pt' && expRes.pt_filename) dlFilename = expRes.pt_filename;
-            await fetchTelemetry(false);
+            await fetchTelemetry(false, { forceRefresh: true });
           }
           const stepParam = step != null ? `&step=${encodeURIComponent(step)}` : '';
           const langParam = currentLang.value ? `&lang=${encodeURIComponent(currentLang.value)}` : '';
@@ -4143,14 +4310,21 @@ async function mountWildCatApp() {
           notify(t('msg.downloadStartedToast', { filename: dlFilename || ('.' + ext) }), 'success');
         } catch (e) {
           notify(e.message, 'error');
+        } finally {
+          if (exportingModelKey.value === expKey) {
+            exportingModelKey.value = '';
+          }
         }
       }
 
       async function downloadAllModels(taskId, ext = 'pt') {
+        if (exportingModelKey.value) return;
         if (!taskModels.count && !(activeTask.value && activeTask.value.has_ckpt)) {
           notify(t('msg.noModelsToPackToast'), 'warning');
           return;
         }
+        const expKey = `${taskId}:all:${ext}`;
+        exportingModelKey.value = expKey;
         try {
           const zipName = taskModels.zip_filename || `${taskModels.nuke_prefix || 'Training'}.zip`;
           notify(t('msg.packingAllModelsToast', { zip: zipName }), 'info');
@@ -4159,6 +4333,10 @@ async function mountWildCatApp() {
           triggerBrowserDownload(url, zipName);
         } catch (e) {
           notify(e.message, 'error');
+        } finally {
+          setTimeout(() => {
+            if (exportingModelKey.value === expKey) exportingModelKey.value = '';
+          }, 1200);
         }
       }
 
@@ -4376,8 +4554,11 @@ async function mountWildCatApp() {
         return evalSequenceAssets.value.find((a) => a.id === labEvalAssetId.value) || null;
       });
 
-      // ───────── Validation Sequence Inference (Lossless EXR) ─────────
+      // ───────── Validation Sequence & Single-Frame Inference (Lossless EXR) ─────────
       const inferUi = reactive({
+        mode: 'sequence', // 'single' | 'sequence'
+        singleFrameIdx: 0,
+        inferDir: '',
         assetId: null,
         taskId: null,
         step: 0,
@@ -4399,6 +4580,8 @@ async function mountWildCatApp() {
         activeOutput: null,
         frames: [],
         loadingFrames: false,
+        outImgLoading: false,
+        outLoadedUrl: '',
         seqIndex: 0,
         playing: false,
         fpsPlay: 12,
@@ -4406,6 +4589,9 @@ async function mountWildCatApp() {
       });
 
       const inferSeqDatasets = computed(() => {
+        if (inferUi.mode === 'single') {
+          return assets.value;
+        }
         return assets.value.filter((a) => a.kind === 'eval_sequence' || !!a.has_eval_sequence);
       });
 
@@ -4413,6 +4599,75 @@ async function mountWildCatApp() {
         if (!inferUi.assetId) return null;
         return inferSeqDatasets.value.find((a) => a.id === Number(inferUi.assetId)) || null;
       });
+
+      const inferSingleFrameList = computed(() => {
+        const ds = inferPickedDataset.value;
+        if (!ds) return [];
+        const st = getAssetScrubber(ds);
+        if (ds.kind === 'eval_sequence' || ds.has_eval_sequence) {
+          if (st.seq_frames && st.seq_frames.length) {
+            return st.seq_frames.map((f, idx) => ({
+              idx,
+              name: f.name || `#${idx + 1}`,
+              url: f.url || ds.seq_thumb_url || ds.source_thumb_url || '',
+            }));
+          }
+          const cnt = Math.max(1, Number(ds.kind === 'eval_sequence' ? ds.frame_count : ds.seq_frame_count) || 1);
+          return Array.from({ length: cnt }, (_, idx) => ({
+            idx,
+            name: `#${idx + 1}`,
+            url: idx === 0 ? (ds.seq_thumb_url || ds.source_thumb_url || '') : '',
+          }));
+        }
+        if (st.paired_frames && st.paired_frames.length) {
+          return st.paired_frames.map((f, idx) => ({
+            idx,
+            name: f.name || `#${idx + 1}`,
+            url: f.src_url || ds.source_thumb_url || '',
+          }));
+        }
+        const cnt = Math.max(1, Number(ds.frame_count) || 1);
+        return Array.from({ length: cnt }, (_, idx) => ({
+          idx,
+          name: `#${idx + 1}`,
+          url: idx === 0 ? (ds.source_thumb_url || '') : '',
+        }));
+      });
+
+      const inferSingleSelectedFrame = computed(() => {
+        const list = inferSingleFrameList.value;
+        if (!list.length) return null;
+        const idx = Math.max(0, Math.min(list.length - 1, Number(inferUi.singleFrameIdx) || 0));
+        return list[idx] || null;
+      });
+
+      function setInferMode(mode) {
+        if (inferUi.busy) return;
+        inferUi.mode = mode === 'single' ? 'single' : 'sequence';
+        inferUi.error = '';
+        inferUi.note = '';
+        ensureInferDefaults();
+        if (inferUi.mode === 'single' && inferPickedDataset.value) {
+          ensureAssetFrames(inferPickedDataset.value.id);
+        }
+      }
+
+      function stepInferSingleInput(delta) {
+        const list = inferSingleFrameList.value;
+        if (!list.length) return;
+        const n = list.length;
+        inferUi.singleFrameIdx = (Number(inferUi.singleFrameIdx || 0) + delta + n) % n;
+      }
+
+      watch(
+        () => inferUi.assetId,
+        (aid) => {
+          inferUi.singleFrameIdx = 0;
+          if (aid && inferUi.mode === 'single') {
+            ensureAssetFrames(Number(aid));
+          }
+        }
+      );
 
       const inferTrainedCount = computed(() => {
         return tasks.value.filter((tk) => !!tk.has_ckpt).length;
@@ -4455,6 +4710,34 @@ async function mountWildCatApp() {
         const idx = Math.max(0, Math.min(inferUi.frames.length - 1, Number(inferUi.seqIndex) || 0));
         return inferUi.frames[idx] || null;
       });
+
+      let _inferImgTimer = null;
+      function onInferOutImgLoad(url) {
+        if (_inferImgTimer) {
+          clearTimeout(_inferImgTimer);
+          _inferImgTimer = null;
+        }
+        inferUi.outLoadedUrl = url || '';
+        inferUi.outImgLoading = false;
+      }
+      watch(
+        () => (inferCurrentFrame.value ? inferCurrentFrame.value.out_url : ''),
+        (u) => {
+          if (_inferImgTimer) {
+            clearTimeout(_inferImgTimer);
+            _inferImgTimer = null;
+          }
+          if (!u || u === inferUi.outLoadedUrl) {
+            inferUi.outImgLoading = false;
+            return;
+          }
+          _inferImgTimer = setTimeout(() => {
+            if (inferCurrentFrame.value && inferCurrentFrame.value.out_url === u && inferUi.outLoadedUrl !== u) {
+              inferUi.outImgLoading = true;
+            }
+          }, 120);
+        }
+      );
 
       function inferFormatShort(fmt) {
         if (fmt === 'exr_half') return '16-bit Half EXR (ZIP)';
@@ -4521,10 +4804,17 @@ async function mountWildCatApp() {
 
       function ensureInferDefaults() {
         if (inferUi.busy) return;
-        const dsList = inferSeqDatasets.value;
+        let dsList = inferSeqDatasets.value;
+        if (!dsList.length && inferUi.mode === 'sequence' && assets.value.length) {
+          inferUi.mode = 'single';
+          dsList = inferSeqDatasets.value;
+        }
         if (!inferPickedDataset.value && dsList.length) {
           const sel = selectedDataset.value && dsList.find((a) => a.id === selectedDataset.value.id);
           inferUi.assetId = sel ? sel.id : dsList[0].id;
+        }
+        if (inferUi.mode === 'single' && inferPickedDataset.value) {
+          ensureAssetFrames(inferPickedDataset.value.id);
         }
         const curTk = inferPickedTask.value;
         if (!curTk || !curTk.has_ckpt) {
@@ -4561,6 +4851,7 @@ async function mountWildCatApp() {
       async function loadInferOutputs(autoOpenFirst = false) {
         try {
           const d = await apiFetch('/api/v1/infer-seq/outputs');
+          if (d && d.infer_dir) inferUi.inferDir = String(d.infer_dir);
           const list = (d && Array.isArray(d.outputs)) ? d.outputs : [];
           inferUi.outputs = list;
           if (inferUi.activeOutput) {
@@ -4600,10 +4891,13 @@ async function mountWildCatApp() {
         }
         if (inferUi.busy) return;
 
+        const isSingle = inferUi.mode === 'single';
         inferUi.busy = true;
         inferUi.jobState = 'queued';
         inferUi.done = 0;
-        inferUi.total = Number(ds.kind === 'eval_sequence' ? ds.frame_count : ds.seq_frame_count) || 0;
+        inferUi.total = isSingle
+          ? 1
+          : (Number(ds.kind === 'eval_sequence' ? ds.frame_count : ds.seq_frame_count) || 0);
         inferUi.progress = 0;
         inferUi.fps = 0;
         inferUi.device = '';
@@ -4615,15 +4909,19 @@ async function mountWildCatApp() {
               task_id: tk.id,
               step: inferUi.step > 0 ? Number(inferUi.step) : null,
               output_format: inferUi.outputFormat || 'exr_float',
+              infer_mode: isSingle ? 'single' : 'sequence',
+              frame_index: isSingle ? Number(inferUi.singleFrameIdx || 0) : null,
             }),
           });
+          if (startRes && startRes.infer_dir) inferUi.inferDir = String(startRes.infer_dir);
           const j0 = startRes && startRes.job;
           if (!j0 || !j0.job_id) throw new Error(t('server.requestFailed'));
           inferUi.jobId = j0.job_id;
           inferUi.total = Number(j0.total || inferUi.total);
 
+          const pollMs = isSingle ? 220 : 450;
           while (true) {
-            await new Promise((r) => setTimeout(r, 450));
+            await new Promise((r) => setTimeout(r, pollMs));
             const poll = await apiFetch(`/api/v1/infer-seq/jobs/${encodeURIComponent(inferUi.jobId)}`);
             const jb = (poll && poll.job) || {};
             inferUi.jobState = jb.state || '';
@@ -4636,13 +4934,22 @@ async function mountWildCatApp() {
               await loadInferOutputs(false);
               if (jb.output) {
                 await openInferOutput(jb.output);
-                notify(
-                  t('inferSeq.doneToast', {
-                    frames: jb.output.frame_count || jb.total,
-                    sec: jb.output.seconds || jb.seconds || 0,
-                  }),
-                  'success'
-                );
+                if (isSingle || jb.output.infer_mode === 'single') {
+                  notify(
+                    t('inferSeq.doneSingleToast', {
+                      sec: jb.output.seconds || jb.seconds || 0,
+                    }),
+                    'success'
+                  );
+                } else {
+                  notify(
+                    t('inferSeq.doneToast', {
+                      frames: jb.output.frame_count || jb.total,
+                      sec: jb.output.seconds || jb.seconds || 0,
+                    }),
+                    'success'
+                  );
+                }
               }
               break;
             }
@@ -4719,8 +5026,18 @@ async function mountWildCatApp() {
         inferUi.step = 0;
         const srcPath = tk.config && tk.config.paths && tk.config.paths.source;
         if (srcPath) {
-          const matched = inferSeqDatasets.value.find((a) => a.source_path === srcPath);
-          if (matched) inferUi.assetId = matched.id;
+          const matchedSeq = assets.value.find(
+            (a) => a.source_path === srcPath && (a.kind === 'eval_sequence' || !!a.has_eval_sequence)
+          );
+          if (matchedSeq) {
+            inferUi.assetId = matchedSeq.id;
+          } else {
+            const matchedAny = assets.value.find((a) => a.source_path === srcPath);
+            if (matchedAny) {
+              inferUi.mode = 'single';
+              inferUi.assetId = matchedAny.id;
+            }
+          }
         }
         toolsSection.value = 'infer';
         topNav.value = 'tools';
@@ -4733,7 +5050,9 @@ async function mountWildCatApp() {
       });
 
       const datasetPickerTitle = computed(() => {
-        if (datasetPickerModal.mode === 'infer') return t('inferSeq.pickerTitle');
+        if (datasetPickerModal.mode === 'infer') {
+          return inferUi.mode === 'single' ? t('inferSeq.pickerTitleSingle') : t('inferSeq.pickerTitle');
+        }
         return datasetPickerModal.mode === 'lab_eval' ? t('datasets.pickerEvalTitle') : t('datasets.pickerTrainTitle');
       });
 
@@ -8076,7 +8395,8 @@ async function mountWildCatApp() {
         [topNav, () => assets.value.length],
         async ([nNav]) => {
           if (nNav === 'assets' && user.value) {
-            for (const a of assets.value) {
+            const preloadList = assets.value.slice(0, 4);
+            for (const a of preloadList) {
               await ensureAssetFrames(a.id);
             }
           }
@@ -8395,11 +8715,16 @@ async function mountWildCatApp() {
         initSummaryText,
         activeTask,
         telemetry,
+        telemetryLoading,
+        exportingModelKey,
+        isExportingModel,
         viewerModes,
         viewer,
         currentFrame,
+        onViewerImgLoad,
         contactViewer,
         currentContactFrame,
+        onContactImgLoad,
         taskModels,
         latestValMse,
         chartCfg,
@@ -8448,6 +8773,7 @@ async function mountWildCatApp() {
         extendExistingTask,
         retryFailedTask,
         switchViewerMode,
+        onChangeSupervisedPair,
         fetchTelemetry,
         drawLossChart,
         stepFrame,
@@ -8614,6 +8940,11 @@ async function mountWildCatApp() {
         inferUi,
         inferSeqDatasets,
         inferPickedDataset,
+        inferSingleFrameList,
+        inferSingleSelectedFrame,
+        setInferMode,
+        stepInferSingleInput,
+        onInferOutImgLoad,
         inferTrainedCount,
         inferPickedTask,
         inferTaskArch,

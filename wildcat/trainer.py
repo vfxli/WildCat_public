@@ -311,7 +311,7 @@ class Trainer:
         self.initial_epochs = self.epochs
         self._io_futures = []
         self._write_run_info()
-        self.export_cat_on_checkpoint = _bool(io.get("export_cat", True))
+        self.export_cat_on_checkpoint = _bool(io.get("export_cat", False))
         self.io_pool = ThreadPoolExecutor(max_workers=1) if self.opt_async_io else None
         self.preview_worker = None
         self.preview_device = self._resolve_preview_device()

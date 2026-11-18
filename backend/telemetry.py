@@ -33,8 +33,8 @@ _VAL_LINE = re.compile(
     r"^\[(?P<t>[\d:]+)\]\s+(?:@step\s+(?P<vstep>\d+)\s+)?val(?P<ema>-ema)?\([^)]*\)\s*:\s*(?P<rest>.*)$"
 )
 _VAL_F = re.compile(r"f(\d+)\s+(-?[\d.]+)(?:/(-?[\d.]+))?")
-_STEP_PNG = re.compile(r"step_(\d+)\.png$")
-_CS_SUP_PNG = re.compile(r"step_(\d+)(?:_s(\d+))?\.png$")
+_STEP_PNG = re.compile(r"step_(\d+)\.(?:jpg|jpeg|png)$", re.IGNORECASE)
+_CS_SUP_PNG = re.compile(r"step_(\d+)(?:_s(\d+))?\.(?:jpg|jpeg|png)$", re.IGNORECASE)
 _NUKE_CS_PNG = re.compile(r"^(Training_\d{6}_\d{6})\.(\d+)\.png$")
 _NUKE_MODEL_RE = re.compile(r"^(Training_\d{6}_\d{6})\.(\d+)\.(cat|pt)$")
 _STEP_PT = re.compile(r"step_(\d+)\.pt$")
@@ -186,11 +186,12 @@ def parse_train_log_full_cached(path: str, max_chart_points: int = 3000) -> dict
 
 
 def _cache_key(src: str) -> str:
+    pfx = "aces1_v2|" if str(src).lower().endswith(".exr") else ""
     try:
         st = os.stat(src)
-        sig = f"{src}|{st.st_size}|{st.st_mtime_ns}"
+        sig = f"{pfx}{src}|{st.st_size}|{st.st_mtime_ns}"
     except OSError:
-        sig = src
+        sig = f"{pfx}{src}"
     return hashlib.sha1(sig.encode("utf-8")).hexdigest()
 
 
@@ -235,7 +236,7 @@ def _log_img_err_once(src_abs: str):
         sys.stderr.flush()
 
 
-def to_jpg_url(src_abs: str, quality: int = 88) -> str | None:
+def ensure_jpg_file(src_abs: str, quality: int = 88) -> str | None:
     if not src_abs or not os.path.isfile(src_abs):
         return None
     fname = f"{_cache_key(src_abs)}_{quality}.jpg"
@@ -244,7 +245,7 @@ def to_jpg_url(src_abs: str, quality: int = 88) -> str | None:
     if not os.path.isfile(dst):
         fallback_dst = os.path.join(storage.DEFAULT_CACHE_DIR, "jpg", fname)
         if os.path.isfile(fallback_dst):
-            return "/f/cache/jpg/" + quote(fname)
+            return fallback_dst
         _CACHE_WRITES[0] += 1
         if _CACHE_WRITES[0] % 200 == 0:
             _prune_jpg_cache()
@@ -286,6 +287,7 @@ def to_jpg_url(src_abs: str, quality: int = 88) -> str | None:
                     img = np.clip(img[:, :, :3].astype(np.float32) * alpha + (1.0 - alpha) * chk, 0, 255).astype(np.uint8)
                 else:
                     img = img[:, :, :3]
+        os.makedirs(jpg_dir, exist_ok=True)
         tmp = f"{dst[:-4]}.tmp{os.getpid()}_{threading.get_ident()}.jpg"
         if color.imwrite_unicode(tmp, img, [cv2.IMWRITE_JPEG_QUALITY, quality]):
             with _LOCK:
@@ -304,7 +306,43 @@ def to_jpg_url(src_abs: str, quality: int = 88) -> str | None:
                 except OSError:
                     pass
             return None
-    return "/f/cache/jpg/" + quote(fname)
+    return dst
+
+
+def to_jpg_url(src_abs: str, quality: int = 88) -> str | None:
+    dst = ensure_jpg_file(src_abs, quality=quality)
+    if not dst:
+        return None
+    return "/f/cache/jpg/" + quote(os.path.basename(dst))
+
+
+def _rel_under_run_roots(src_abs: str) -> str | None:
+    ap = os.path.abspath(src_abs)
+    for rroot in (storage.get_run_root(), storage.DEFAULT_RUN_ROOT):
+        if not rroot:
+            continue
+        ra = os.path.abspath(rroot)
+        if os.path.normcase(ap).startswith(os.path.normcase(ra + os.sep)):
+            return ap[len(ra) + 1 :].replace("\\", "/")
+    return None
+
+
+def run_preview_url(src_abs: str, quality: int = 90) -> str | None:
+    """Return an O(1) preview URL for files inside run/<task>/ without blocking /telemetry on
+    hundreds of legacy 16-bit PNG conversions."""
+    if not src_abs or not os.path.isfile(src_abs):
+        return None
+    low = src_abs.lower()
+    rel_run = _rel_under_run_roots(src_abs)
+    if low.endswith((".jpg", ".jpeg")) and rel_run:
+        return "/f/run/" + quote(rel_run)
+    fname = f"{_cache_key(src_abs)}_{quality}.jpg"
+    jpg_dir = storage.get_jpg_cache_dir()
+    if os.path.isfile(os.path.join(jpg_dir, fname)) or os.path.isfile(os.path.join(storage.DEFAULT_CACHE_DIR, "jpg", fname)):
+        return "/f/cache/jpg/" + quote(fname)
+    if rel_run and low.endswith(".png"):
+        return "/f/run_lazy_jpg/" + quote(rel_run)
+    return to_jpg_url(src_abs, quality=quality)
 
 
 def batch_to_jpg_urls(files_abs: list, quality: int = 88) -> list:
@@ -688,18 +726,20 @@ def _build_contact_sheet_frames(run_dir_rel: str, cfg: dict = None) -> dict:
 
     cs_dir = os.path.join(rdir_abs, "contact_sup")
     if os.path.isdir(cs_dir):
-        for fn in os.listdir(cs_dir):
-            if fn.endswith(".tmp.png") or ".tmp" in fn:
+        for fn in sorted(os.listdir(cs_dir)):
+            if fn.endswith(".tmp.png") or fn.endswith(".tmp.jpg") or ".tmp" in fn:
                 continue
             m = _CS_SUP_PNG.search(fn)
             if m:
                 st = int(m.group(1))
                 sc = int(m.group(2)) if m.group(2) else _infer_scale(st)
                 nuke_fn = by_step[st][2] if st in by_step else f"{nuke_prefix}.{st}.png"
+                if st in by_step and by_step[st][0].lower().endswith((".jpg", ".jpeg")) and fn.lower().endswith(".png"):
+                    continue
                 by_step[st] = (os.path.join(cs_dir, fn), sc, nuke_fn)
 
     ordered = sorted(by_step.items(), key=lambda kv: kv[0])
-    urls = batch_to_jpg_urls([v[0] for _, v in ordered], quality=92)
+    urls = [run_preview_url(v[0], quality=92) for _, v in ordered]
     frames = []
     for (st, (_, sc, nuke_fn)), u in zip(ordered, urls):
         if u:
@@ -755,15 +795,19 @@ def _build_viewer_frames(run_dir_rel: str, cfg: dict, mode: str = "preview", pai
                 target_d = os.path.join(sup_dir, selected_pair)
             else:
                 target_d = sup_dir
-            step_items = []
-            for p in glob.glob(os.path.join(target_d, "step_*.png")):
-                if p.endswith(".tmp.png"):
-                    continue
-                m = _STEP_PNG.search(p)
-                if m:
-                    step_items.append((int(m.group(1)), p))
-            step_items.sort(key=lambda x: x[0])
-            urls = batch_to_jpg_urls([p for _, p in step_items])
+            step_map = {}
+            if os.path.isdir(target_d):
+                for fn in sorted(os.listdir(target_d)):
+                    if ".tmp" in fn:
+                        continue
+                    m = _STEP_PNG.search(fn)
+                    if m:
+                        st = int(m.group(1))
+                        if st in step_map and step_map[st].lower().endswith((".jpg", ".jpeg")) and fn.lower().endswith(".png"):
+                            continue
+                        step_map[st] = os.path.join(target_d, fn)
+            step_items = sorted(step_map.items(), key=lambda x: x[0])
+            urls = [run_preview_url(p, quality=90) for _, p in step_items]
             for (st, _), u in zip(step_items, urls):
                 if u:
                     frames.append({"url": u, "label": f"Step {st}", "step": st})

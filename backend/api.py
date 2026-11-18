@@ -1208,6 +1208,8 @@ class InferSequenceStartRequest(BaseModel):
     task_id: int
     step: Optional[int] = None
     output_format: str = "exr_float"
+    infer_mode: str = "sequence"  # sequence | single
+    frame_index: Optional[int] = None
 
 
 @router.post("/infer-seq")
@@ -1216,7 +1218,7 @@ def api_start_infer_seq(
     request: Request,
     user: dict = Depends(get_current_user),
 ):
-    security.enforce_rate_limit("infer_seq", security.extract_client_ip(request), limit=20, window_sec=60.0)
+    security.enforce_rate_limit("infer_seq", security.extract_client_ip(request), limit=60, window_sec=60.0)
     try:
         job = infer_runner.start_infer_job(
             user_id=user["id"],
@@ -1226,8 +1228,10 @@ def api_start_infer_seq(
             task_id=req.task_id,
             step=req.step,
             output_format=req.output_format,
+            infer_mode=req.infer_mode,
+            frame_index=req.frame_index,
         )
-        return {"status": "ok", "job": job}
+        return {"status": "ok", "job": job, "infer_dir": storage.get_infer_dir()}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except infer_runner.InferNotFoundError as e:
@@ -1260,7 +1264,7 @@ def api_list_infer_seq_outputs(
     user: dict = Depends(get_current_user),
 ):
     outputs = infer_runner.list_infer_outputs(user["id"], bool(user.get("is_admin")), task_id=task_id)
-    return {"status": "ok", "outputs": outputs}
+    return {"status": "ok", "outputs": outputs, "infer_dir": storage.get_infer_dir()}
 
 
 @router.get("/infer-seq/outputs/{task_id}/{out_id}/frames")

@@ -142,7 +142,12 @@ def resolve_task_checkpoint(task_row: dict, step: int | None = None) -> tuple[st
     return None, 0
 
 
-def _resolve_infer_asset(user_id: int, is_admin: bool, asset_id: int) -> tuple[dict, str, list[str]]:
+def _resolve_infer_asset(
+    user_id: int,
+    is_admin: bool,
+    asset_id: int,
+    allow_paired_source: bool = False,
+) -> tuple[dict, str, list[str]]:
     row = db.query_one("SELECT * FROM assets WHERE id = ?", (int(asset_id),))
     if not row:
         raise InferNotFoundError(i18n.t("server.assetNotFound"))
@@ -153,6 +158,8 @@ def _resolve_infer_asset(user_id: int, is_admin: bool, asset_id: int) -> tuple[d
         seq_rel = str(row.get("rel_path") or "").strip()
     else:
         seq_rel = str(row.get("seq_path") or "").strip()
+        if (not seq_rel or not storage.expand_sequence_files(seq_rel)) and allow_paired_source:
+            seq_rel = str(row.get("source_path") or "").strip()
 
     if not seq_rel:
         raise ValueError(i18n.t("server.inferNoEvalSeq", name=row["name"]))
@@ -160,6 +167,39 @@ def _resolve_infer_asset(user_id: int, is_admin: bool, asset_id: int) -> tuple[d
     if not seq_files:
         raise ValueError(i18n.t("server.inferNoEvalSeq", name=row["name"]))
     return row, seq_rel, seq_files
+
+
+def _task_infer_primary_root(task_row: dict) -> str:
+    rdir_abs = storage.abs_from_root(task_row["run_dir"])
+    task_sub = storage.sanitize_name(os.path.basename(rdir_abs) or task_row["node_name"], f"task_{task_row['id']}")
+    return os.path.join(storage.get_infer_dir(), task_sub)
+
+
+def _task_infer_candidate_roots(task_row: dict) -> list[str]:
+    rdir_abs = storage.abs_from_root(task_row["run_dir"])
+    task_sub = storage.sanitize_name(os.path.basename(rdir_abs) or task_row["node_name"], f"task_{task_row['id']}")
+    roots = []
+    for cand in (
+        os.path.join(storage.get_infer_dir(), task_sub),
+        os.path.join(storage.DEFAULT_INFER_DIR, task_sub),
+        os.path.join(rdir_abs, INFER_SUBDIR),
+    ):
+        ap = os.path.abspath(cand)
+        if ap not in roots:
+            roots.append(ap)
+    return roots
+
+
+def _locate_output_dir(task_row: dict, out_id: str) -> str | None:
+    if not out_id or not _SAFE_OUT_ID_RE.match(out_id) or out_id.startswith("."):
+        return None
+    for root in _task_infer_candidate_roots(task_row):
+        cand = os.path.abspath(os.path.join(root, out_id))
+        if not os.path.normcase(cand).startswith(os.path.normcase(root + os.sep)):
+            continue
+        if os.path.isfile(os.path.join(cand, META_FILE)) and os.path.isdir(os.path.join(cand, "frames")):
+            return cand
+    return None
 
 
 def _format_short_tag(output_format: str) -> str:
@@ -177,6 +217,8 @@ def _public_job(job: dict) -> dict:
         "asset_id": job["asset_id"],
         "asset_name": job["asset_name"],
         "step": job["step"],
+        "infer_mode": job.get("infer_mode", "sequence"),
+        "frame_index": job.get("frame_index"),
         "output_format": job["output_format"],
         "state": job["state"],
         "done": job["done"],
@@ -191,20 +233,17 @@ def _public_job(job: dict) -> dict:
 
 
 def _read_output_meta(task_row: dict, out_id: str) -> dict | None:
-    if not out_id or not _SAFE_OUT_ID_RE.match(out_id) or out_id.startswith("."):
+    out_abs = _locate_output_dir(task_row, out_id)
+    if not out_abs:
         return None
-    rdir_abs = storage.abs_from_root(task_row["run_dir"])
-    out_abs = os.path.join(rdir_abs, INFER_SUBDIR, out_id)
     meta_path = os.path.join(out_abs, META_FILE)
     frames_dir = os.path.join(out_abs, "frames")
-    if not os.path.isfile(meta_path) or not os.path.isdir(frames_dir):
-        return None
     try:
         with open(meta_path, "r", encoding="utf-8") as fh:
             meta = json.load(fh)
     except Exception:
         return None
-    files = storage.expand_sequence_files(storage.rel_to_root(frames_dir))
+    files = storage.expand_sequence_files(frames_dir)
     if not files:
         return None
     size_bytes = sum(os.path.getsize(p) for p in files if os.path.isfile(p))
@@ -216,6 +255,8 @@ def _read_output_meta(task_row: dict, out_id: str) -> dict | None:
         "in_channels": int(meta.get("in_channels") or 3),
         "out_channels": int(meta.get("out_channels") or 3),
         "step": int(meta.get("step") or 0),
+        "infer_mode": str(meta.get("infer_mode") or ("single" if len(files) == 1 and "_single_" in out_id else "sequence")),
+        "frame_index": meta.get("frame_index"),
         "asset_id": meta.get("asset_id"),
         "asset_name": str(meta.get("asset_name") or ""),
         "input_rel": str(meta.get("input_rel") or ""),
@@ -262,6 +303,8 @@ def _worker(job_id: str) -> None:
                 "progress_path": prog_path,
                 "cancel_path": cancel_path,
             }
+            if job.get("infer_mode") == "single" and job.get("frame_index") is not None:
+                spec["frame_index"] = int(job["frame_index"])
             with open(spec_path, "w", encoding="utf-8") as fh:
                 json.dump(spec, fh, ensure_ascii=False, indent=2)
 
@@ -342,6 +385,8 @@ def _worker(job_id: str) -> None:
                 "in_channels": int((job["task_cfg"].get("model") or {}).get("in_channels") or 3),
                 "out_channels": int(pr_final.get("out_channels") or (job["task_cfg"].get("model") or {}).get("out_channels") or 3),
                 "step": job["step"],
+                "infer_mode": job.get("infer_mode", "sequence"),
+                "frame_index": job.get("frame_index"),
                 "asset_id": job["asset_id"],
                 "asset_name": job["asset_name"],
                 "input_rel": job["seq_rel"],
@@ -393,10 +438,13 @@ def start_infer_job(
     task_id: int,
     step: int | None = None,
     output_format: str = "exr_float",
+    infer_mode: str = "sequence",
+    frame_index: int | None = None,
 ) -> dict:
     fmt = str(output_format or "exr_float").strip().lower()
     if fmt not in VALID_FORMATS:
         fmt = "exr_float"
+    mode = "single" if str(infer_mode or "").strip().lower() == "single" else "sequence"
 
     task_row = service.get_task_for_user(user_id, is_admin, task_id=int(task_id))
     if not task_row:
@@ -406,31 +454,44 @@ def start_infer_job(
     if not ckpt_abs or resolved_step <= 0:
         raise ValueError(i18n.t("server.inferModelUntrained", name=task_row["node_name"]))
 
-    asset_row, seq_rel, seq_files = _resolve_infer_asset(user_id, is_admin, int(asset_id))
+    asset_row, seq_rel, seq_files = _resolve_infer_asset(
+        user_id, is_admin, int(asset_id), allow_paired_source=(mode == "single")
+    )
     if service.is_user_upload_restricted(user_id, is_admin=is_admin):
         user_rel = storage.rel_to_root(storage.user_root(username))
         if storage.dir_total_bytes(user_rel) >= service.TEMP_USER_MAX_STORAGE_BYTES:
             raise PermissionError(i18n.t("server.tempUserUploadQuotaExceeded", max_assets=4))
 
+    if mode == "single":
+        fidx = 0 if frame_index is None else max(0, min(len(seq_files) - 1, int(frame_index)))
+        probe_file = seq_files[fidx]
+        total_frames = 1
+    else:
+        fidx = None
+        probe_file = seq_files[0]
+        total_frames = len(seq_files)
+
     task_cfg = task_row.get("config") or {}
     model_in = int((task_cfg.get("model") or {}).get("in_channels") or 3)
     try:
-        im0 = color.read_image_float(seq_files[0], input_colorspace="auto", working_colorspace="ACEScg")
+        im0 = color.read_image_float(probe_file, input_colorspace="auto", working_colorspace="ACEScg")
         seq_ch = 1 if im0.ndim == 2 else int(im0.shape[2])
         del im0
     except Exception as exc:
-        raise ValueError(f"Cannot read sequence frame {os.path.basename(seq_files[0])}: {exc}")
+        raise ValueError(f"Cannot read sequence frame {os.path.basename(probe_file)}: {exc}")
 
     if seq_ch < model_in:
         raise ValueError(i18n.t("server.inferChannelMismatch", seq_ch=seq_ch, model_in=model_in))
 
     now = time.time()
     job_id = secrets.token_hex(8)
-    rdir_abs = storage.abs_from_root(task_row["run_dir"])
-    infer_root = os.path.join(rdir_abs, INFER_SUBDIR)
+    infer_root = _task_infer_primary_root(task_row)
     os.makedirs(infer_root, exist_ok=True)
     clean_asset = storage.sanitize_name(asset_row["name"], "seq")[:80]
-    out_id = f"{clean_asset}_step{resolved_step}_{_format_short_tag(fmt)}"
+    if mode == "single":
+        out_id = f"{clean_asset}_step{resolved_step}_single_f{fidx + 1:04d}_{_format_short_tag(fmt)}"
+    else:
+        out_id = f"{clean_asset}_step{resolved_step}_{_format_short_tag(fmt)}"
     tmp_dir = os.path.join(infer_root, f".tmp_{job_id}")
     final_dir = os.path.join(infer_root, out_id)
 
@@ -443,6 +504,8 @@ def start_infer_job(
         "asset_name": asset_row["name"],
         "seq_rel": seq_rel,
         "step": int(resolved_step),
+        "infer_mode": mode,
+        "frame_index": fidx,
         "output_format": fmt,
         "out_id": out_id,
         "tmp_dir": tmp_dir,
@@ -452,7 +515,7 @@ def start_infer_job(
         "task_cfg": task_cfg,
         "state": "queued",
         "done": 0,
-        "total": len(seq_files),
+        "total": total_frames,
         "fps": 0.0,
         "device": "",
         "error": "",
@@ -501,20 +564,21 @@ def list_infer_outputs(user_id: int, is_admin: bool, task_id: int | None = None)
 
     results = []
     for t in tasks:
-        rdir_abs = storage.abs_from_root(t["run_dir"])
-        infer_root = os.path.join(rdir_abs, INFER_SUBDIR)
-        if not os.path.isdir(infer_root):
-            continue
-        try:
-            entries = sorted(os.listdir(infer_root))
-        except OSError:
-            continue
-        for name in entries:
-            if name.startswith("."):
+        seen_ids = set()
+        for infer_root in _task_infer_candidate_roots(t):
+            if not os.path.isdir(infer_root):
                 continue
-            item = _read_output_meta(t, name)
-            if item is not None:
-                results.append(item)
+            try:
+                entries = sorted(os.listdir(infer_root))
+            except OSError:
+                continue
+            for name in entries:
+                if name.startswith(".") or name in seen_ids:
+                    continue
+                item = _read_output_meta(t, name)
+                if item is not None:
+                    seen_ids.add(name)
+                    results.append(item)
     results.sort(key=lambda x: x["created_at"], reverse=True)
     return results
 
@@ -525,11 +589,14 @@ def _resolve_owned_output(user_id: int, is_admin: bool, task_id: int, out_id: st
     task_row = service.get_task_for_user(user_id, is_admin, task_id=int(task_id))
     if not task_row:
         raise InferNotFoundError(i18n.t("server.taskNotFound"))
+    out_abs = _locate_output_dir(task_row, out_id)
+    if not out_abs:
+        raise InferNotFoundError(i18n.t("server.assetNotFound"))
     meta = _read_output_meta(task_row, out_id)
     if not meta:
         raise InferNotFoundError(i18n.t("server.assetNotFound"))
-    frames_abs = os.path.join(storage.abs_from_root(task_row["run_dir"]), INFER_SUBDIR, out_id, "frames")
-    files = storage.expand_sequence_files(storage.rel_to_root(frames_abs))
+    frames_abs = os.path.join(out_abs, "frames")
+    files = storage.expand_sequence_files(frames_abs)
     if not files:
         raise InferNotFoundError(i18n.t("server.assetNotFound"))
     return task_row, meta, frames_abs, files
@@ -586,7 +653,7 @@ def resolve_single_infer_frame(user_id: int, is_admin: bool, task_id: int, out_i
 
 def delete_infer_output(user_id: int, is_admin: bool, task_id: int, out_id: str) -> None:
     task_row, _, _, _ = _resolve_owned_output(user_id, is_admin, int(task_id), out_id)
-    target_dir = os.path.abspath(os.path.join(storage.abs_from_root(task_row["run_dir"]), INFER_SUBDIR, out_id))
-    infer_root = os.path.abspath(os.path.join(storage.abs_from_root(task_row["run_dir"]), INFER_SUBDIR))
-    if target_dir.startswith(infer_root + os.sep) and os.path.isdir(target_dir):
-        shutil.rmtree(target_dir, ignore_errors=True)
+    for root in _task_infer_candidate_roots(task_row):
+        target_dir = os.path.abspath(os.path.join(root, out_id))
+        if os.path.normcase(target_dir).startswith(os.path.normcase(root + os.sep)) and os.path.isdir(target_dir):
+            shutil.rmtree(target_dir, ignore_errors=True)

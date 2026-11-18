@@ -38,7 +38,7 @@ def main():
     args = parser.parse_args()
 
     import torch
-    from wildcat import cat_format
+    from wildcat import cat_format, models
     from wildcat.models import build_generator
 
     with open(args.config_path, "r", encoding="utf-8") as _f:
@@ -50,22 +50,44 @@ def main():
     run_dir = (cfg.get("paths") or {}).get("run_dir") or default_run_dir
     ck_name = "latest.pt" if args.step is None else "step_%06d.pt" % int(args.step)
     ck_path = os.path.join(run_dir, "ckpt", ck_name)
-    ck = torch.load(ck_path, map_location="cpu", weights_only=False)
-
-    mo = ck.get("config", cfg).get("model", {})
-    model_size = mo.get("model_size", "Medium")
-    c_in = int(mo.get("in_channels", 3))
-    c_out = int(mo.get("out_channels", c_in))
-
-    net, _ = build_generator(mo)
-    net.load_state_dict(ck["G"])
-    net.eval()
-
     out_pt = args.out_pt or os.path.join(run_dir, cfg["run_name"] + ".pt")
+
+    if os.path.isfile(ck_path):
+        ck = torch.load(ck_path, map_location="cpu", weights_only=False)
+        mo = ck.get("config", cfg).get("model", {})
+        model_size = mo.get("model_size", "Medium")
+        c_in = int(mo.get("in_channels", 3))
+        c_out = int(mo.get("out_channels", c_in))
+        net, _ = build_generator(mo)
+        net.load_state_dict(ck["G"])
+        net.eval()
+        exp_step = int(ck.get("step", -1))
+    else:
+        # Fallback: rebuild from an existing exported .pt/.cat when raw ckpt was archived
+        fallback_src = out_pt if os.path.isfile(out_pt) else None
+        if not fallback_src:
+            raise FileNotFoundError(f"Checkpoint not found: {ck_path}")
+        mo = dict(cfg.get("model") or {})
+        w_spec = models.inspect_weight_source(
+            fallback_src,
+            fallback_model_size=mo.get("model_size", "Medium"),
+            fallback_in=int(mo.get("in_channels", 3)),
+            fallback_out=int(mo.get("out_channels", mo.get("in_channels", 3))),
+        )
+        mo["model_size"] = w_spec.get("model_size") or mo.get("model_size", "Medium")
+        mo["in_channels"] = int(w_spec.get("in_channels") or mo.get("in_channels", 3))
+        mo["out_channels"] = int(w_spec.get("out_channels") or mo.get("out_channels", mo["in_channels"]))
+        model_size = mo["model_size"]
+        c_in, c_out = mo["in_channels"], mo["out_channels"]
+        net, _ = build_generator(mo)
+        models.load_weights_into_model(net, fallback_src, model_size=model_size, device="cpu")
+        net.eval()
+        exp_step = int(args.step) if args.step is not None else -1
+
     cat_format.export_torchscript(net.state_dict(), out_pt, mo)
     print(
         "Exported TorchScript %s (model=%s, in=%d, out=%d, step=%d)"
-        % (out_pt, model_size, c_in, c_out, ck.get("step", -1))
+        % (out_pt, model_size, c_in, c_out, exp_step)
     )
     print("Convert to .cat in Nuke: CatFileCreator node -> Torch Script File = this file, "
           "Channels In/Out = rgba.red, rgba.green, rgba.blue -> Create .cat file")

@@ -1225,6 +1225,8 @@ def export_task_cat(user_id: int, is_admin: bool, task_id: int, step: int = None
     pfx = telemetry.resolve_nuke_prefix(rdir_abs)
     inv = telemetry.list_task_models(row["run_dir"], row.get("config"))
     target_step = int(step) if step is not None else (inv["items"][0]["step"] if inv["items"] else int(row.get("last_step") or 0))
+    from wildcat import cat_format as _cf
+
     nuke_pt = os.path.join(rdir_abs, f"{pfx}.{target_step}.pt") if target_step > 0 else os.path.join(rdir_abs, f"{row['node_name']}.pt")
     cfg_abs_arg = storage.abs_from_root(row["config_path"])
     cmd = [scheduler.PYTHON_BIN, "export_cat.py", cfg_abs_arg]
@@ -1232,10 +1234,13 @@ def export_task_cat(user_id: int, is_admin: bool, task_id: int, step: int = None
         st_int = int(step)
         step_ckpt = os.path.join(rdir_abs, "ckpt", f"step_{st_int:06d}.pt")
         lat_ckpt = os.path.join(rdir_abs, "ckpt", "latest.pt")
+        has_exported_src = os.path.isfile(nuke_pt)
         if os.path.isfile(step_ckpt):
             cmd.append(str(st_int))
         elif os.path.isfile(lat_ckpt) and int(telemetry.inspect_ckpt_cached(lat_ckpt).get("step") or 0) == st_int:
             pass
+        elif has_exported_src:
+            cmd.append(str(st_int))
         else:
             raise FileNotFoundError(i18n.t("server.ckptStepSourceMissing", step=st_int))
     cmd.extend(["--out-pt", nuke_pt])
@@ -1290,8 +1295,14 @@ def ensure_nuke_model_file(
 
     st = int(item["step"])
     target_fn = item["pt_filename"]
+    from wildcat import cat_format as _cf
+
     target_abs = os.path.join(rdir_abs, target_fn)
-    if os.path.isfile(target_abs) and os.path.getsize(target_abs) > 0:
+    if (
+        os.path.isfile(target_abs)
+        and os.path.getsize(target_abs) > 0
+        and not _cf.is_legacy_wildcat_v1_export(target_abs)
+    ):
         return target_abs, target_fn
 
     export_task_cat(user_id, is_admin, task_id, step=st)

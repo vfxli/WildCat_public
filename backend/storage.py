@@ -23,12 +23,14 @@ DEFAULT_USERS_STORAGE = os.path.join(STORAGE_ROOT, "users")
 DEFAULT_RUN_ROOT = os.path.join(ROOT, "run")
 DEFAULT_CONFIG_ROOT = os.path.join(ROOT, "config")
 DEFAULT_CACHE_DIR = os.path.join(STORAGE_ROOT, "cache")
+DEFAULT_INFER_DIR = os.path.join(STORAGE_ROOT, "infer")
 DATASET_ROOT = os.path.join(ROOT, "dataset")
 
 USERS_STORAGE = DEFAULT_USERS_STORAGE
 RUN_ROOT = DEFAULT_RUN_ROOT
 CONFIG_ROOT = DEFAULT_CONFIG_ROOT
 CACHE_DIR = DEFAULT_CACHE_DIR
+INFER_DIR = DEFAULT_INFER_DIR
 
 _PATH_CACHE = {"loaded": False, "custom_root": ""}
 
@@ -43,7 +45,7 @@ def _normalize_custom_root(raw_path: str) -> str:
 
 def refresh_storage_paths(force_db: bool = True) -> str:
     """Reload `data_cache_root` from SQLite settings and update active storage root globals."""
-    global USERS_STORAGE, RUN_ROOT, CONFIG_ROOT, CACHE_DIR
+    global USERS_STORAGE, RUN_ROOT, CONFIG_ROOT, CACHE_DIR, INFER_DIR
     if force_db or not _PATH_CACHE["loaded"]:
         try:
             raw = db.get_setting("data_cache_root", os.environ.get("WC_CACHE_ROOT", "")) or ""
@@ -58,11 +60,13 @@ def refresh_storage_paths(force_db: bool = True) -> str:
         RUN_ROOT = os.path.join(croot, "run")
         CONFIG_ROOT = os.path.join(croot, "config")
         CACHE_DIR = os.path.join(croot, "cache")
+        INFER_DIR = os.path.join(croot, "infer")
     else:
         USERS_STORAGE = DEFAULT_USERS_STORAGE
         RUN_ROOT = DEFAULT_RUN_ROOT
         CONFIG_ROOT = DEFAULT_CONFIG_ROOT
         CACHE_DIR = DEFAULT_CACHE_DIR
+        INFER_DIR = DEFAULT_INFER_DIR
     return croot
 
 
@@ -92,6 +96,12 @@ def get_cache_dir() -> str:
     return CACHE_DIR
 
 
+def get_infer_dir() -> str:
+    get_data_cache_root()
+    os.makedirs(INFER_DIR, exist_ok=True)
+    return INFER_DIR
+
+
 def get_jpg_cache_dir() -> str:
     d = os.path.join(get_cache_dir(), "jpg")
     os.makedirs(d, exist_ok=True)
@@ -103,6 +113,7 @@ def apply_subprocess_storage_env(env: dict) -> dict:
     env["WC_RUN_ROOT"] = get_run_root()
     env["WC_USERS_STORAGE"] = get_users_storage()
     env["WC_CONFIG_ROOT"] = get_config_root()
+    env["WC_INFER_DIR"] = get_infer_dir()
     croot = get_data_cache_root()
     if croot:
         env["WC_CACHE_ROOT"] = croot
@@ -140,6 +151,8 @@ def rel_to_root(abs_path: str) -> str:
         (DEFAULT_CONFIG_ROOT, "config"),
         (get_users_storage(), "storage/users"),
         (DEFAULT_USERS_STORAGE, "storage/users"),
+        (get_infer_dir(), "storage/infer"),
+        (DEFAULT_INFER_DIR, "storage/infer"),
     ):
         sub = _is_under_dir(ap, base)
         if sub is not None:
@@ -197,6 +210,26 @@ def abs_from_root(path_str: str, for_write: bool = False) -> str:
         if for_write or os.path.exists(primary):
             return primary
         fallback = os.path.join(DEFAULT_USERS_STORAGE, sub) if sub else DEFAULT_USERS_STORAGE
+        if os.path.exists(fallback):
+            return fallback
+        return primary
+
+    if norm == "storage/infer" or norm.startswith("storage/infer/"):
+        sub = norm[len("storage/infer/"):] if norm.startswith("storage/infer/") else ""
+        primary = os.path.join(get_infer_dir(), sub) if sub else get_infer_dir()
+        if for_write or os.path.exists(primary):
+            return primary
+        fallback = os.path.join(DEFAULT_INFER_DIR, sub) if sub else DEFAULT_INFER_DIR
+        if os.path.exists(fallback):
+            return fallback
+        return primary
+
+    if norm == "infer" or norm.startswith("infer/"):
+        sub = norm[len("infer/"):] if norm.startswith("infer/") else ""
+        primary = os.path.join(get_infer_dir(), sub) if sub else get_infer_dir()
+        if for_write or os.path.exists(primary):
+            return primary
+        fallback = os.path.join(DEFAULT_INFER_DIR, sub) if sub else DEFAULT_INFER_DIR
         if os.path.exists(fallback):
             return fallback
         return primary
@@ -935,17 +968,24 @@ def delete_asset_files(rel_path: str):
 
 
 def delete_task_files(run_dir_rel: str, config_path_rel: str):
-    """Safely delete task run directory under run/ and config file under config/."""
+    """Safely delete task run directory under run/, dedicated infer outputs under infer/, and config file under config/."""
+    node_bn = ""
     if run_dir_rel:
         abs_run = os.path.abspath(abs_from_root(run_dir_rel))
+        node_bn = os.path.basename(abs_run)
         for base in {os.path.abspath(get_run_root()), os.path.abspath(DEFAULT_RUN_ROOT)}:
             if (
                 os.path.normcase(abs_run).startswith(os.path.normcase(base + os.sep))
-                and os.path.basename(abs_run) != "verification_report"
+                and node_bn != "verification_report"
                 and os.path.exists(abs_run)
             ):
                 shutil.rmtree(abs_run, ignore_errors=True)
                 break
+    if node_bn and node_bn != "verification_report":
+        for inf_base in {os.path.abspath(get_infer_dir()), os.path.abspath(DEFAULT_INFER_DIR)}:
+            cand_inf = os.path.abspath(os.path.join(inf_base, node_bn))
+            if os.path.normcase(cand_inf).startswith(os.path.normcase(inf_base + os.sep)) and os.path.isdir(cand_inf):
+                shutil.rmtree(cand_inf, ignore_errors=True)
     if config_path_rel:
         abs_cfg = os.path.abspath(abs_from_root(config_path_rel))
         for base in {os.path.abspath(get_config_root()), os.path.abspath(DEFAULT_CONFIG_ROOT)}:
@@ -1008,6 +1048,7 @@ def get_storage_disk_stats() -> dict:
     run_dir = get_run_root()
     cfg_dir = get_config_root()
     cache_dir = get_cache_dir()
+    infer_dir = get_infer_dir()
     probe_dir = croot if croot else STORAGE_ROOT
     os.makedirs(probe_dir, exist_ok=True)
     try:
@@ -1036,6 +1077,7 @@ def get_storage_disk_stats() -> dict:
             "run_dir": run_dir,
             "config_dir": cfg_dir,
             "cache_dir": cache_dir,
+            "infer_dir": infer_dir,
             "db_path": db.DB_PATH,
         },
         "disk": {
@@ -1044,6 +1086,7 @@ def get_storage_disk_stats() -> dict:
             "free_gb": free_gb,
             "users_mb": round(_fast_dir_bytes(users_dir) / (1024**2), 1),
             "run_mb": round(_fast_dir_bytes(run_dir) / (1024**2), 1),
+            "infer_mb": round(_fast_dir_bytes(infer_dir) / (1024**2), 1),
             "cache_mb": round(_fast_dir_bytes(cache_dir) / (1024**2), 1),
             "db_mb": round(db_bytes / (1024**2), 2),
         },
@@ -1084,6 +1127,7 @@ def configure_data_cache_root(
     old_run = get_run_root()
     old_cfg = get_config_root()
     old_cache = get_cache_dir()
+    old_infer = get_infer_dir()
 
     if norm_new:
         # Guard against pointing cache directory inside core source code folders
@@ -1098,7 +1142,7 @@ def configure_data_cache_root(
 
     if norm_new:
         try:
-            for sub in ("users", "run", "config", os.path.join("cache", "jpg")):
+            for sub in ("users", "run", "config", "infer", os.path.join("cache", "jpg")):
                 os.makedirs(os.path.join(norm_new, sub), exist_ok=True)
             probe = os.path.join(norm_new, f".wc_write_probe_{os.getpid()}")
             with open(probe, "w", encoding="utf-8") as fh:
@@ -1115,6 +1159,7 @@ def configure_data_cache_root(
         target_run = os.path.join(norm_new, "run") if norm_new else DEFAULT_RUN_ROOT
         target_cfg = os.path.join(norm_new, "config") if norm_new else DEFAULT_CONFIG_ROOT
         target_cache = os.path.join(norm_new, "cache") if norm_new else DEFAULT_CACHE_DIR
+        target_infer = os.path.join(norm_new, "infer") if norm_new else DEFAULT_INFER_DIR
 
         migrated_items += _merge_directory_contents(old_users, target_users)
         migrated_items += _merge_directory_contents(
@@ -1124,6 +1169,7 @@ def configure_data_cache_root(
             old_cfg, target_cfg, skip_names={"default.json"}
         )
         migrated_items += _merge_directory_contents(old_cache, target_cache)
+        migrated_items += _merge_directory_contents(old_infer, target_infer)
 
     db.set_setting("data_cache_root", norm_new)
     refresh_storage_paths(force_db=True)

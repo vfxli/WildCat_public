@@ -313,9 +313,19 @@ class PreviewWorker:
         disp_sheet = np.concatenate(rows_disp, axis=0)
         cdir = os.path.join(self.t.run_dir, "contact_sup")
         os.makedirs(cdir, exist_ok=True)
-        cpath = os.path.join(cdir, "step_%06d_s%d.png" % (step, max(1, int(scale))))
-        ctmp = cpath + ".tmp.png"
-        color.imwrite_unicode(ctmp, cv2.cvtColor((np.clip(disp_sheet, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
+        use_png = str(self.t.io.get("preview_format") or "jpg").strip().lower() == "png"
+        if use_png:
+            cpath = os.path.join(cdir, "step_%06d_s%d.png" % (step, max(1, int(scale))))
+            ctmp = cpath + ".tmp.png"
+            color.imwrite_unicode(ctmp, cv2.cvtColor((np.clip(disp_sheet, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
+        else:
+            cpath = os.path.join(cdir, "step_%06d_s%d.jpg" % (step, max(1, int(scale))))
+            ctmp = cpath + ".tmp.jpg"
+            color.imwrite_unicode(
+                ctmp,
+                cv2.cvtColor((np.clip(disp_sheet, 0, 1) * 255.0).round().astype(np.uint8), cv2.COLOR_RGB2BGR),
+                [cv2.IMWRITE_JPEG_QUALITY, 92],
+            )
         os.replace(ctmp, cpath)
 
     def _infer(self, fr):
@@ -350,20 +360,31 @@ class PreviewWorker:
 
     def _write_previews(self, step, rendered):
         t = self.t
-        psize = t.io.get("preview_size", 0)
+        psize = int(t.io.get("preview_size", 0) or 0)
+        use_png = str(t.io.get("preview_format") or "jpg").strip().lower() == "png"
+        max_dim = psize if use_png else (psize if psize > 0 else 3840)
         for name, i, o in rendered:
             if name not in self._disp_cache:
                 self._disp_cache[name] = (self._to_disp(t.src_full[i]), self._to_disp(t.tgt_full[i]))
             a_vis, b_vis = self._disp_cache[name]
             trip = np.concatenate([a_vis, self._to_disp(o), b_vis], 1)
-            s = psize / max(trip.shape[:2]) if psize > 0 else 1.0
+            s = max_dim / max(trip.shape[:2]) if max_dim > 0 else 1.0
             if s < 1.0:
-                trip = cv2.resize(trip, (int(trip.shape[1] * s), int(trip.shape[0] * s)), interpolation=cv2.INTER_AREA)
+                trip = cv2.resize(trip, (max(1, int(round(trip.shape[1] * s))), max(1, int(round(trip.shape[0] * s)))), interpolation=cv2.INTER_AREA)
             pdir = os.path.join(t.run_dir, "preview_sup", name)
             os.makedirs(pdir, exist_ok=True)
-            path = os.path.join(pdir, "step_%06d.png" % step)
-            tmp = path + ".tmp.png"
-            color.imwrite_unicode(tmp, cv2.cvtColor((np.clip(trip, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
+            if use_png:
+                path = os.path.join(pdir, "step_%06d.png" % step)
+                tmp = path + ".tmp.png"
+                color.imwrite_unicode(tmp, cv2.cvtColor((np.clip(trip, 0, 1) * 65535).astype(np.uint16), cv2.COLOR_RGB2BGR))
+            else:
+                path = os.path.join(pdir, "step_%06d.jpg" % step)
+                tmp = path + ".tmp.jpg"
+                color.imwrite_unicode(
+                    tmp,
+                    cv2.cvtColor((np.clip(trip, 0, 1) * 255.0).round().astype(np.uint8), cv2.COLOR_RGB2BGR),
+                    [cv2.IMWRITE_JPEG_QUALITY, 92],
+                )
             os.replace(tmp, path)
 
 
