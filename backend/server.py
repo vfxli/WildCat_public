@@ -10,10 +10,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+import re
 
-from wildcat.version import BUILD_VERSION
+from wildcat.version import BUILD_ID, BUILD_VERSION
 
 from . import analytics_db, api, db, i18n, scheduler, security, service, storage, telemetry
 
@@ -156,7 +157,11 @@ async def _security_lang_and_cache_middleware(request: Request, call_next):
         if path in ("/", "/login", "/admin"):
             resp.headers["Content-Security-Policy"] = SPA_CSP_POLICY
 
-        if path in ("/", "/login", "/admin") or path.startswith("/static/"):
+        if (
+            path in ("/", "/login", "/admin", "/api/v1/locales")
+            or path.startswith("/static/")
+            or path.startswith("/api/v1/locales/")
+        ):
             resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"
@@ -282,12 +287,19 @@ def serve_run_lazy_jpg(rel_path: str, request: Request):
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend_static")
 
 
-# 3. Serve Vue 3 Single-Page Application Entrypoints
+# 3. Serve Vue 3 Single-Page Application Entrypoints (with automatic BUILD_ID asset cache-busting)
+_ASSET_VER_RE = re.compile(r"(/static/(?:styles\.css|app\.js))\?v=[A-Za-z0-9_.-]+")
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/login", include_in_schema=False)
 @app.get("/admin", include_in_schema=False)
 def serve_spa():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    idx_path = os.path.join(FRONTEND_DIR, "index.html")
+    with open(idx_path, "r", encoding="utf-8") as fh:
+        raw_html = fh.read()
+    stamped_html = _ASSET_VER_RE.sub(rf"\1?v={BUILD_ID}", raw_html)
+    return HTMLResponse(stamped_html)
 
 
 if __name__ == "__main__":

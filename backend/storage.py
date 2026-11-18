@@ -7,6 +7,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import re
 import shutil
+import threading
 import time
 import zipfile
 
@@ -237,10 +238,80 @@ def abs_from_root(path_str: str, for_write: bool = False) -> str:
     return str(Path(ROOT) / p)
 
 
+_NAT_SPLIT_RE = re.compile(r"(\d+)")
+_UPLOAD_PROG_LOCK = threading.Lock()
+_UPLOAD_PROGRESS: dict[str, dict] = {}
+
+
+def _natural_sort_key(path_or_name: str):
+    bn = PureWindowsPath(str(path_or_name or "")).name
+    return tuple((0, int(p), p) if p.isdigit() else (1, 0, p.lower()) for p in _NAT_SPLIT_RE.split(bn))
+
+
+def set_upload_progress(upload_id: str, stage: str, done: int = 0, total: int = 0) -> None:
+    uid = str(upload_id or "").strip()
+    if not uid or len(uid) > 80:
+        return
+    now = time.time()
+    with _UPLOAD_PROG_LOCK:
+        if len(_UPLOAD_PROGRESS) > 256:
+            stale = [k for k, v in _UPLOAD_PROGRESS.items() if now - v.get("updated_at", 0.0) > 600.0]
+            for k in stale:
+                _UPLOAD_PROGRESS.pop(k, None)
+        _UPLOAD_PROGRESS[uid] = {
+            "stage": stage,
+            "done": int(max(0, done)),
+            "total": int(max(0, total)),
+            "updated_at": now,
+        }
+
+
+def get_upload_progress(upload_id: str) -> dict | None:
+    uid = str(upload_id or "").strip()
+    if not uid:
+        return None
+    with _UPLOAD_PROG_LOCK:
+        item = _UPLOAD_PROGRESS.get(uid)
+        return dict(item) if item else None
+
+
+def clear_upload_progress(upload_id: str) -> None:
+    uid = str(upload_id or "").strip()
+    if not uid:
+        return
+    with _UPLOAD_PROG_LOCK:
+        _UPLOAD_PROGRESS.pop(uid, None)
+
+
+def _sanitize_frame_stem(raw_bn: str, idx: int) -> str:
+    raw_stem = PureWindowsPath(raw_bn or "").stem.strip()
+    if not raw_stem:
+        return f"frame_{idx:04d}"
+    s = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", raw_stem)
+    s = re.sub(r"_+", "_", s)
+    # If non-ASCII prefix turned into leading '_' before a frame separator (e.g. '镜头.1001' -> '_.1001' or '镜头_1001' -> '_1001')
+    if re.match(r"^_[\._\-]?\d+$", s) and not raw_stem[0].isascii():
+        s = "seq" + (s[1:] if s.startswith(("_.", "__", "_-")) else s)
+    s = s.strip("._")
+    return s or f"frame_{idx:04d}"
+
+
+def _unique_exr_filename(raw_bn: str, idx: int, used_lower: set[str]) -> str:
+    stem = _sanitize_frame_stem(raw_bn, idx)
+    cand = f"{stem}.exr"
+    if cand.lower() in used_lower:
+        k = 2
+        while f"{stem}_{k}.exr".lower() in used_lower:
+            k += 1
+        cand = f"{stem}_{k}.exr"
+    used_lower.add(cand.lower())
+    return cand
+
+
 def _dedup_sorted(paths: list) -> list:
     seen = set()
     out = []
-    for p in sorted(paths):
+    for p in sorted(paths, key=_natural_sort_key):
         key = os.path.normcase(os.path.abspath(p))
         if key not in seen:
             seen.add(key)
@@ -424,7 +495,7 @@ def _collect_upload_readers(
     if not entries:
         raise ValueError(i18n.t("server.uploadNoValidImages", role=role_label))
 
-    entries.sort(key=lambda x: x[0])
+    entries.sort(key=lambda x: _natural_sort_key(x[0]))
     return entries
 
 
@@ -465,11 +536,16 @@ def _extract_frame_num(filename: str) -> int | None:
     return None
 
 
-def _resolve_upload_colorspace(filename: str, input_colorspace: str, working_colorspace: str) -> str:
-    ext = PureWindowsPath(filename or "").suffix.lower()
-    if not input_colorspace or input_colorspace == "auto":
-        return working_colorspace if ext == ".exr" else "sRGB"
-    return input_colorspace
+def _require_explicit_colorspace(input_colorspace: str, working_colorspace: str = "ACEScg") -> tuple[str, str]:
+    raw_in = str(input_colorspace or "").strip()
+    if not raw_in or raw_in.lower() == "auto":
+        raise ValueError(i18n.t("server.inputColorspaceRequired"))
+    try:
+        src_cs = color.normalize_explicit_colorspace(raw_in)
+    except ValueError:
+        raise ValueError(i18n.t("server.inputColorspaceInvalid", cs=raw_in[:60]))
+    eff_work = "Raw" if src_cs == "Raw" else (str(working_colorspace or "ACEScg").strip() or "ACEScg")
+    return src_cs, eff_work
 
 
 def _is_dummy_constant_alpha(a_min: float, a_max: float) -> bool:
@@ -499,10 +575,12 @@ def _save_eval_frames_to_dir(
     expected_w: int = 0,
     expected_h: int = 0,
     expected_in_ch: int = 0,
-    input_colorspace: str = "auto",
+    input_colorspace: str = "",
     working_colorspace: str = "ACEScg",
     restricted: bool = False,
+    upload_id: str = "",
 ) -> int:
+    src_cs, eff_work_cs = _require_explicit_colorspace(input_colorspace, working_colorspace)
     role_lbl = i18n.t("server.roleEvalSeq")
     with contextlib.ExitStack() as stack:
         entries = _collect_upload_readers(seq_tuples, role_lbl, stack, restricted=restricted)
@@ -516,6 +594,9 @@ def _save_eval_frames_to_dir(
         try:
             h0 = int(expected_h or 0)
             w0 = int(expected_w or 0)
+            total_seq = len(entries)
+            used_seq_names: set[str] = set()
+            set_upload_progress(upload_id, "saving_seq", 0, total_seq)
             for idx, (bn, reader) in enumerate(entries, start=1):
                 _, s_bn, s_im = _decode_checked_image(reader(), bn, role_lbl, idx, restricted=restricted)
                 sh, sw = int(s_im.shape[0]), int(s_im.shape[1])
@@ -537,10 +618,11 @@ def _save_eval_frames_to_dir(
                 s_out = s_im
                 if expected_in_ch in (1, 3, 4) and s_out.ndim == 3 and s_out.shape[2] > expected_in_ch:
                     s_out = s_out[..., :expected_in_ch]
-                s_cs = _resolve_upload_colorspace(s_bn, input_colorspace, working_colorspace)
-                if s_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and s_out.shape[2] >= 3:
-                    s_out = color.transform_colorspace(s_out, s_cs, working_colorspace)
-                color.write_exr_file(os.path.join(tmp_eval_abs, f"frame_{idx:04d}.exr"), s_out, bit_depth="half")
+                if src_cs not in ("Raw", eff_work_cs) and eff_work_cs != "Raw" and s_out.shape[2] >= 3:
+                    s_out = color.transform_colorspace(s_out, src_cs, eff_work_cs)
+                out_fn = _unique_exr_filename(s_bn, idx, used_seq_names)
+                color.write_exr_file(os.path.join(tmp_eval_abs, out_fn), s_out, bit_depth="half", colorspace=eff_work_cs)
+                set_upload_progress(upload_id, "saving_seq", idx, total_seq)
                 del s_im, s_out
         except Exception:
             shutil.rmtree(tmp_eval_abs, ignore_errors=True)
@@ -560,10 +642,11 @@ def validate_and_save_paired_dataset(
     max_error_pct: float = 35.0,
     strategy: str = "standard",
     enable_check: bool = True,
-    input_colorspace: str = "auto",
+    input_colorspace: str = "",
     working_colorspace: str = "ACEScg",
     seq_tuples: list | None = None,
     restricted: bool = False,
+    upload_id: str = "",
 ) -> dict:
     """
     Validate a paired (Source Input, Ground Truth Target) sequence upload before saving:
@@ -574,6 +657,7 @@ def validate_and_save_paired_dataset(
           3. 100% duplicate identical sequence check (MAE == 0).
           4. Generous pixel error tolerance check (default 35% MAE threshold).
     """
+    src_cs, eff_work_cs = _require_explicit_colorspace(input_colorspace, working_colorspace)
     src_role = i18n.t("server.roleSource")
     tgt_role = i18n.t("server.roleTarget")
     with contextlib.ExitStack() as stack:
@@ -641,9 +725,12 @@ def validate_and_save_paired_dataset(
         thumbs_s = []
         thumbs_t = []
 
+        total_pairs = len(src_entries)
+        set_upload_progress(upload_id, "checking", 0, total_pairs)
         for idx, ((s_bn_raw, s_reader), (t_bn_raw, t_reader)) in enumerate(zip(src_entries, tgt_entries), start=1):
             _, s_bn, s_im = _decode_checked_image(s_reader(), s_bn_raw, src_role, idx, restricted=restricted)
             _, t_bn, t_im = _decode_checked_image(t_reader(), t_bn_raw, tgt_role, idx, restricted=restricted)
+            set_upload_progress(upload_id, "checking", idx, total_pairs)
             sh, sw = int(s_im.shape[0]), int(s_im.shape[1])
             th, tw = int(t_im.shape[0]), int(t_im.shape[1])
             if idx == 1:
@@ -786,17 +873,21 @@ def validate_and_save_paired_dataset(
                 for idx, ((s_bn_raw, s_reader), (t_bn_raw, t_reader)) in enumerate(zip(src_entries, tgt_entries), start=1)
             )
 
+        used_src_names: set[str] = set()
+        used_tgt_names: set[str] = set()
+        set_upload_progress(upload_id, "saving_pairs", 0, total_pairs)
         for idx, (s_bn, s_im, t_bn, t_im) in enumerate(pair_iter, start=1):
             s_out = s_im[..., :norm_in_ch] if (s_im.ndim == 3 and s_im.shape[2] > norm_in_ch) else s_im
             t_out = t_im[..., :norm_out_ch] if (t_im.ndim == 3 and t_im.shape[2] > norm_out_ch) else t_im
-            s_cs = _resolve_upload_colorspace(s_bn, input_colorspace, working_colorspace)
-            t_cs = _resolve_upload_colorspace(t_bn, input_colorspace, working_colorspace)
-            if s_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and s_out.shape[2] >= 3:
-                s_out = color.transform_colorspace(s_out, s_cs, working_colorspace)
-            if t_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and t_out.shape[2] >= 3:
-                t_out = color.transform_colorspace(t_out, t_cs, working_colorspace)
-            color.write_exr_file(os.path.join(src_abs, f"frame_{idx:04d}.exr"), s_out, bit_depth="half")
-            color.write_exr_file(os.path.join(tgt_abs, f"frame_{idx:04d}.exr"), t_out, bit_depth="half")
+            if src_cs not in ("Raw", eff_work_cs) and eff_work_cs != "Raw" and s_out.shape[2] >= 3:
+                s_out = color.transform_colorspace(s_out, src_cs, eff_work_cs)
+            if src_cs not in ("Raw", eff_work_cs) and eff_work_cs != "Raw" and t_out.shape[2] >= 3:
+                t_out = color.transform_colorspace(t_out, src_cs, eff_work_cs)
+            s_fn = _unique_exr_filename(s_bn, idx, used_src_names)
+            t_fn = _unique_exr_filename(t_bn, idx, used_tgt_names)
+            color.write_exr_file(os.path.join(src_abs, s_fn), s_out, bit_depth="half", colorspace=eff_work_cs)
+            color.write_exr_file(os.path.join(tgt_abs, t_fn), t_out, bit_depth="half", colorspace=eff_work_cs)
+            set_upload_progress(upload_id, "saving_pairs", idx, total_pairs)
 
         frame_total = len(src_entries)
 
@@ -811,15 +902,17 @@ def validate_and_save_paired_dataset(
                 expected_w=w0,
                 expected_h=h0,
                 expected_in_ch=norm_in_ch,
-                input_colorspace=input_colorspace,
-                working_colorspace=working_colorspace,
+                input_colorspace=src_cs,
+                working_colorspace=eff_work_cs,
                 restricted=restricted,
+                upload_id=upload_id,
             )
             seq_rel = rel_to_root(eval_abs)
         except Exception:
             shutil.rmtree(ds_abs, ignore_errors=True)
             raise
 
+    set_upload_progress(upload_id, "done", 1, 1)
     ds_rel = rel_to_root(ds_abs)
     src_rel = rel_to_root(src_abs)
     tgt_rel = rel_to_root(tgt_abs)
@@ -839,6 +932,8 @@ def validate_and_save_paired_dataset(
         "avg_mae": round(avg_mae, 6),
         "max_mae": round(worst_mae, 6),
         "strategy": strategy if enable_check else "off",
+        "input_colorspace": src_cs,
+        "working_colorspace": eff_work_cs,
         "size_bytes": tot_bytes,
     }
 
@@ -852,11 +947,13 @@ def attach_eval_sequence_to_dataset(
     expected_h: int,
     expected_in_ch: int,
     seq_tuples: list,
-    input_colorspace: str = "auto",
+    input_colorspace: str = "",
     working_colorspace: str = "ACEScg",
     restricted: bool = False,
+    upload_id: str = "",
 ) -> dict:
     """Attach or replace an optional full validation sequence (`eval/`) on an existing dataset."""
+    src_cs, eff_work_cs = _require_explicit_colorspace(input_colorspace, working_colorspace)
     abs_ds = os.path.abspath(abs_from_root(ds_rel))
     users_abs = os.path.abspath(USERS_STORAGE)
     if os.path.normcase(abs_ds).startswith(os.path.normcase(users_abs + os.sep)):
@@ -874,10 +971,12 @@ def attach_eval_sequence_to_dataset(
         expected_w=expected_w,
         expected_h=expected_h,
         expected_in_ch=expected_in_ch,
-        input_colorspace=input_colorspace,
-        working_colorspace=working_colorspace,
+        input_colorspace=src_cs,
+        working_colorspace=eff_work_cs,
         restricted=restricted,
+        upload_id=upload_id,
     )
+    set_upload_progress(upload_id, "done", 1, 1)
     seq_rel = rel_to_root(eval_abs)
     _, seq_bytes = dir_stats(seq_rel)
     return {
@@ -906,8 +1005,8 @@ def inspect_paired_dirs(source_rel: str, target_rel: str, seq_rel: str = "") -> 
             "size_bytes": seq_b,
         }
     try:
-        s0 = color.read_image_float(s_files[0], input_colorspace="auto", working_colorspace="ACEScg")
-        t0 = color.read_image_float(t_files[0], input_colorspace="auto", working_colorspace="ACEScg")
+        s0 = color.read_image_float(s_files[0], input_colorspace="ACEScg", working_colorspace="ACEScg")
+        t0 = color.read_image_float(t_files[0], input_colorspace="ACEScg", working_colorspace="ACEScg")
     except Exception:
         s0, t0 = None, None
     h, w = (int(s0.shape[0]), int(s0.shape[1])) if s0 is not None else (0, 0)
@@ -929,8 +1028,8 @@ def inspect_paired_dirs(source_rel: str, target_rel: str, seq_rel: str = "") -> 
     maes = []
     for sp, tp in zip(s_files[:n], t_files[:n]):
         try:
-            si = color.read_image_float(sp, input_colorspace="auto", working_colorspace="ACEScg")
-            ti = color.read_image_float(tp, input_colorspace="auto", working_colorspace="ACEScg")
+            si = color.read_image_float(sp, input_colorspace="ACEScg", working_colorspace="ACEScg")
+            ti = color.read_image_float(tp, input_colorspace="ACEScg", working_colorspace="ACEScg")
         except Exception:
             si, ti = None, None
         if si is not None and ti is not None and si.shape[:2] == ti.shape[:2]:

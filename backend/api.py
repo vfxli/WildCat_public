@@ -386,6 +386,11 @@ def api_get_asset_frames(asset_id: int, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.get("/assets/upload-progress/{upload_id}")
+def api_get_upload_progress(upload_id: str, user: dict = Depends(get_current_user)):
+    return {"status": "ok", "progress": storage.get_upload_progress(upload_id)}
+
+
 @router.post("/assets/upload-pair")
 async def api_upload_paired_dataset(
     request: Request,
@@ -399,8 +404,10 @@ async def api_upload_paired_dataset(
 
     max_files = security.MAX_UPLOAD_FILES_TOTAL * 3 + 16 if restricted else 100_000
     max_fields = 1000 if restricted else 100_000
+    upload_id = ""
     try:
         async with request.form(max_files=max_files, max_fields=max_fields) as form:
+            upload_id = str(form.get("upload_id") or "").strip()[:64]
             name = str(form.get("name") or "").strip()
             strategy = str(form.get("strategy") or "standard")
             task_type = str(form.get("task_type") or "")
@@ -408,8 +415,9 @@ async def api_upload_paired_dataset(
             max_error_pct = float(raw_err if raw_err not in (None, "") else 35.0)
             raw_chk = str(form.get("enable_check") if form.get("enable_check") is not None else "true").strip().lower()
             enable_check = raw_chk not in ("0", "false", "no", "off")
-            input_colorspace = str(form.get("input_colorspace") or "auto")
-            working_colorspace = str(form.get("working_colorspace") or "ACEScg")
+            input_colorspace = str(form.get("input_colorspace") or "").strip()
+            working_colorspace = str(form.get("working_colorspace") or "ACEScg").strip()
+            storage._require_explicit_colorspace(input_colorspace, working_colorspace)
 
             source_files = [x for x in form.getlist("source_files") if hasattr(x, "file") and getattr(x, "filename", None)]
             target_files = [x for x in form.getlist("target_files") if hasattr(x, "file") and getattr(x, "filename", None)]
@@ -424,10 +432,14 @@ async def api_upload_paired_dataset(
             if restricted and total_files > security.MAX_UPLOAD_FILES_TOTAL * 3:
                 raise ValueError(i18n.t("server.uploadTooManyFiles", role="upload", limit=security.MAX_UPLOAD_FILES_TOTAL))
 
+            storage.set_upload_progress(upload_id, "receiving", 0, total_files)
             budget = [0]
             src_tuples = [_prepare_upload_item(uf, budget, restricted, "src.exr") for uf in source_files]
+            storage.set_upload_progress(upload_id, "receiving", len(src_tuples), total_files)
             tgt_tuples = [_prepare_upload_item(uf, budget, restricted, "tgt.exr") for uf in target_files]
+            storage.set_upload_progress(upload_id, "receiving", len(src_tuples) + len(tgt_tuples), total_files)
             seq_tuples = [_prepare_upload_item(uf, budget, restricted, "seq.exr") for uf in seq_files]
+            storage.set_upload_progress(upload_id, "receiving", total_files, total_files)
 
             asset = await run_in_threadpool(
                 service.create_paired_dataset,
@@ -445,6 +457,7 @@ async def api_upload_paired_dataset(
                 task_type=task_type,
                 is_admin=bool(user.get("is_admin")),
                 restricted=restricted,
+                upload_id=upload_id,
             )
             return {"status": "ok", "asset": asset}
     except HTTPException:
@@ -453,6 +466,8 @@ async def api_upload_paired_dataset(
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=_log_api_exc("assets/upload-pair", e))
+    finally:
+        storage.clear_upload_progress(upload_id)
 
 
 class AssetTaskTypeUpdatePayload(BaseModel):
@@ -493,17 +508,22 @@ async def api_attach_eval_sequence(
 
     max_files = security.MAX_UPLOAD_FILES_TOTAL + 16 if restricted else 100_000
     max_fields = 1000 if restricted else 100_000
+    upload_id = ""
     try:
         async with request.form(max_files=max_files, max_fields=max_fields) as form:
-            input_colorspace = str(form.get("input_colorspace") or "auto")
-            working_colorspace = str(form.get("working_colorspace") or "ACEScg")
+            upload_id = str(form.get("upload_id") or "").strip()[:64]
+            input_colorspace = str(form.get("input_colorspace") or "").strip()
+            working_colorspace = str(form.get("working_colorspace") or "ACEScg").strip()
+            storage._require_explicit_colorspace(input_colorspace, working_colorspace)
             seq_files = [x for x in form.getlist("seq_files") if hasattr(x, "file") and getattr(x, "filename", None)]
             if not seq_files:
                 raise ValueError(i18n.t("server.uploadNoValidImages", role=i18n.t("server.roleEvalSeq")))
             if restricted and len(seq_files) > security.MAX_UPLOAD_FILES_TOTAL:
                 raise ValueError(i18n.t("server.uploadTooManyFiles", role="eval", limit=security.MAX_UPLOAD_FILES_TOTAL))
+            storage.set_upload_progress(upload_id, "receiving", 0, len(seq_files))
             budget = [0]
             seq_tuples = [_prepare_upload_item(uf, budget, restricted, "seq.exr") for uf in seq_files]
+            storage.set_upload_progress(upload_id, "receiving", len(seq_tuples), len(seq_files))
             asset = await run_in_threadpool(
                 service.attach_asset_eval_sequence,
                 user_id=user["id"],
@@ -514,6 +534,7 @@ async def api_attach_eval_sequence(
                 input_colorspace=input_colorspace,
                 working_colorspace=working_colorspace,
                 restricted=restricted,
+                upload_id=upload_id,
             )
             return {"status": "ok", "asset": asset}
     except HTTPException:
@@ -522,6 +543,8 @@ async def api_attach_eval_sequence(
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=_log_api_exc("assets/eval-sequence", e))
+    finally:
+        storage.clear_upload_progress(upload_id)
 
 
 @router.delete("/assets/{asset_id}/eval-sequence")

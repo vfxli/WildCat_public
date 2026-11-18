@@ -92,8 +92,8 @@ def load_pt_state_dict_numpy(pt_path):
 
 
 def is_legacy_wildcat_v1_export(path: str) -> bool:
-    """True when an already-exported WildCatLargeV1 model on disk was written with the pre-v3.0.5
-    TorchScript graph (`torch.pad` / non-contiguous slice)."""
+    """True when an already-exported WildCatLargeV1 model on disk predates the v3.0.6
+    PyTorch-2.11 pad-8 TorchScript archive (`wc_v306_`)."""
     if not path or not os.path.isfile(path):
         return False
     low = path.lower()
@@ -101,7 +101,7 @@ def is_legacy_wildcat_v1_export(path: str) -> bool:
         try:
             with zipfile.ZipFile(path, "r") as z:
                 names = z.namelist()
-                if any("v3_unet_hom_" in n for n in names):
+                if any("v3_unet_hom_" in n or n.startswith("WildCatLargeV1_") for n in names):
                     return True
                 for n in names:
                     if n.endswith("functional.py"):

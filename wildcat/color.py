@@ -39,17 +39,63 @@ except Exception:
 # Built-in ACES 1.3 OCIO v2 URI (compiled inside PyOpenColorIO 2.2+)
 DEFAULT_OCIO_CONFIG_URI = "ocio://cg-config-v1.0.0_aces-v1.3_ocio-v2.1"
 
+# Explicit colorspaces offered in manual selection (never implicit 'auto')
+EXPLICIT_INPUT_COLORSPACES = (
+    "ACEScg",
+    "ACES2065-1",
+    "ACEScct",
+    "Output - sRGB",
+    "sRGB - Texture",
+    "Linear sRGB",
+    "Output - Rec.709",
+    "Rec.709 - Texture",
+    "Raw",
+)
+
 # Canonical VFX Colorspace Names (compatible with ACES 1.2 / 1.3 OCIO configs)
 COLORSPACE_ALIASES = {
     "ACEScg": ["ACEScg", "ACES - ACEScg", "lin_ap1"],
     "ACES2065-1": ["ACES2065-1", "ACES - ACES2065-1", "aces", "lin_ap0"],
     "ACEScct": ["ACEScct", "ACES - ACEScct"],
     "ACEScc": ["ACEScc", "ACES - ACEScc"],
-    "sRGB": ["sRGB - Texture", "Output - sRGB", "Utility - sRGB - Texture", "srgb_texture", "sRGB"],
-    "Rec.709": ["Rec.1886 Rec.709 - Display", "Output - Rec.709", "Utility - Rec.709 - Camera", "Rec.709"],
+    "Output - sRGB": ["Output - sRGB"],
+    "sRGB - Texture": ["sRGB - Texture", "Utility - sRGB - Texture", "srgb_texture", "sRGB"],
+    "sRGB": ["sRGB - Texture", "Utility - sRGB - Texture", "srgb_texture", "sRGB"],
+    "Output - Rec.709": ["Output - Rec.709"],
+    "Rec.709 - Texture": ["Gamma 2.2 Rec.709 - Texture", "Gamma 2.4 Rec.709 - Texture", "Utility - Rec.709 - Camera", "Rec.709"],
+    "Rec.709": ["Gamma 2.2 Rec.709 - Texture", "Gamma 2.4 Rec.709 - Texture", "Utility - Rec.709 - Camera", "Rec.709"],
     "Linear sRGB": ["Linear Rec.709 (sRGB)", "Utility - Linear - sRGB", "lin_rec709", "lin_srgb"],
     "Raw": ["Raw", "Utility - Raw", "nc_raw"],
 }
+
+# Display/View pairs for Output Transforms in OCIO v2 ACES 1.3 configs (where Output - sRGB is a Display/View, not a ColorSpace)
+_OUTPUT_DISPLAY_VIEW_MAP = {
+    "output - srgb": (("sRGB - Display", "sRGB", "ACES"), ("ACES 1.0 - SDR Video", "Output - sRGB", "sRGB")),
+    "srgb - display": (("sRGB - Display", "sRGB", "ACES"), ("ACES 1.0 - SDR Video", "Output - sRGB", "sRGB")),
+    "output - rec.709": (("Rec.1886 Rec.709 - Display", "Rec.709", "ACES"), ("ACES 1.0 - SDR Video", "Output - Rec.709", "Rec.709")),
+    "rec.1886 rec.709 - display": (("Rec.1886 Rec.709 - Display", "Rec.709", "ACES"), ("ACES 1.0 - SDR Video", "Output - Rec.709", "Rec.709")),
+}
+
+
+def normalize_explicit_colorspace(raw_cs: str, ocio_config_path: str = "") -> str:
+    """Validate that `raw_cs` is an explicitly chosen colorspace (never empty or 'auto')."""
+    s = str(raw_cs or "").strip()
+    if not s or s.lower() == "auto":
+        raise ValueError("Input colorspace must be selected explicitly")
+    for canon in EXPLICIT_INPUT_COLORSPACES:
+        if s.lower() == canon.lower():
+            return canon
+    for canon, aliases in COLORSPACE_ALIASES.items():
+        if s.lower() == canon.lower() or any(s.lower() == a.lower() for a in aliases):
+            return canon
+    cfg = get_ocio_config(ocio_config_path)
+    if cfg is not None:
+        try:
+            if cfg.getColorSpace(s) is not None:
+                return s
+        except Exception:
+            pass
+    raise ValueError(f"Unsupported colorspace: {s}")
 
 _OCIO_CFG_CACHE = {}
 _CPU_PROC_CACHE = {}
@@ -110,7 +156,7 @@ def get_ocio_info(ocio_config_path: str = "") -> dict:
     """Return active OCIO configuration metadata and available colorspaces/views for Web UI."""
     cfg = get_ocio_config(ocio_config_path)
     source = ocio_config_path or os.environ.get("OCIO") or "Built-in ACES 1.3 (cg-config-v1.0.0_aces-v1.3_ocio-v2.1)"
-    spaces = ["ACEScg", "ACES2065-1", "ACEScct", "sRGB", "Linear sRGB", "Rec.709", "Raw"]
+    spaces = list(EXPLICIT_INPUT_COLORSPACES)
     views = ["ACES 1.0 - SDR Video (sRGB)", "Un-tone-mapped (sRGB)", "Raw"]
     if cfg is not None:
         try:
@@ -132,6 +178,39 @@ def get_ocio_info(ocio_config_path: str = "") -> dict:
     }
 
 
+def _pick_cfg_display_view(cfg, disp_cands: tuple, view_cands: tuple) -> tuple[str, str] | None:
+    displays = list(cfg.getDisplays()) if hasattr(cfg, "getDisplays") else []
+    if not displays:
+        return None
+    disp = next((d for d in disp_cands if d in displays), "")
+    if not disp:
+        for dc in disp_cands:
+            disp = next((d for d in displays if dc.lower() in d.lower()), "")
+            if disp:
+                break
+    if not disp:
+        return None
+    avail_views = list(cfg.getViews(disp)) if hasattr(cfg, "getViews") else []
+    view = next((v for v in view_cands if v in avail_views), "")
+    if not view:
+        for vc in view_cands:
+            view = next((v for v in avail_views if vc.lower() in v.lower()), "")
+            if view:
+                break
+    if not view:
+        return None
+    return disp, view
+
+
+def _has_named_cs(cfg, cs_name: str) -> bool:
+    if cfg is None or not cs_name:
+        return False
+    try:
+        return cfg.getColorSpace(cs_name) is not None
+    except Exception:
+        return False
+
+
 def _get_cpu_processor(src_space: str, dst_space: str, ocio_config_path: str = ""):
     if not HAS_OCIO or src_space == dst_space or src_space == "Raw" or dst_space == "Raw":
         return None
@@ -144,11 +223,28 @@ def _get_cpu_processor(src_space: str, dst_space: str, ocio_config_path: str = "
     try:
         s_real = resolve_ocio_colorspace_name(cfg, src_space)
         d_real = resolve_ocio_colorspace_name(cfg, dst_space)
-        if s_real == d_real:
+        if s_real == d_real and _has_named_cs(cfg, s_real):
             return None
-        proc = cfg.getProcessor(s_real, d_real).getDefaultCPUProcessor()
-        _CPU_PROC_CACHE[key] = proc
-        return proc
+        if _has_named_cs(cfg, s_real) and _has_named_cs(cfg, d_real):
+            proc = cfg.getProcessor(s_real, d_real).getDefaultCPUProcessor()
+            _CPU_PROC_CACHE[key] = proc
+            return proc
+
+        s_dv = _OUTPUT_DISPLAY_VIEW_MAP.get(src_space.lower())
+        d_dv = _OUTPUT_DISPLAY_VIEW_MAP.get(dst_space.lower())
+        if s_dv and not _has_named_cs(cfg, s_real) and _has_named_cs(cfg, d_real):
+            dv = _pick_cfg_display_view(cfg, s_dv[0], s_dv[1])
+            if dv is not None:
+                proc = cfg.getProcessor(d_real, dv[0], dv[1], OCIO.TRANSFORM_DIR_INVERSE).getDefaultCPUProcessor()
+                _CPU_PROC_CACHE[key] = proc
+                return proc
+        if d_dv and not _has_named_cs(cfg, d_real) and _has_named_cs(cfg, s_real):
+            dv = _pick_cfg_display_view(cfg, d_dv[0], d_dv[1])
+            if dv is not None:
+                proc = cfg.getProcessor(s_real, dv[0], dv[1], OCIO.TRANSFORM_DIR_FORWARD).getDefaultCPUProcessor()
+                _CPU_PROC_CACHE[key] = proc
+                return proc
+        return None
     except Exception:
         return None
 
@@ -533,7 +629,7 @@ def read_exr_file(path: str) -> np.ndarray:
     return np.ascontiguousarray(im)
 
 
-def write_exr_file(path: str, img_rgb: np.ndarray, bit_depth: str = "half") -> None:
+def write_exr_file(path: str, img_rgb: np.ndarray, bit_depth: str = "half", colorspace: str = "ACEScg") -> None:
     """
     Write a float32 numpy array (H, W, C) in RGB(A) order to an OpenEXR (.exr) file.
     Default `bit_depth='half'` (16-bit half-float ZIP compressed VFX pipeline standard).
@@ -553,7 +649,7 @@ def write_exr_file(path: str, img_rgb: np.ndarray, bit_depth: str = "half") -> N
 
             hdr = OpenEXR.Header(w, h)
             hdr["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
-            if c >= 3 and hasattr(Imath, "Chromaticities") and hasattr(Imath, "V2f"):
+            if c >= 3 and colorspace == "ACEScg" and hasattr(Imath, "Chromaticities") and hasattr(Imath, "V2f"):
                 # Standard ACEScg (AP1 + D60) chromaticities matching Foundry Nuke ACEScg Write node
                 hdr["chromaticities"] = Imath.Chromaticities(
                     Imath.V2f(0.713, 0.293),
@@ -594,22 +690,26 @@ def write_exr_file(path: str, img_rgb: np.ndarray, bit_depth: str = "half") -> N
 
 def read_image_float(
     path: str,
-    input_colorspace: str = "auto",
+    input_colorspace: str = "ACEScg",
     working_colorspace: str = "ACEScg",
     ocio_config_path: str = "",
     is_data_pass: bool = False,
 ) -> np.ndarray:
     """
     Unified image reader for `.exr`, `.png`, `.jpg`, `.tif`.
-    Returns `(H, W, C)` float32 in RGB(A) order converted to `working_colorspace` (default `ACEScg`).
-      - `.exr` files default (`input_colorspace='auto'`) to `ACEScg` linear (full float HDR range preserved, no [0,1] clamp!).
-      - `.png`/`.jpg`/`.tif` files default (`input_colorspace='auto'`) to `sRGB -> working_colorspace` (matching Nuke Read node; 1-ch masks & alpha stay linear).
+    Returns `(H, W, C)` float32 in RGB(A) order converted from explicit `input_colorspace` to `working_colorspace` (default `ACEScg`).
     """
     ext = os.path.splitext(path)[1].lower()
+    src_cs = working_colorspace if input_colorspace in ("", "auto", None) else input_colorspace
     if ext == ".exr":
         im = read_exr_file(path)
-        src_cs = "ACEScg" if input_colorspace in ("", "auto", None) else input_colorspace
-        if not is_data_pass and im.shape[2] >= 3 and src_cs != working_colorspace and working_colorspace != "Raw":
+        if (
+            not is_data_pass
+            and im.shape[2] >= 3
+            and src_cs != "Raw"
+            and working_colorspace != "Raw"
+            and src_cs != working_colorspace
+        ):
             im = transform_colorspace(im, src_cs, working_colorspace, ocio_config_path)
         return im
 
@@ -627,15 +727,14 @@ def read_image_float(
     if im.shape[2] >= 3:
         im = im[..., [2, 1, 0, 3][: im.shape[2]]]
 
-    eff_cs = "sRGB" if input_colorspace in ("", "auto", None) else input_colorspace
     if (
         not is_data_pass
         and im.shape[2] >= 3
-        and eff_cs != "Raw"
+        and src_cs != "Raw"
         and working_colorspace != "Raw"
-        and eff_cs != working_colorspace
+        and src_cs != working_colorspace
     ):
-        im = transform_colorspace(im, eff_cs, working_colorspace, ocio_config_path)
+        im = transform_colorspace(im, src_cs, working_colorspace, ocio_config_path)
     return np.ascontiguousarray(im, dtype=np.float32)
 
 

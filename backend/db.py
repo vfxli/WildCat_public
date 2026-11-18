@@ -133,6 +133,8 @@ def init_db():
                     max_mae REAL NOT NULL DEFAULT 0.0,
                     strategy TEXT NOT NULL DEFAULT 'standard',
                     task_type TEXT NOT NULL DEFAULT '',
+                    input_colorspace TEXT NOT NULL DEFAULT 'ACEScg',
+                    working_colorspace TEXT NOT NULL DEFAULT 'ACEScg',
                     size_bytes INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
                     UNIQUE(user_id, name),
@@ -408,6 +410,10 @@ def init_db():
                 conn.execute("ALTER TABLE main.assets ADD COLUMN demo_key TEXT NOT NULL DEFAULT ''")
             if "task_type" not in asset_cols:
                 conn.execute("ALTER TABLE main.assets ADD COLUMN task_type TEXT NOT NULL DEFAULT ''")
+            if "input_colorspace" not in asset_cols:
+                conn.execute("ALTER TABLE main.assets ADD COLUMN input_colorspace TEXT NOT NULL DEFAULT 'ACEScg'")
+            if "working_colorspace" not in asset_cols:
+                conn.execute("ALTER TABLE main.assets ADD COLUMN working_colorspace TEXT NOT NULL DEFAULT 'ACEScg'")
             # task types of the installation's catalog datasets (config/demo_datasets.json, see backend/service.py): an
             # empty type is filled in on every start; datasets a user uploaded (empty demo_key) are never touched
             for _dk, _tt in _catalog_task_types():

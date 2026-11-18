@@ -473,8 +473,9 @@ def start_infer_job(
 
     task_cfg = task_row.get("config") or {}
     model_in = int((task_cfg.get("model") or {}).get("in_channels") or 3)
+    asset_work_cs = str(asset_row.get("working_colorspace") or "ACEScg")
     try:
-        im0 = color.read_image_float(probe_file, input_colorspace="auto", working_colorspace="ACEScg")
+        im0 = color.read_image_float(probe_file, input_colorspace=asset_work_cs, working_colorspace=asset_work_cs)
         seq_ch = 1 if im0.ndim == 2 else int(im0.shape[2])
         del im0
     except Exception as exc:
@@ -489,7 +490,9 @@ def start_infer_job(
     os.makedirs(infer_root, exist_ok=True)
     clean_asset = storage.sanitize_name(asset_row["name"], "seq")[:80]
     if mode == "single":
-        out_id = f"{clean_asset}_step{resolved_step}_single_f{fidx + 1:04d}_{_format_short_tag(fmt)}"
+        real_fnum = storage._extract_frame_num(os.path.basename(probe_file))
+        ftag = f"f{real_fnum:04d}" if real_fnum is not None else f"f{fidx + 1:04d}"
+        out_id = f"{clean_asset}_step{resolved_step}_single_{ftag}_{_format_short_tag(fmt)}"
     else:
         out_id = f"{clean_asset}_step{resolved_step}_{_format_short_tag(fmt)}"
     tmp_dir = os.path.join(infer_root, f".tmp_{job_id}")

@@ -116,12 +116,12 @@ def _load_model_for_infer(ckpt_path: str, task_cfg: dict, device: str, opt_nhwc:
         return jit_net, mo, 0, {}
 
 
-def _save_output_atomic(out_path: str, arr_rgb: np.ndarray, write_as_exr: bool, exr_depth: str) -> None:
+def _save_output_atomic(out_path: str, arr_rgb: np.ndarray, write_as_exr: bool, exr_depth: str, colorspace: str = "ACEScg") -> None:
     stem, ext = os.path.splitext(out_path)
     tmp_path = f"{stem}.tmp_{os.getpid()}{ext}"
     try:
         if write_as_exr:
-            color.write_exr_file(tmp_path, arr_rgb, bit_depth=exr_depth)
+            color.write_exr_file(tmp_path, arr_rgb, bit_depth=exr_depth, colorspace=colorspace)
         else:
             clipped = np.clip(arr_rgb, 0.0, 1.0)
             ext_low = ext.lower()
@@ -192,7 +192,9 @@ def run_spec(spec_path: str) -> int:
     c_in = int(mo.get("in_channels", 3))
     col = (task_cfg.get("color") or ck_cfg.get("color") or {})
     working_cs = col.get("working_colorspace", "ACEScg")
-    source_cs = col.get("source_colorspace", "auto")
+    source_cs = col.get("source_colorspace") or working_cs
+    if source_cs == "auto":
+        source_cs = working_cs
     ocio_cfg = col.get("ocio_config", "")
     view_mode = col.get("view_transform", "ACES 1.0 - SDR Video")
 
@@ -230,7 +232,7 @@ def run_spec(spec_path: str) -> int:
 
         stem = os.path.splitext(os.path.basename(path))[0]
         out_path = os.path.join(out_dir, stem + out_ext)
-        _save_output_atomic(out_path, y, write_exr, exr_depth)
+        _save_output_atomic(out_path, y, write_exr, exr_depth, colorspace=working_cs)
 
         dt = max(time.time() - t0, 1e-6)
         _atomic_json(
@@ -292,10 +294,12 @@ def main():
     c_in = int(mo.get("in_channels", 3))
     col = cfg.get("color") or ck_cfg.get("color") or {}
     working_cs = col.get("working_colorspace", "ACEScg")
-    source_cs = col.get("source_colorspace", "auto")
+    source_cs = col.get("source_colorspace") or working_cs
+    if source_cs == "auto":
+        source_cs = working_cs
     raw_output_cs = col.get("output_colorspace", "")
     ocio_cfg = col.get("ocio_config", "")
-    out_fmt = col.get("output_format", "auto")  # 'exr_half' | 'exr_float' | 'png_16' | 'auto'
+    out_fmt = col.get("output_format", "exr_half")  # 'exr_half' | 'exr_float' | 'png_16'
 
     print(
         "ckpt step %d | input %s | color=%s->%s | prec=%s nhwc=%s"
@@ -310,7 +314,7 @@ def main():
     t0 = time.time()
 
     def _save_cli(out_path, arr_rgb, write_as_exr, exr_depth):
-        _save_output_atomic(out_path, arr_rgb, write_as_exr, exr_depth)
+        _save_output_atomic(out_path, arr_rgb, write_as_exr, exr_depth, colorspace=working_cs)
         print(out_path)
 
     for path in files:

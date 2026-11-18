@@ -182,12 +182,18 @@ def extract_numeric_task_fields(cfg: dict, user_id: int) -> dict:
     exposure_ev = float(adv["augment"]["exposure_ev"]) if aug_en else 0.0
 
     init_w = str(tr.get("initial_weights") or "").strip()
-    bs_auto = tr.get("batch_size_auto")
+    n_ds_frames = int(ds["dataset_frames"] or 0)
+    nuke_def_bs = min(8, n_ds_frames) if n_ds_frames > 0 else 8
+    bs_non_default = (
+        not bool(tr.get("batch_size_auto"))
+        and str(bs_raw or "").lower() != "auto"
+        and batch_size not in (8, nuke_def_bs)
+    )
     non_default = (
         msize != "Medium"
         or not multi_res
         or prec != "adaptive"
-        or (bs_auto is False or (bs_auto is None and str(bs_raw or "auto").lower() != "auto"))
+        or bs_non_default
         or crop_size != 256
         or bool(init_w and init_w.lower() != "none")
         or cg_en

@@ -228,8 +228,10 @@ def run_evaluation(spec: dict) -> dict:
 
     col = (task_cfg.get("color") or {})
     working_cs = col.get("working_colorspace", "ACEScg")
-    train_src_cs = col.get("source_colorspace", "auto")
-    train_tgt_cs = col.get("target_colorspace", "auto")
+    raw_src_cs = col.get("source_colorspace")
+    raw_tgt_cs = col.get("target_colorspace")
+    train_src_cs = working_cs if raw_src_cs in (None, "", "auto") else raw_src_cs
+    train_tgt_cs = working_cs if raw_tgt_cs in (None, "", "auto") else raw_tgt_cs
     ocio_cfg = col.get("ocio_config", "")
     max_side = int(spec.get("max_preview_side") or 1280)
 
@@ -314,7 +316,8 @@ def run_evaluation(spec: dict) -> dict:
         if seq_is_paired:
             os.makedirs(err_jpg_dir, exist_ok=True)
 
-        eval_cs = str(spec.get("eval_colorspace") or train_src_cs or "auto")
+        raw_eval_cs = spec.get("eval_colorspace")
+        eval_cs = str(working_cs if raw_eval_cs in (None, "", "auto") else raw_eval_cs)
         per_frame = []
         prev_src_srgb = None
         prev_out_srgb = None

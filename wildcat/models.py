@@ -471,8 +471,8 @@ class WildCatLargeV1(nn.Module):
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         inputs = inputs.contiguous()
         h, w = inputs.shape[2], inputs.shape[3]
-        ph = (16 - h % 16) % 16
-        pw = (16 - w % 16) % 16
+        ph = (8 - h % 8) % 8
+        pw = (8 - w % 8) % 8
         x = torch.ops.aten.replication_pad2d(inputs, [0, pw, 0, ph]) if (ph > 0 or pw > 0) else inputs
         _, _, d1 = self._encode_decode(x)
         pf = self.head_f(d1)[:, :, :h, :w]

@@ -203,8 +203,8 @@ const DOC_GROUPS = [
   { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'arch_wildcat_large_v1', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
   { id: 'adv', ids: ['adv_overview', 'adv_crop_grid', 'adv_crop_grid_step', 'adv_crop_grid_anchor', 'adv_loss', 'adv_loss_charbonnier', 'adv_loss_grad', 'adv_loss_hdr', 'adv_loss_eps', 'adv_stages', 'adv_stages_ratio', 'adv_stages_warmup', 'adv_ema', 'adv_ema_decay', 'adv_augment', 'adv_augment_flip', 'adv_augment_exposure', 'adv_kf_common', 'adv_kf_common_threshold', 'adv_kf_common_span', 'adv_kf_common_overall'] },
   { id: 'presets', ids: ['presets_overview', 'preset_nuke', 'preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
-  { id: 'lab', ids: ['lab_overview', 'lab_combo', 'lab_combo_dataset', 'lab_combo_task_type', 'lab_combo_scope', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
-  { id: 'datasets', ids: ['dataset_overview', 'dataset_keyframes', 'dataset_validation_sequence', 'dataset_task_type', 'dataset_input_colorspace', 'dataset_check', 'dataset_tolerance', 'dataset_files', 'dataset_name', 'dataset_eval_sequence', 'dataset_demo'] },
+  { id: 'lab', ids: ['lab_overview', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
+  { id: 'datasets', ids: ['dataset_overview', 'dataset_keyframes', 'dataset_validation_sequence', 'dataset_input_colorspace', 'dataset_check', 'dataset_tolerance', 'dataset_files', 'dataset_name', 'dataset_eval_sequence', 'dataset_demo'] },
   { id: 'monitor', ids: ['monitor_pause_resume', 'monitor_extend', 'monitor_download', 'monitor_delete', 'monitor_progress', 'monitor_stage', 'monitor_speed', 'monitor_eta', 'monitor_queue', 'metric_loss', 'metric_val_mse', 'monitor_failed', 'monitor_kfc', 'metric_kfc_rewritten', 'metric_kfc_common', 'monitor_preview', 'monitor_preview_keyframe', 'monitor_playback', 'monitor_contact_sheet', 'monitor_cs_overlay', 'monitor_cs_pixelated', 'monitor_loss_chart', 'monitor_loss_log', 'monitor_loss_smooth', 'monitor_quality', 'metric_kf_fit', 'metric_q_strength', 'metric_q_detail', 'metric_q_texture', 'metric_q_look_drift', 'metric_q_tex_drift', 'metric_q_bg', 'monitor_quality_chart', 'monitor_quality_strip', 'monitor_quality_table', 'monitor_models', 'monitor_model_file', 'monitor_model_tags', 'monitor_log'] },
   { id: 'tools', ids: ['tool_infer_seq', 'tool_infer_dataset', 'tool_infer_model', 'tool_infer_step', 'tool_infer_format', 'api_key'] },
   { id: 'admin', ids: ['admin_max_jobs_per_gpu', 'admin_gpu_pool', 'admin_temp_restrictions', 'admin_default_quotas', 'admin_max_running_per_user', 'admin_users', 'admin_user_quota', 'admin_user_permissions', 'admin_storage_root', 'admin_analytics_db'] },
@@ -684,9 +684,10 @@ async function loadInitialI18nState() {
   const cache = {};
 
   try {
+    const cb = 'v=20261119_v306';
     const [catRes, bRes] = await Promise.all([
-      fetch('/api/v1/locales', { cache: 'no-cache' }),
-      fetch(`/api/v1/locales/${encodeURIComponent(initialCandidate)}`, { cache: 'no-cache' }),
+      fetch(`/api/v1/locales?${cb}`, { cache: 'no-store' }),
+      fetch(`/api/v1/locales/${encodeURIComponent(initialCandidate)}?${cb}`, { cache: 'no-store' }),
     ]);
     if (catRes.ok) {
       const cat = await catRes.json();
@@ -702,7 +703,7 @@ async function loadInitialI18nState() {
       bundle = bJson.messages || {};
       cache[resolvedCode] = bundle;
     } else {
-      const fbRes = await fetch(`/api/v1/locales/${encodeURIComponent(chosen)}`, { cache: 'no-cache' });
+      const fbRes = await fetch(`/api/v1/locales/${encodeURIComponent(chosen)}?${cb}`, { cache: 'no-store' });
       if (fbRes.ok) {
         const bJson = await fbRes.json();
         resolvedCode = bJson.code || chosen;
@@ -755,7 +756,7 @@ async function mountWildCatApp() {
         let bundle = localeBundleCache[target];
         if (!bundle) {
           try {
-            const res = await fetch(`/api/v1/locales/${encodeURIComponent(target)}`, { cache: 'no-cache' });
+            const res = await fetch(`/api/v1/locales/${encodeURIComponent(target)}?v=20261119_v306`, { cache: 'no-store' });
             if (res.ok) {
               const data = await res.json();
               resolved = data.code || target;
@@ -895,7 +896,6 @@ async function mountWildCatApp() {
       const workspaceReady = ref(false);
       const studioMode = ref('create'); // 'create' | 'monitor'
       const labMode = ref('plan'); // 'plan' | 'analyze'
-      const labPlanSubMode = ref('combo'); // 'combo' | 'custom'
       const editingStagedUid = ref('');
       const initCategory = ref('scratch'); // 'scratch' | 'checkpoint'
 
@@ -1227,7 +1227,6 @@ async function mountWildCatApp() {
         in_channels: 3,
         out_channels: 3,
         epochs: 10000,
-        batch_size_mode: 'Auto',
         batch_size: 8,
         crop_size: 256,
         multi_resolution: true,
@@ -1722,14 +1721,21 @@ async function mountWildCatApp() {
         targetAsset: null,
         kind: 'paired_dataset',
         name: '',
-        taskType: '',
-        inputColorspace: 'auto',
+        inputColorspace: '',
         enableCheck: true,
         strategy: 'standard',
         maxErrorPct: 35,
         sourceFiles: [],
         targetFiles: [],
         seqFiles: [],
+        dragRole: '',
+        scanningRole: '',
+        progressPct: 0,
+        progressStage: '',
+        progressDone: 0,
+        progressTotal: 0,
+        progressNetLoadedMb: '0.0',
+        progressNetTotalMb: '0.0',
         errorMsg: '',
         uploading: false,
       });
@@ -1739,7 +1745,6 @@ async function mountWildCatApp() {
         mode: 'train', // 'train' | 'lab_eval'
         query: '',
         seqFilter: 'all', // 'all' | 'with_seq'
-        taskTypeFilter: 'all', // 'all' | task_type
       });
 
       const assetFramesCache = reactive({});
@@ -1848,14 +1853,14 @@ async function mountWildCatApp() {
 
       const effectiveBatchSize = computed(() => {
         const nFrames = datasetFrameCount.value;
-        const req = form.batch_size_mode === 'Auto' ? 8 : Math.max(1, Math.floor(Number(form.batch_size) || 8));
+        const req = Math.max(1, Math.floor(Number(form.batch_size) || 8));
         return Math.min(nFrames, req);
       });
 
       const isBatchClampedByFrames = computed(() => {
         const hasRealCount = Boolean(selectedDataset.value && selectedDataset.value.frame_count);
         if (!hasRealCount) return false;
-        const req = form.batch_size_mode === 'Auto' ? 8 : Math.max(1, Math.floor(Number(form.batch_size) || 8));
+        const req = Math.max(1, Math.floor(Number(form.batch_size) || 8));
         return datasetFrameCount.value < req;
       });
 
@@ -1878,7 +1883,7 @@ async function mountWildCatApp() {
 
       const computedTotalSteps = computed(() => {
         const nFrames = Math.max(1, Number((selectedDataset.value && selectedDataset.value.frame_count) || 1));
-        const reqBs = form.batch_size_mode === 'Auto' ? 8 : Math.max(1, Math.floor(Number(form.batch_size) || 8));
+        const reqBs = Math.max(1, Math.floor(Number(form.batch_size) || 8));
         const bs = Math.min(nFrames, reqBs);
         const ep = Math.max(1, Number(form.epochs) || 1);
         return Math.max(1, Math.ceil((ep * nFrames) / bs));
@@ -2183,15 +2188,6 @@ async function mountWildCatApp() {
         if (!telemetry.vals || !telemetry.vals.length) return null;
         return telemetry.vals[telemetry.vals.length - 1].mse;
       });
-
-      watch(
-        () => form.model_size,
-        (newSize) => {
-          if (form.batch_size_mode === 'Auto') {
-            form.batch_size = AUTO_BATCH[newSize] || 8;
-          }
-        }
-      );
 
       // Parameter linkage watchers: Multi-Resolution ↔ Stage Schedule, Fused Adam ↔ CUDA Graph, Channels ↔ HDR/EV
       watch(
@@ -2687,7 +2683,6 @@ async function mountWildCatApp() {
           const oc = Number(ds.out_channels || 3);
           const preferRgb33 =
             activeAdvPreset.value === 'face_edit' ||
-            ds.task_type === 'face_edit' ||
             !!(adv.kf_common && adv.kf_common.enabled);
           if (oc === 1) {
             syncLockedChannels(ic >= 4 ? 4 : 3, 1);
@@ -2866,19 +2861,7 @@ async function mountWildCatApp() {
       }
 
       // ───────── Form & Hyperparameter Logic ─────────
-      function onModelSizeChange() {
-        if (form.batch_size_mode === 'Auto') {
-          form.batch_size = AUTO_BATCH[form.model_size] || 8;
-        }
-      }
-
-      function onBsModeChange() {
-        if (form.batch_size_mode === 'Auto') {
-          form.batch_size = AUTO_BATCH[form.model_size] || 8;
-        } else {
-          form.batch_size = Math.max(1, Math.floor(Number(form.batch_size) || 8));
-        }
-      }
+      function onModelSizeChange() {}
 
       // One master switch for all acceleration options (all lossless; fused_adam set before cuda_graph)
       const ACCEL_KEYS = ['opt_gpu_resident', 'opt_fused_adam', 'opt_cuda_graph', 'opt_channels_last', 'opt_cudnn_benchmark', 'opt_async_io'];
@@ -3069,6 +3052,8 @@ async function mountWildCatApp() {
         if (initCategory.value === 'checkpoint') {
           iw = form.checkpoint_path || '';
         }
+        const dsWorkCs =
+          (selectedDataset.value && selectedDataset.value.working_colorspace) || form.working_colorspace || 'ACEScg';
         const payload = {
           run_name: (form.run_name || 'WildCat1').trim(),
           paths: {
@@ -3076,10 +3061,10 @@ async function mountWildCatApp() {
             target: (form.target || '').trim(),
           },
           color: {
-            working_colorspace: form.working_colorspace || 'ACEScg',
-            source_colorspace: 'auto',
-            target_colorspace: 'auto',
-            output_colorspace: form.working_colorspace || 'ACEScg',
+            working_colorspace: dsWorkCs,
+            source_colorspace: dsWorkCs,
+            target_colorspace: dsWorkCs,
+            output_colorspace: dsWorkCs,
             output_format: form.output_format || 'exr_half',
             view_transform: 'ACES 1.0 - SDR Video',
           },
@@ -3093,8 +3078,8 @@ async function mountWildCatApp() {
           train: {
             epochs: Number(form.epochs || 10000),
             total_steps: computedTotalSteps.value,
-            batch_size_auto: form.batch_size_mode === 'Auto',
-            batch_size: form.batch_size_mode === 'Auto' ? 8 : Math.max(1, Math.floor(Number(form.batch_size) || 8)),
+            batch_size_auto: false,
+            batch_size: Math.max(1, Math.floor(Number(form.batch_size) || 8)),
             crop_size: Number(form.crop_size || 256),
             learning_rate: Number(form.learning_rate || 0.0001),
             lr_power: 0.3,
@@ -3371,9 +3356,6 @@ async function mountWildCatApp() {
         if (mo.model_size) form.model_size = mo.model_size;
         if (mo.in_channels && mo.out_channels) {
           syncLockedChannels(mo.in_channels, mo.out_channels);
-        }
-        if (typeof tr.batch_size_auto === 'boolean') {
-          form.batch_size_mode = tr.batch_size_auto ? 'Auto' : 'Manual';
         }
         if (tr.batch_size) form.batch_size = Math.max(1, Math.floor(Number(tr.batch_size)));
         if (tr.crop_size) form.crop_size = Number(tr.crop_size);
@@ -4537,14 +4519,21 @@ async function mountWildCatApp() {
         uploadModal.targetAsset = null;
         uploadModal.kind = 'paired_dataset';
         uploadModal.name = `dataset_${Math.floor(Date.now() / 1000) % 10000}`;
-        uploadModal.taskType = '';
-        uploadModal.inputColorspace = 'auto';
+        uploadModal.inputColorspace = '';
         uploadModal.enableCheck = true;
         uploadModal.strategy = 'standard';
         uploadModal.maxErrorPct = 35;
         uploadModal.sourceFiles = [];
         uploadModal.targetFiles = [];
         uploadModal.seqFiles = [];
+        uploadModal.dragRole = '';
+        uploadModal.scanningRole = '';
+        uploadModal.progressPct = 0;
+        uploadModal.progressStage = '';
+        uploadModal.progressDone = 0;
+        uploadModal.progressTotal = 0;
+        uploadModal.progressNetLoadedMb = '0.0';
+        uploadModal.progressNetTotalMb = '0.0';
         uploadModal.errorMsg = '';
         uploadModal.open = true;
       }
@@ -4740,8 +4729,8 @@ async function mountWildCatApp() {
       );
 
       function inferFormatShort(fmt) {
-        if (fmt === 'exr_half') return '16-bit Half EXR (ZIP)';
-        return '32-bit Float EXR (ZIP)';
+        if (fmt === 'exr_half') return t('inferSeq.fmtShortHalf');
+        return t('inferSeq.fmtShortFloat');
       }
 
       function _buildInferDownloadQuery() {
@@ -5063,17 +5052,12 @@ async function mountWildCatApp() {
       const filteredPickerDatasets = computed(() => {
         const q = (datasetPickerModal.query || '').trim().toLowerCase();
         const sf = datasetPickerModal.seqFilter || 'all';
-        const tf = datasetPickerModal.taskTypeFilter || 'all';
         return pickerBaseDatasets.value.filter((a) => {
           if (sf === 'with_seq' && !(a.kind === 'eval_sequence' || a.has_eval_sequence)) {
             return false;
           }
-          if (tf !== 'all' && (a.task_type || '') !== tf) {
-            return false;
-          }
           if (q) {
-            const ttLbl = a.task_type ? t('adv.preset_' + a.task_type) : '';
-            const hay = `${a.name || ''} ${demoBadgeTitle(a) || ''} ${ttLbl} ${a.width}x${a.height} ${a.in_channels}->${a.out_channels}`.toLowerCase();
+            const hay = `${a.name || ''} ${demoBadgeTitle(a) || ''} ${a.width}x${a.height} ${a.in_channels}->${a.out_channels}`.toLowerCase();
             if (!hay.includes(q)) return false;
           }
           return true;
@@ -5089,7 +5073,6 @@ async function mountWildCatApp() {
         }
         datasetPickerModal.query = '';
         datasetPickerModal.seqFilter = 'all';
-        datasetPickerModal.taskTypeFilter = 'all';
         datasetPickerModal.open = true;
       }
 
@@ -5121,16 +5104,6 @@ async function mountWildCatApp() {
         datasetPickerModal.open = false;
       }
 
-      function onUploadTaskTypeChange() {
-        const tt = uploadModal.taskType || '';
-        if (tt === 'roto_matte' || tt === 'keying_despill') {
-          uploadModal.strategy = 'alpha_matting';
-        } else if (uploadModal.strategy === 'alpha_matting') {
-          uploadModal.strategy = 'standard';
-          uploadModal.maxErrorPct = 35;
-        }
-      }
-
       function openAttachSeqModal(assetObj) {
         datasetPickerModal.open = false;
         if (!assetObj || assetObj.kind === 'eval_sequence') {
@@ -5141,10 +5114,18 @@ async function mountWildCatApp() {
         uploadModal.targetAsset = assetObj;
         uploadModal.kind = 'paired_dataset';
         uploadModal.name = assetObj.name;
-        uploadModal.inputColorspace = 'auto';
+        uploadModal.inputColorspace = '';
         uploadModal.sourceFiles = [];
         uploadModal.targetFiles = [];
         uploadModal.seqFiles = [];
+        uploadModal.dragRole = '';
+        uploadModal.scanningRole = '';
+        uploadModal.progressPct = 0;
+        uploadModal.progressStage = '';
+        uploadModal.progressDone = 0;
+        uploadModal.progressTotal = 0;
+        uploadModal.progressNetLoadedMb = '0.0';
+        uploadModal.progressNetTotalMb = '0.0';
         uploadModal.errorMsg = '';
         uploadModal.open = true;
       }
@@ -5169,16 +5150,296 @@ async function mountWildCatApp() {
         return t('upload.filesSelectedWithSize', { count: arr.length, size: szStr });
       }
 
-      function onPairFilesSelected(role, e) {
-        uploadModal.errorMsg = '';
-        const list = Array.from(e.target.files || []);
+      const VALID_UPLOAD_EXT_RE = /\.(exr|png|tif|tiff|jpg|jpeg|zip)$/i;
+
+      function _filterAndSortUploadFiles(rawFiles) {
+        const clean = [];
+        for (const f of rawFiles || []) {
+          if (!f || !f.name) continue;
+          const base = String(f.name).split('/').pop().split('\\').pop();
+          if (!base || base.startsWith('.') || base.startsWith('._')) continue;
+          if (!VALID_UPLOAD_EXT_RE.test(base)) continue;
+          clean.push(f);
+        }
+        clean.sort((a, b) => {
+          const ka = String(a.webkitRelativePath || a._dropPath || a.name || '');
+          const kb = String(b.webkitRelativePath || b._dropPath || b.name || '');
+          return ka.localeCompare(kb, undefined, { numeric: true, sensitivity: 'base' });
+        });
+        return clean;
+      }
+
+      function _assignUploadRoleFiles(role, list) {
         if (role === 'source') uploadModal.sourceFiles = list;
         else if (role === 'target') uploadModal.targetFiles = list;
         else if (role === 'seq') uploadModal.seqFiles = list;
       }
 
+      function clearUploadFiles(role) {
+        uploadModal.errorMsg = '';
+        _assignUploadRoleFiles(role, []);
+      }
+
+      function onPairFilesSelected(role, e) {
+        uploadModal.errorMsg = '';
+        const list = _filterAndSortUploadFiles(Array.from((e && e.target && e.target.files) || []));
+        _assignUploadRoleFiles(role, list);
+        if (e && e.target) e.target.value = '';
+      }
+
+      function onPairFolderSelected(role, e) {
+        uploadModal.errorMsg = '';
+        const raw = Array.from((e && e.target && e.target.files) || []);
+        const list = _filterAndSortUploadFiles(raw);
+        if (raw.length && !list.length) {
+          uploadModal.errorMsg = t('upload.errNoImagesInFolder');
+        }
+        _assignUploadRoleFiles(role, list);
+        if (e && e.target) e.target.value = '';
+      }
+
+      function onUploadDragEnter(role, e) {
+        if (uploadModal.uploading) return;
+        if (e && e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        uploadModal.dragRole = role;
+      }
+
+      function onUploadDragOver(role, e) {
+        if (uploadModal.uploading) return;
+        if (e && e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        if (uploadModal.dragRole !== role) uploadModal.dragRole = role;
+      }
+
+      function onUploadDragLeave(role, e) {
+        if (uploadModal.dragRole !== role) return;
+        const cur = e && e.currentTarget;
+        const rel = e && e.relatedTarget;
+        if (cur && rel && typeof cur.contains === 'function' && cur.contains(rel)) return;
+        uploadModal.dragRole = '';
+      }
+
+      function _readEntryTree(entry, prefix = '') {
+        return new Promise((resolve) => {
+          if (!entry) {
+            resolve([]);
+            return;
+          }
+          if (entry.isFile) {
+            entry.file(
+              (file) => {
+                if (file) {
+                  try {
+                    Object.defineProperty(file, '_dropPath', {
+                      value: prefix ? `${prefix}/${file.name}` : file.name,
+                      configurable: true,
+                    });
+                  } catch (_) {}
+                  resolve([file]);
+                } else {
+                  resolve([]);
+                }
+              },
+              () => resolve([])
+            );
+            return;
+          }
+          if (entry.isDirectory && typeof entry.createReader === 'function') {
+            const reader = entry.createReader();
+            const entries = [];
+            const nextDirPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+            const pump = () => {
+              reader.readEntries(
+                async (batch) => {
+                  if (!batch || !batch.length) {
+                    const nested = await Promise.all(entries.map((ch) => _readEntryTree(ch, nextDirPrefix)));
+                    resolve(nested.flat());
+                    return;
+                  }
+                  entries.push(...batch);
+                  pump();
+                },
+                () => resolve([])
+              );
+            };
+            pump();
+            return;
+          }
+          resolve([]);
+        });
+      }
+
+      async function onUploadDrop(role, e) {
+        uploadModal.dragRole = '';
+        if (uploadModal.uploading) return;
+        uploadModal.errorMsg = '';
+        const dt = e && e.dataTransfer;
+        if (!dt) return;
+
+        // Capture FileSystemEntry handles synchronously before awaiting (DataTransfer clears after tick).
+        const itemList = dt.items ? Array.from(dt.items) : [];
+        const entries = itemList
+          .filter((it) => it && it.kind === 'file' && typeof it.webkitGetAsEntry === 'function')
+          .map((it) => it.webkitGetAsEntry())
+          .filter(Boolean);
+        const directFiles = dt.files ? Array.from(dt.files) : [];
+
+        uploadModal.scanningRole = role;
+        try {
+          let collected = [];
+          if (entries.length) {
+            const groups = await Promise.all(entries.map((en) => _readEntryTree(en, '')));
+            collected = groups.flat();
+          } else {
+            collected = directFiles;
+          }
+          const valid = _filterAndSortUploadFiles(collected);
+          if (!valid.length) {
+            uploadModal.errorMsg = t('upload.errNoImagesInFolder');
+            return;
+          }
+          _assignUploadRoleFiles(role, valid);
+        } finally {
+          if (uploadModal.scanningRole === role) uploadModal.scanningRole = '';
+        }
+      }
+
+      const uploadProgressText = computed(() => {
+        const st = uploadModal.progressStage;
+        const done = Number(uploadModal.progressDone || 0);
+        const total = Number(uploadModal.progressTotal || 0);
+        if (st === 'network') {
+          return t('upload.progUploadingNet', {
+            loaded: uploadModal.progressNetLoadedMb,
+            total: uploadModal.progressNetTotalMb,
+          });
+        }
+        if (st === 'checking') {
+          return total > 0
+            ? t('upload.progCheckingFrames', { done, total })
+            : t('upload.progChecking');
+        }
+        if (st === 'saving_pairs') {
+          return t('upload.progSavingPairs', { done, total: Math.max(done, total) });
+        }
+        if (st === 'saving_seq') {
+          return t('upload.progSavingSeq', { done, total: Math.max(done, total) });
+        }
+        return t('upload.progReceiving');
+      });
+
+      async function _postUploadWithProgress(url, fd, uploadId) {
+        uploadModal.progressPct = 1;
+        uploadModal.progressStage = 'network';
+        uploadModal.progressDone = 0;
+        uploadModal.progressTotal = 0;
+        uploadModal.progressNetLoadedMb = '0.0';
+        uploadModal.progressNetTotalMb = '0.0';
+
+        let finished = false;
+        let netComplete = false;
+        const pollLoop = (async () => {
+          while (!finished) {
+            await new Promise((r) => setTimeout(r, 350));
+            if (finished) break;
+            if (!netComplete && uploadModal.progressPct < 52) continue;
+            try {
+              const pRes = await apiFetch(`/api/v1/assets/upload-progress/${encodeURIComponent(uploadId)}`);
+              const pg = pRes && pRes.progress;
+              if (!pg || finished) continue;
+              const stg = String(pg.stage || '');
+              const d = Number(pg.done || 0);
+              const tot = Number(pg.total || 0);
+              if (stg && stg !== 'receiving') {
+                uploadModal.progressStage = stg;
+                uploadModal.progressDone = d;
+                uploadModal.progressTotal = tot;
+                const frac = tot > 0 ? Math.min(1, Math.max(0, d / tot)) : 0;
+                if (stg === 'checking') {
+                  uploadModal.progressPct = Math.max(uploadModal.progressPct, Math.round(55 + frac * 12));
+                } else if (stg === 'saving_pairs') {
+                  uploadModal.progressPct = Math.max(uploadModal.progressPct, Math.round(67 + frac * 18));
+                } else if (stg === 'saving_seq') {
+                  const base = uploadModal.mode === 'attach_seq' ? 56 : 85;
+                  const span = uploadModal.mode === 'attach_seq' ? 42 : 14;
+                  uploadModal.progressPct = Math.max(uploadModal.progressPct, Math.round(base + frac * span));
+                } else if (stg === 'done') {
+                  uploadModal.progressPct = 100;
+                }
+              }
+            } catch (_) {}
+          }
+        })();
+
+        try {
+          const data = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            xhr.withCredentials = true;
+            if (currentLang.value) xhr.setRequestHeader('X-WildCat-Lang', currentLang.value);
+            if (clientFingerprint) xhr.setRequestHeader('X-Client-FP', clientFingerprint);
+            const safeRoam = (roamCodeLocal.value || '').replace(/[^\x20-\x7E]/g, '').trim();
+            if (safeRoam) xhr.setRequestHeader('X-Roam-Code', safeRoam);
+            if (_shouldSendAdminHeader(url)) xhr.setRequestHeader('X-Admin-Token', adminToken.value);
+
+            xhr.upload.onprogress = (ev) => {
+              if (!ev || !ev.lengthComputable || ev.total <= 0) return;
+              uploadModal.progressNetLoadedMb = (ev.loaded / 1048576).toFixed(1);
+              uploadModal.progressNetTotalMb = (ev.total / 1048576).toFixed(1);
+              const ratio = Math.min(1, Math.max(0, ev.loaded / ev.total));
+              if (uploadModal.progressStage === 'network') {
+                uploadModal.progressPct = Math.max(1, Math.min(55, Math.round(ratio * 55)));
+              }
+              if (ev.loaded >= ev.total) {
+                netComplete = true;
+                if (uploadModal.progressStage === 'network') {
+                  uploadModal.progressStage = 'receiving';
+                  uploadModal.progressPct = Math.max(uploadModal.progressPct, 55);
+                }
+              }
+            };
+            xhr.upload.onload = () => {
+              netComplete = true;
+              if (uploadModal.progressStage === 'network') {
+                uploadModal.progressStage = 'receiving';
+                uploadModal.progressPct = Math.max(uploadModal.progressPct, 55);
+              }
+            };
+            xhr.onerror = () => reject(new Error(t('server.requestFailed')));
+            xhr.onload = () => {
+              let parsed = {};
+              try {
+                parsed = JSON.parse(xhr.responseText || '{}');
+              } catch (_) {}
+              if (xhr.status >= 200 && xhr.status < 300) {
+                uploadModal.progressPct = 100;
+                resolve(parsed);
+                return;
+              }
+              const errMsg = Array.isArray(parsed.detail)
+                ? parsed.detail.map((x) => x.msg || JSON.stringify(x)).join('; ')
+                : typeof parsed.detail === 'object' && parsed.detail !== null
+                ? JSON.stringify(parsed.detail)
+                : parsed.detail;
+              reject(new Error(errMsg || t('msg.reqFailedStatus', { status: xhr.status })));
+            };
+            xhr.send(fd);
+          });
+          return data;
+        } finally {
+          finished = true;
+          await pollLoop.catch(() => {});
+        }
+      }
+
       async function doUploadPairedDataset() {
         uploadModal.errorMsg = '';
+        const explicitCs = String(uploadModal.inputColorspace || '').trim();
+        if (!explicitCs) {
+          uploadModal.errorMsg = t('upload.errSelectColorspace');
+          return;
+        }
+        const uploadId = `up_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
         if (uploadModal.mode === 'attach_seq' && uploadModal.targetAsset) {
           if (!uploadModal.seqFiles.length) {
             uploadModal.errorMsg = t('msg.errSelectSourceSeq');
@@ -5188,15 +5449,13 @@ async function mountWildCatApp() {
           try {
             const aid = uploadModal.targetAsset.id;
             const fd = new FormData();
-            fd.append('input_colorspace', uploadModal.inputColorspace || 'auto');
+            fd.append('input_colorspace', explicitCs);
             fd.append('working_colorspace', 'ACEScg');
+            fd.append('upload_id', uploadId);
             for (const f of uploadModal.seqFiles) {
-              fd.append('seq_files', f);
+              fd.append('seq_files', f, f.name);
             }
-            const res = await apiFetch(`/api/v1/assets/${aid}/eval-sequence`, {
-              method: 'POST',
-              body: fd,
-            });
+            const res = await _postUploadWithProgress(`/api/v1/assets/${aid}/eval-sequence`, fd, uploadId);
             delete assetFramesCache[aid];
             await fetchAssets();
             ensureAssetFrames(aid, true);
@@ -5228,25 +5487,22 @@ async function mountWildCatApp() {
           const fd = new FormData();
           fd.append('name', uploadModal.name || 'paired_dataset');
           fd.append('kind', 'paired_dataset');
-          fd.append('input_colorspace', uploadModal.inputColorspace || 'auto');
+          fd.append('input_colorspace', explicitCs);
           fd.append('working_colorspace', 'ACEScg');
           fd.append('enable_check', uploadModal.enableCheck ? 'true' : 'false');
           fd.append('strategy', uploadModal.strategy || 'standard');
-          fd.append('task_type', uploadModal.taskType || '');
           fd.append('max_error_pct', String(uploadModal.maxErrorPct || 35));
+          fd.append('upload_id', uploadId);
           for (const f of uploadModal.sourceFiles) {
-            fd.append('source_files', f);
+            fd.append('source_files', f, f.name);
           }
           for (const f of uploadModal.targetFiles) {
-            fd.append('target_files', f);
+            fd.append('target_files', f, f.name);
           }
           for (const f of uploadModal.seqFiles) {
-            fd.append('seq_files', f);
+            fd.append('seq_files', f, f.name);
           }
-          const res = await apiFetch('/api/v1/assets/upload-pair', {
-            method: 'POST',
-            body: fd,
-          });
+          const res = await _postUploadWithProgress('/api/v1/assets/upload-pair', fd, uploadId);
           delete assetFramesCache[res.asset.id];
           await fetchAssets();
           selectedDatasetId.value = res.asset.id;
@@ -5292,25 +5548,6 @@ async function mountWildCatApp() {
             await fetchLabCompare(true);
           }
           notify(t('msg.evalSeqRemovedToast', { name: a.name }), 'info');
-        } catch (e) {
-          notify(e.message, 'error');
-        }
-      }
-
-      async function updateDatasetTaskType(assetObj, newTaskType) {
-        if (!assetObj || !assetObj.id) return;
-        const clean = String(newTaskType || '').trim();
-        try {
-          const res = await apiFetch(`/api/v1/assets/${assetObj.id}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ task_type: clean }),
-          });
-          if (res && res.asset) {
-            const idx = assets.value.findIndex((x) => x.id === assetObj.id);
-            if (idx >= 0) Object.assign(assets.value[idx], res.asset);
-            const typeLbl = clean ? t('adv.preset_' + clean) : t('upload.taskTypeUnspecified');
-            notify(t('msg.datasetTaskTypeUpdatedToast', { name: res.asset.name, type: typeLbl }), 'success');
-          }
         } catch (e) {
           notify(e.message, 'error');
         }
@@ -6110,9 +6347,24 @@ async function mountWildCatApp() {
           nonDefault = true;
           tags.push(prec.toUpperCase());
         }
-        if (tr.batch_size_auto === false) {
+        const bsVal = Number(tr.batch_size || 8);
+        const expDsId = Number((c.experiment || {}).dataset_id || 0);
+        const srcPath = String(((c.paths || {}).source) || '').trim();
+        const dsObj = (assets.value || []).find(
+          (a) => (expDsId && a.id === expDsId) || (srcPath && a.source_path === srcPath)
+        ) || selectedDataset.value;
+        const dsFrames = Number((dsObj && dsObj.frame_count) || 0);
+        const nukeDefBs = dsFrames > 0 ? Math.min(8, dsFrames) : 8;
+        if (
+          !tr.batch_size_auto &&
+          String(tr.batch_size || '').toLowerCase() !== 'auto' &&
+          Number.isFinite(bsVal) &&
+          bsVal > 0 &&
+          bsVal !== 8 &&
+          bsVal !== nukeDefBs
+        ) {
           nonDefault = true;
-          tags.push(`Batch=${tr.batch_size || 8}`);
+          tags.push(`Batch=${bsVal}`);
         }
         const crop = Number(tr.crop_size || 256);
         if (crop !== 256) {
@@ -6238,16 +6490,12 @@ async function mountWildCatApp() {
           return false;
         }
         form.epochs = epVal;
-        if (form.batch_size_mode === 'Manual') {
-          const bsVal = Math.floor(Number(form.batch_size || 0));
-          if (!Number.isFinite(bsVal) || bsVal < 1) {
-            notify(t('msg.errInvalidBatch'), 'error');
-            return false;
-          }
-          form.batch_size = bsVal;
-        } else {
-          form.batch_size = 8;
+        const bsVal = Math.floor(Number(form.batch_size || 0));
+        if (!Number.isFinite(bsVal) || bsVal < 1) {
+          notify(t('msg.errInvalidBatch'), 'error');
+          return false;
         }
+        form.batch_size = bsVal;
         return true;
       }
 
@@ -6363,7 +6611,7 @@ async function mountWildCatApp() {
         baseCfg.model.model_size = 'Medium';
         baseCfg.train.multi_resolution = true;
         baseCfg.train.precision = 'adaptive';
-        baseCfg.train.batch_size_auto = true;
+        baseCfg.train.batch_size_auto = false;
         baseCfg.train.batch_size = 8;
         baseCfg.train.crop_size = 256;
         baseCfg.train.initial_weights = 'None';
@@ -6377,7 +6625,6 @@ async function mountWildCatApp() {
         formSnap.model_size = 'Medium';
         formSnap.multi_resolution = true;
         formSnap.precision = 'adaptive';
-        formSnap.batch_size_mode = 'Auto';
         formSnap.batch_size = 8;
         formSnap.crop_size = 256;
         formSnap.initial_weights_mode = 'None';
@@ -6398,513 +6645,6 @@ async function mountWildCatApp() {
           initCategorySnap: 'scratch',
         });
         notify(t('msg.labAddedToast', { name: nodeName }), 'success');
-      }
-
-      // ───────── Recommended Best-Combo Exploration Generator (Parameter Relaxation Suite) ─────────
-      const VALID_COMBO_TASK_TYPES = [
-        'cleanup_grain',
-        'keying_despill',
-        'bokeh_focus',
-        'degrain_clean',
-        'roto_matte',
-        'face_edit',
-      ];
-
-      const labComboCfg = reactive({
-        panelOpen: true,
-        previewOpen: true,
-        baseOpen: false,
-        epochs: 100000,
-        taskType: 'auto', // 'auto' | 'cleanup_grain' | 'keying_despill' | 'bokeh_focus' | 'degrain_clean' | 'roto_matte' | 'face_edit'
-        scope: 'standard', // 'compact' (4) | 'standard' (6) | 'thorough' (8)
-        groupName: '',
-      });
-
-      const hasExplicitDatasetTaskType = computed(() => {
-        const ds = selectedDataset.value;
-        return !!(ds && ds.task_type && VALID_COMBO_TASK_TYPES.includes(ds.task_type));
-      });
-
-      const detectedLabComboTaskType = computed(() => {
-        const ds = selectedDataset.value;
-        if (!ds) return 'cleanup_grain';
-        if (ds.task_type && VALID_COMBO_TASK_TYPES.includes(ds.task_type)) {
-          return ds.task_type;
-        }
-        const ic = Number(ds.in_channels || 3);
-        const oc = Number(ds.out_channels || 3);
-        const hint = `${ds.name || ''} ${ds.demo_key || ''}`.toLowerCase();
-        if (oc === 1) return 'roto_matte';
-        if (ic === 3 && oc === 4) return 'keying_despill';
-        if (/bokeh|defocus|blur|focus|dof|motionblur/.test(hint)) return 'bokeh_focus';
-        if (/key|green|blue|spill|despill/.test(hint) && oc >= 4) return 'keying_despill';
-        if (/degrain|denoise|noise|cleanplate|smartvector|marker|dark/.test(hint)) return 'degrain_clean';
-        if (/roto|mask|matte|alpha/.test(hint) && oc === 1) return 'roto_matte';
-        // face edits: RGB -> RGB and a name that says so (checked after the more specific names above, before the fallbacks)
-        if (ic === 3 && oc === 3 && /face|wound|scar|beauty|aging|deag|swap|makeup/.test(hint)) return 'face_edit';
-        if (Number(ds.avg_mae || 0) > 0 && Number(ds.avg_mae) < 0.012) return 'degrain_clean';
-        return 'cleanup_grain';
-      });
-
-      const effectiveLabComboTaskType = computed(() => {
-        return labComboCfg.taskType === 'auto' ? detectedLabComboTaskType.value : labComboCfg.taskType;
-      });
-
-      function _buildComboCandidateRecipes(ds, effType, scope) {
-        const dsIn = Number((ds && ds.in_channels) || form.in_channels || 3);
-        const dsOut = Number((ds && ds.out_channels) || form.out_channels || 3);
-        let cIn = 3;
-        let cOut = 3;
-        if (isChannelsLocked.value) {
-          cIn = Number(form.in_channels || 3);
-          cOut = Number(form.out_channels || 3);
-        } else if (dsOut === 1) {
-          cIn = dsIn >= 4 ? 4 : 3;
-          cOut = 1;
-        } else if (effType === 'roto_matte' && dsIn >= 3) {
-          cIn = 3;
-          cOut = 1;
-        } else if (effType === 'keying_despill' && dsOut >= 4) {
-          cIn = dsIn >= 4 ? 4 : 3;
-          cOut = 4;
-        } else if (effType === 'face_edit' && dsIn >= 3 && dsOut >= 3) {
-          // the face-edit preset is RGB -> RGB (keyframe commonality needs it), also on a dataset that carries an alpha
-          [cIn, cOut] = FACE_EDIT_PRESET.channels.split('->').map(Number);
-        } else if (dsIn >= 4 && dsOut >= 4) {
-          cIn = 4;
-          cOut = 4;
-        }
-
-        const minSide =
-          ds && Number(ds.width) >= 32 && Number(ds.height) >= 32
-            ? Math.min(Number(ds.width), Number(ds.height))
-            : 1080;
-        const maxLegalCrop = Math.max(32, Math.min(512, Math.floor(minSide / 16) * 16));
-        const clampCrop = (c) => Math.max(32, Math.min(maxLegalCrop, Math.floor(c / 16) * 16));
-        const cropTight = clampCrop(minSide < 256 ? 192 : 256);
-        const cropWide = clampCrop(minSide < 720 ? 256 : 384);
-        const cropMax = clampCrop(minSide >= 1024 ? 512 : cropWide);
-
-        const pickModel = (preferred) => (isModelSizeLocked.value ? form.model_size || 'Medium' : preferred);
-        const clampEp = (ep) => {
-          const clean = Math.max(100, Math.round(Number(ep) || 150000));
-          return userMaxEpochs.value > 0 ? Math.min(clean, userMaxEpochs.value) : clean;
-        };
-
-        // Recipes follow the 2026-11 re-validation (help center, strategy evidence): the anchor of each task type is its preset,
-        // every other recipe changes ONE thing, and the last one is the CopyCat default as control (same Model Size as the
-        // anchor). Charbonnier appears where its tests hold (face-edit preset, a fidelity recipe for clean-up); HDR damping and
-        // horizontal flip only in the "previous preset" recipe kept for comparison.
-        // All recipes of a test use the combo workspace's unified Epochs (equal lengths compare fairly).
-        const comboEp = clampEp(Number(labComboCfg.epochs) || 100000);
-        const G05 = { cr: 0, gw: 0.05, ha: 0 };
-        const STG = [15, 25, 60];
-        const mk = (code, role, reasonKey, o = {}) => ({
-          code,
-          role,
-          reasonKey,
-          nukeNative: !!o.native,
-          model_size: pickModel(o.m || 'Small'),
-          crop_size: o.native ? clampCrop(256) : o.crop || cropTight,
-          grid: o.grid || 1,
-          loss: o.loss || null,
-          stage: o.stage || null,
-          aug: o.aug || null,
-          kf: !!o.kf,
-          kfOverall: o.kfOverall !== false,
-          kfFlow: o.kfFlow === 'raft' ? 'raft' : 'dis',
-          ema: !!o.ema,
-          epochs: o.epochs ? clampEp(o.epochs) : comboEp,
-        });
-        const control = (m) => mk('NukeBase', 'control', 'lab.comboReason_nuke', { native: true, m });
-
-        // keyframe commonality can only take effect on RGB -> RGB with the plate attached and at least 3 keyframes; RAFT
-        // is offered only where the server can run it right now
-        const kfOk = !kfCommonBlocker(cIn, cOut, ds);
-        const raftOk = !!kfCommonRaftOffered.value;
-        let specs = [];
-        if (effType === 'face_edit') {
-          // face edits: anchor = WildCatLargeV1 preset (1px + Charbonnier 0.25 + keyframe commonality + averaged weights);
-          // Medium_Preset tests CopyCat Medium under identical preset settings; CopyCat Medium native default closes the list.
-          const m = FACE_EDIT_PRESET.model_size;
-          const FL = FACE_EDIT_PRESET.loss;
-          const P = { m, crop: clampCrop(FACE_EDIT_PRESET.crop), ema: true, loss: { cr: FL.charbonnier_ratio, gw: FL.grad_weight, ha: FL.hdr_alpha } };
-          specs = kfOk
-            ? [
-                mk('Anchor_Preset', 'anchor', 'lab.comboReason_fe_1', Object.assign({}, P, { kf: true })),
-                mk('Medium_Preset', 'relaxed', 'lab.comboReason_fe_med', Object.assign({}, P, { m: 'Medium', kf: true })),
-                mk('No_KfCommon', 'relaxed', 'lab.comboReason_fe_2', P),
-                mk('No_Charb', 'relaxed', 'lab.comboReason_fe_8', Object.assign({}, P, { kf: true, loss: null })),
-                mk('Kf_NoOverall', 'relaxed', 'lab.comboReason_fe_5', Object.assign({}, P, { kf: true, kfOverall: false })),
-              ]
-                .concat(raftOk ? [mk('Kf_Raft', 'relaxed', 'lab.comboReason_fe_6', Object.assign({}, P, { kf: true, kfFlow: 'raft' }))] : [])
-                .concat([
-                  mk('Small_Preset', 'relaxed', 'lab.comboReason_fe_4', Object.assign({}, P, { m: 'Small', kf: true })),
-                  control('Medium'),
-                ])
-            : [
-                mk('Anchor_NoKf', 'anchor', 'lab.comboReason_fe_nokf', P),
-                mk('Medium_NoKf', 'relaxed', 'lab.comboReason_fe_med_nokf', Object.assign({}, P, { m: 'Medium' })),
-                mk('No_Charb', 'relaxed', 'lab.comboReason_fe_9', Object.assign({}, P, { loss: null })),
-                control('Medium'),
-              ];
-        } else if (effType === 'cleanup_grain') {
-          // paint / erase shots: hand-painted keyframes can disagree like face edits do -> keyframe commonality is offered
-          // as one recipe where it can take effect (its evidence comes from face shots)
-          const A = { m: PRESET_SPECS.cleanup_grain.model_size, loss: G05, ema: true, stage: STG };
-          specs = [mk('Anchor_Preset', 'anchor', 'lab.comboReason_cg_1', A)]
-            .concat(kfOk ? [mk('Kf_Common', 'relaxed', 'lab.comboReason_cg_kf', Object.assign({}, A, { kf: true }))] : [])
-            .concat([
-              mk('Grid1_Only', 'relaxed', 'lab.comboReason_cg_2', { m: A.m, ema: true, stage: STG }),
-              mk('Small_Preset', 'relaxed', 'lab.comboReason_cg_3', Object.assign({}, A, { m: 'Small' })),
-              mk('Charb_Fidelity', 'relaxed', 'lab.comboReason_cg_8', { m: A.m, ema: true, stage: STG, loss: { cr: 0.25, gw: 0.05, ha: 0 } }),
-              mk('Wide_Crop', 'relaxed', 'lab.comboReason_cg_6', Object.assign({}, A, { crop: cropWide })),
-              // the previous preset (until Patch 58): equal stage thirds, everything else as recommended
-              mk('Prev_Preset', 'relaxed', 'lab.comboReason_cg_7', { m: A.m, loss: G05, ema: true }),
-              control(A.m),
-            ]);
-        } else if (effType === 'keying_despill') {
-          specs = [
-            mk('Anchor_Preset', 'anchor', 'lab.comboReason_kd_1', { loss: { cr: 0, gw: 0.15, ha: 0 }, ema: true }),
-            mk('Grid1_Only', 'relaxed', 'lab.comboReason_kd_2', { ema: true }),
-            mk('Grad_005', 'relaxed', 'lab.comboReason_kd_3', { loss: G05, ema: true }),
-            mk('Med_Preset', 'relaxed', 'lab.comboReason_kd_4', { m: 'Medium', loss: { cr: 0, gw: 0.15, ha: 0 }, ema: true }),
-            mk('Grad_030', 'relaxed', 'lab.comboReason_kd_5', { loss: { cr: 0, gw: 0.3, ha: 0 }, ema: true }),
-            mk('Wide_Crop', 'relaxed', 'lab.comboReason_kd_6', { loss: { cr: 0, gw: 0.15, ha: 0 }, crop: cropWide, ema: true }),
-            mk('Prev_Preset', 'relaxed', 'lab.comboReason_kd_7', { loss: { cr: 0.3, gw: 0.15, ha: cOut === 1 ? 0 : 0.35 } }),
-            control('Small'),
-          ];
-        } else if (effType === 'bokeh_focus') {
-          specs = [
-            mk('Anchor_Preset', 'anchor', 'lab.comboReason_bf_1', {
-              m: 'Large',
-              loss: { cr: 0.25, gw: 0.1, ha: cOut === 1 ? 0 : 0.5 },
-              stage: STG,
-            }),
-            mk('Stage_Only', 'relaxed', 'lab.comboReason_bf_2', { m: 'Large', stage: STG }),
-            mk('Med_Stage', 'relaxed', 'lab.comboReason_bf_3', { m: 'Medium', stage: STG }),
-            mk('Equal_Stages', 'relaxed', 'lab.comboReason_bf_4', { m: 'Large' }),
-            mk('Small_Stage', 'relaxed', 'lab.comboReason_bf_5', { stage: STG }),
-            mk('Wide_Crop', 'relaxed', 'lab.comboReason_bf_6', { m: 'Large', stage: STG, crop: cropWide }),
-            mk('Small_Grid1', 'relaxed', 'lab.comboReason_bf_7'),
-            control('Large'),
-          ];
-        } else if (effType === 'degrain_clean') {
-          specs = [mk('Anchor_Preset', 'anchor', 'lab.comboReason_dg_1')]
-            // degrain gets slightly worse with longer training: offer the 100k version when the user trains longer
-            .concat(comboEp > 100000 ? [mk('Short_100k', 'relaxed', 'lab.comboReason_dg_7', { epochs: 100000 })] : [])
-            .concat([
-            mk('Grad_005', 'relaxed', 'lab.comboReason_dg_2', { loss: G05 }),
-            mk('Med_Grid1', 'relaxed', 'lab.comboReason_dg_3', { m: 'Medium' }),
-            mk('Prev_Preset', 'relaxed', 'lab.comboReason_dg_4', { loss: { cr: 0.25, gw: 0.05, ha: cOut === 1 ? 0 : 0.5 } }),
-            mk('Wide_Crop', 'relaxed', 'lab.comboReason_dg_5', { crop: cropWide }),
-            mk('Grad_015', 'relaxed', 'lab.comboReason_dg_6', { loss: { cr: 0, gw: 0.15, ha: 0 } }),
-            control('Small'),
-          ]);
-        } else {
-          // roto_matte: no knob had a measurable effect in the re-validation, so the list is short on purpose
-          specs = [
-            mk('Anchor_Preset', 'anchor', 'lab.comboReason_rm_1'),
-            mk('Prev_Preset', 'relaxed', 'lab.comboReason_rm_2', { loss: { cr: 0.25, gw: 0.05, ha: 0 } }),
-            mk('Wide_Crop', 'relaxed', 'lab.comboReason_rm_3', { crop: cropWide }),
-            mk('Grad_005', 'relaxed', 'lab.comboReason_rm_4', { loss: G05 }),
-            control('Small'),
-          ];
-        }
-
-        // a variant that trains exactly what an earlier recipe trains (e.g. "wide crop" on a plate whose short side is below
-        // 720 px, where the wide crop is the same 256 px as the anchor's) would only repeat a run: it is left out
-        const sig = (r) => JSON.stringify([r.nukeNative, r.model_size, r.crop_size, r.grid, r.loss, r.stage, r.aug, r.kf, r.kf && r.kfOverall, r.kf && r.kfFlow, r.ema, r.epochs]);
-        const seenSig = new Set();
-        specs = specs.filter((r, i) => {
-          if (i === specs.length - 1) return true; // the control always stays
-          const k = sig(r);
-          if (seenSig.has(k)) return false;
-          seenSig.add(k);
-          return true;
-        });
-        const count = scope === 'compact' ? 4 : scope === 'thorough' ? 8 : 6;
-        const controlSpec = specs[specs.length - 1];
-        const chosen = count >= specs.length ? specs : specs.slice(0, count - 1).concat([controlSpec]);
-
-        const nFrames = Math.max(1, Number((ds && ds.frame_count) || 8));
-        const reqBs = form.batch_size_mode === 'Auto' ? 8 : Math.max(1, Math.floor(Number(form.batch_size) || 8));
-        const effBs = Math.min(nFrames, reqBs);
-
-        let iw = 'None';
-        if (initCategory.value === 'checkpoint') {
-          iw = form.checkpoint_path || 'None';
-        }
-
-        const srcPath = ds ? ds.source_path || ds.rel_path || '' : (form.source || '').trim();
-        const tgtPath = ds ? ds.target_path || ds.rel_path || '' : (form.target || '').trim();
-
-        return chosen.map((sp, idx) => {
-          const ep = sp.epochs;
-          const totSteps = Math.max(1, Math.ceil((ep * nFrames) / effBs));
-          const advSnap = createDefaultAdvConfig();
-          if (!sp.nukeNative) {
-            if (sp.grid && sp.grid !== 4) {
-              advSnap.crop_grid.enabled = true;
-              advSnap.crop_grid.full_res_grid = sp.grid;
-            }
-            if (sp.loss && (sp.loss.cr > 0 || sp.loss.gw > 0 || sp.loss.ha > 0)) {
-              advSnap.loss_family.enabled = true;
-              advSnap.loss_family.charbonnier_ratio = sp.loss.cr;
-              advSnap.loss_family.grad_weight = sp.loss.gw;
-              advSnap.loss_family.hdr_alpha = cOut === 1 ? 0 : sp.loss.ha;
-            }
-            if (sp.stage && sp.stage.length === 3) {
-              advSnap.stage_schedule.enabled = true;
-              advSnap.stage_schedule.r_quarter = sp.stage[0];
-              advSnap.stage_schedule.r_half = sp.stage[1];
-              advSnap.stage_schedule.r_full = sp.stage[2];
-              advSnap.stage_schedule.warmup_steps = 200;
-            }
-            if (sp.aug && (sp.aug.flip > 0 || sp.aug.ev > 0)) {
-              advSnap.augment.enabled = true;
-              advSnap.augment.hflip_prob = sp.aug.flip;
-              advSnap.augment.exposure_ev = cIn < 3 && cOut < 3 ? 0 : sp.aug.ev;
-            }
-            if (sp.kf) {
-              Object.assign(advSnap.kf_common, FACE_EDIT_PRESET.kf_common, { enabled: true, overall: sp.kfOverall, flow: sp.kfFlow });
-            }
-            if (sp.ema) {
-              advSnap.ema_lr.enabled = true;
-              advSnap.ema_lr.ema_decay = 0.9995;
-            }
-          }
-
-          let spIw = sp.nukeNative ? 'None' : iw;
-          const cfg = {
-            run_name: `Combo${idx + 1}_${sp.code}`,
-            paths: {
-              source: srcPath,
-              target: tgtPath,
-            },
-            color: {
-              working_colorspace: form.working_colorspace || 'ACEScg',
-              source_colorspace: 'auto',
-              target_colorspace: 'auto',
-              output_colorspace: form.working_colorspace || 'ACEScg',
-              output_format: form.output_format || 'exr_half',
-              view_transform: 'ACES 1.0 - SDR Video',
-            },
-            model: {
-              model_size: sp.model_size,
-              in_channels: cIn,
-              out_channels: cOut,
-              n_levels: 3,
-              scale: 0.5,
-            },
-            train: {
-              epochs: ep,
-              total_steps: totSteps,
-              batch_size_auto: form.batch_size_mode === 'Auto',
-              batch_size: effBs,
-              crop_size: sp.crop_size,
-              learning_rate: Number(form.learning_rate || 0.0001),
-              lr_power: 0.3,
-              multi_resolution: true,
-              precision: form.precision || 'adaptive',
-              seed: Number(form.seed || 0),
-              initial_weights: spIw,
-              resume: false,
-            },
-            optimizations: {
-              engine: accelAny.value ? 'fast' : 'reference',
-              lossless: {
-                gpu_resident: form.opt_gpu_resident ? 'auto' : false,
-                cuda_graph: !!(form.opt_cuda_graph && form.opt_fused_adam),
-                fused_adam: !!form.opt_fused_adam,
-                channels_last: !!form.opt_channels_last,
-                cudnn_benchmark: !!form.opt_cudnn_benchmark,
-                async_io: !!form.opt_async_io,
-                preview_gpu: form.preview_gpu || 'auto',
-              },
-            },
-            loss: { l1_weight: 0.0, l2_weight: 1.0 },
-            io: {
-              checkpoint_interval: Math.max(10, Number(form.checkpoint_interval || 1000)),
-              preview_enabled: form.preview_gpu !== 'off',
-              preview_interval: Math.max(10, Number(form.preview_interval || 100)),
-              preview_size: 0,
-              log_interval: Math.max(1, Number(form.log_interval || 10)),
-            },
-          };
-          if (!sp.nukeNative) {
-            cfg.advanced = JSON.parse(JSON.stringify(advSnap));
-          }
-          if (ds && ds.id) {
-            cfg.experiment = { dataset_id: ds.id };
-            if (ds.has_eval_sequence && ds.seq_path) {
-              cfg.paths.eval_sequence = ds.seq_path;
-            }
-          }
-
-          const formSnap = JSON.parse(JSON.stringify(form));
-          formSnap.source = srcPath;
-          formSnap.target = tgtPath;
-          formSnap.model_size = sp.model_size;
-          formSnap.in_channels = cIn;
-          formSnap.out_channels = cOut;
-          formSnap.epochs = ep;
-          formSnap.crop_size = sp.crop_size;
-          formSnap.multi_resolution = true;
-          if (sp.nukeNative || spIw === 'None') {
-            formSnap.initial_weights_mode = 'None';
-            formSnap.checkpoint_path = '';
-          }
-
-          const diff = summarizeClientConfig(cfg);
-          const etaSec = estimateConfigDurationSec(cfg);
-          return {
-            idx: idx + 1,
-            code: sp.code,
-            role: sp.role,
-            reasonKey: sp.reasonKey,
-            cfg,
-            formSnap,
-            advSnap,
-            initCategorySnap: sp.nukeNative || spIw === 'None' ? 'scratch' : initCategory.value,
-            diff,
-            etaSec,
-          };
-        });
-      }
-
-      // a face shot in the combination panel: find out whether RAFT can run here, so that its recipe can be offered
-      watch(
-        () => topNav.value === 'lab' && labMode.value === 'plan' && labPlanSubMode.value === 'combo' && effectiveLabComboTaskType.value === 'face_edit',
-        (want) => {
-          if (want && typeof ensureKfFlowCaps === 'function') ensureKfFlowCaps();
-        },
-        { immediate: true }
-      );
-
-      // Why the combination list has no keyframe-commonality recipe for a face / paint shot (null = nothing to say)
-      const labComboKfNote = computed(() => {
-        const effType = effectiveLabComboTaskType.value;
-        if (effType !== 'face_edit' && effType !== 'cleanup_grain') return null;
-        const ds = selectedDataset.value;
-        const cIn = Number((ds && ds.in_channels) || form.in_channels || 3);
-        const cOut = effType === 'face_edit' ? 3 : Number((ds && ds.out_channels) || form.out_channels || 3);
-        const why = kfCommonBlocker(effType === 'face_edit' ? 3 : cIn, cOut, ds);
-        return why ? t('lab.comboKfBlocked_' + why, { count: ds ? ds.frame_count : 0 }) : null;
-      });
-
-      const labComboSuitePreview = computed(() => {
-        const ds = selectedDataset.value;
-        const effType = effectiveLabComboTaskType.value;
-        const candidates = _buildComboCandidateRecipes(ds, effType, labComboCfg.scope);
-        const enabledGpus = (queue.gpus || []).filter((g) => g && g.enabled !== false);
-        const gpuSlots = Math.max(
-          1,
-          (enabledGpus.length || 1) * Math.max(1, Number(adminSettings.max_jobs_per_gpu || 1))
-        );
-        // Greedy multi-GPU makespan estimate
-        const bins = new Array(gpuSlots).fill(0);
-        for (const c of candidates) {
-          let minIdx = 0;
-          for (let i = 1; i < bins.length; i++) {
-            if (bins[i] < bins[minIdx]) minIdx = i;
-          }
-          bins[minIdx] += c.etaSec;
-        }
-        const maxBudgetParallelSec = bins.length ? Math.max(...bins) : 0;
-
-        return {
-          effType,
-          gpuSlots,
-          candidates,
-          maxBudgetParallelSec,
-          defaultGroupName: t('lab.comboDefaultGroupFmt', {
-            type: t(`adv.preset_${effType}`),
-            count: candidates.length,
-          }),
-        };
-      });
-
-      async function stageRecommendedComboSuite(launchImmediately = false) {
-        if (!canUseLab.value) {
-          notify(t('server.tempUserLabLocked'), 'warning');
-          return;
-        }
-        const ds = selectedDataset.value;
-        if (!ds || !(ds.source_path || ds.rel_path) || !(ds.target_path || ds.rel_path)) {
-          notify(t('msg.errSelectDatasetFirst'), 'error');
-          return;
-        }
-        if (initCategory.value === 'checkpoint' && !form.checkpoint_path) {
-          notify(t('msg.errSelectCheckpointFirst'), 'error');
-          return;
-        }
-        const suite = labComboSuitePreview.value;
-        if (!suite.candidates.length) return;
-
-        const taken = new Set([
-          ...tasks.value.map((x) => x.node_name),
-          ...labStaged.value.map((x) => x.node_name),
-        ]);
-        const allocateUniqueComboName = (idx, code) => {
-          const cleanCode = String(code || 'Run')
-            .replace(/[^A-Za-z0-9_-]/g, '')
-            .slice(0, 16);
-          let n = idx;
-          let cand = `Combo${n}_${cleanCode}`;
-          while (taken.has(cand)) {
-            n += 1;
-            cand = `Combo${n}_${cleanCode}`;
-          }
-          taken.add(cand);
-          return cand;
-        };
-
-        const groupTitle = (labComboCfg.groupName || '').trim() || suite.defaultGroupName;
-        let targetGrp = activeStagedGroup.value;
-        if (targetGrp && targetGrp.items.length === 0 && !(targetGrp.name || '').trim()) {
-          targetGrp.name = groupTitle;
-          targetGrp.collapsed = false;
-        } else {
-          targetGrp = addNewLabStagedGroup(groupTitle);
-          targetGrp.collapsed = false;
-        }
-
-        const stagedItems = suite.candidates.map((cand) => {
-          const nodeName = allocateUniqueComboName(cand.idx, cand.code);
-          const cfgCopy = JSON.parse(JSON.stringify(cand.cfg));
-          cfgCopy.run_name = nodeName;
-          return {
-            uid: `st_${Date.now()}_${cand.idx}_${Math.random().toString(36).slice(2, 7)}`,
-            node_name: nodeName,
-            preferred_gpu: form.preferred_gpu || 'auto',
-            dataset_name: ds.name || '',
-            dataset_id: ds.id || null,
-            note: t(cand.reasonKey),
-            diff: summarizeClientConfig(cfgCopy),
-            config: cfgCopy,
-            formSnap: JSON.parse(JSON.stringify(cand.formSnap)),
-            advSnap: JSON.parse(JSON.stringify(cand.advSnap)),
-            initCategorySnap: cand.initCategorySnap,
-          };
-        });
-
-        targetGrp.batchEpochs = Math.max(100, Math.round(Number(labComboCfg.epochs) || 100000));
-        targetGrp.items.push(...stagedItems);
-        labActiveStagedGroupId.value = targetGrp.gid;
-        form.run_name = nextUniqueExpNodeName();
-
-        if (launchImmediately) {
-          await submitLabStagedGroup(targetGrp.gid);
-        } else {
-          notify(
-            t('msg.labComboStagedToast', {
-              count: stagedItems.length,
-              group: groupTitle,
-            }),
-            'success'
-          );
-        }
       }
 
       const editingStagedItem = computed(() => {
@@ -6974,7 +6714,6 @@ async function mountWildCatApp() {
 
       function loadStagedToForm(item) {
         if (!item) return;
-        labPlanSubMode.value = 'custom';
         editingStagedUid.value = item.uid;
         if (item.dataset_id && pairedAssets.value.some((a) => a.id === item.dataset_id)) {
           selectedDatasetId.value = item.dataset_id;
@@ -8605,7 +8344,6 @@ async function mountWildCatApp() {
         workspaceReady,
         studioMode,
         labMode,
-        labPlanSubMode,
         editingStagedUid,
         editingStagedItem,
         initCategory,
@@ -8767,7 +8505,6 @@ async function mountWildCatApp() {
         onChannelPresetChange,
         onSelectDataset,
         onModelSizeChange,
-        onBsModeChange,
         submitNewTrainingTask,
         resumeExistingTask,
         extendExistingTask,
@@ -8798,7 +8535,6 @@ async function mountWildCatApp() {
         openDatasetModal,
         openAttachSeqModal,
         detachEvalSequence,
-        updateDatasetTaskType,
         assetFramesCache,
         getAssetScrubber,
         ensureAssetFrames,
@@ -8811,10 +8547,16 @@ async function mountWildCatApp() {
         formatGpuOptionLabel,
         formatDatasetOptionLabel,
         formatLabDatasetOptionLabel,
-        onUploadTaskTypeChange,
         onUploadStrategyChange,
         formatSelectedFilesInfo,
+        clearUploadFiles,
         onPairFilesSelected,
+        onPairFolderSelected,
+        onUploadDragEnter,
+        onUploadDragOver,
+        onUploadDragLeave,
+        onUploadDrop,
+        uploadProgressText,
         doUploadPairedDataset,
         importDemoAssets,
         useDatasetForTraining,
@@ -8844,13 +8586,6 @@ async function mountWildCatApp() {
         moveLabStagedItemToGroup,
         addCurrentToLabList,
         addNukeBaselineToLabList,
-        labComboCfg,
-        hasExplicitDatasetTaskType,
-        detectedLabComboTaskType,
-        effectiveLabComboTaskType,
-        labComboSuitePreview,
-        labComboKfNote,
-        stageRecommendedComboSuite,
         loadStagedToForm,
         saveEditedStagedItem,
         cancelEditStagedItem,

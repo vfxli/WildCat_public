@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261118_v304" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261119_v306" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -992,365 +992,6 @@
                 </button>
               </div>
 
-              <!-- LAB EXCLUSIVE: MUTUALLY EXCLUSIVE PLAN SUB-MODE SWITCHER (COMBO SUITE vs SINGLE CUSTOM TASK) -->
-              <div v-if="topNav === 'lab'" class="bg-slate-900 border border-slate-800 rounded-2xl p-2 flex flex-wrap items-center justify-between gap-2">
-                <div class="grid grid-cols-2 gap-2 flex-1 min-w-[280px]">
-                  <button type="button"
-                          @click="labPlanSubMode = 'combo'"
-                          class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border"
-                          :class="labPlanSubMode === 'combo'
-                            ? 'bg-indigo-600 text-white border-indigo-400/60 shadow-lg shadow-indigo-900/40'
-                            : 'bg-slate-950/75 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'">
-                    <span>{{ t('lab.planSubComboBtn') }}</span>
-                  </button>
-                  <button type="button"
-                          @click="labPlanSubMode = 'custom'"
-                          class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border"
-                          :class="labPlanSubMode === 'custom'
-                            ? 'bg-violet-600 text-white border-violet-400/60 shadow-lg shadow-violet-900/40'
-                            : 'bg-slate-950/75 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'">
-                    <span>{{ t('lab.planSubCustomBtn') }}</span>
-                    <span v-if="editingStagedItem"
-                          class="px-1.5 py-0.5 rounded bg-amber-500/25 border border-amber-400/60 text-[10px] text-amber-200 wc-mono">
-                      {{ t('lab.editingItemBadge') }}
-                    </span>
-                  </button>
-                </div>
-                <div class="px-2 text-[11px] text-slate-400 hidden xl:block">
-                  {{ labPlanSubMode === 'combo' ? t('lab.planSubComboHint') : t('lab.planSubCustomHint') }}
-                </div>
-              </div>
-
-              <!-- LAB SUB-MODE A: SELF-CONTAINED RECOMMENDED COMBO WORKSPACE (NO CONFLICTING SINGLE-TASK FORM BELOW) -->
-              <section v-if="topNav === 'lab' && labPlanSubMode === 'combo'"
-                       class="bg-gradient-to-br from-slate-900 via-indigo-950/30 to-violet-950/25 border border-indigo-500/40 rounded-2xl overflow-hidden shadow-xl shadow-indigo-950/20">
-                <div class="px-5 py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80">
-                  <div class="space-y-1 min-w-0">
-                    <div class="flex flex-wrap items-center gap-2">
-                      <h3 class="text-sm font-bold text-white">{{ t('lab.comboTitle') }}<help-tip doc="lab_combo"></help-tip></h3>
-                      <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/35 text-[10px] font-bold text-emerald-300">
-                        {{ t('lab.comboOvernightBadge') }}
-                      </span>
-                    </div>
-                    <p class="text-xs text-slate-300/90 leading-relaxed">{{ docSummary('lab_combo') }}</p>
-                  </div>
-                  <div class="flex items-center gap-2 shrink-0">
-                    <button type="button"
-                            @click="openHelp('presets')"
-                            class="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-indigo-200 transition-all">
-                      {{ t('adv.openHelpPresetsBtn') }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="p-5 space-y-4">
-                  <!-- Row 1: All Shared Combo Settings in One Self-Contained Grid -->
-                  <div class="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
-                    <!-- Col 1: Target Dataset -->
-                    <div class="lg:col-span-4 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                      <div class="flex items-center justify-between gap-2">
-                        <label class="text-xs font-bold text-slate-200">{{ t('lab.comboDatasetLabel') }}<help-tip doc="lab_combo_dataset"></help-tip></label>
-                        <div class="flex items-center gap-1.5">
-                          <button v-if="selectedDataset"
-                                  type="button"
-                                  @click="openAttachSeqModal(selectedDataset)"
-                                  class="px-2 py-0.5 rounded bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/35 text-[10px] font-semibold transition-all">
-                            {{ selectedDataset.has_eval_sequence ? t('wizard.replaceSeqQuickBtn') : t('wizard.attachSeqQuickBtn') }}
-                          </button>
-                          <button type="button"
-                                  @click="openDatasetModal()"
-                                  class="px-2 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/35 text-[10px] font-semibold transition-all">
-                            {{ t('wizard.newDatasetBtn') }}
-                          </button>
-                        </div>
-                      </div>
-                      <button type="button"
-                              @click="openDatasetPicker('train')"
-                              class="wc-select flex items-center justify-between gap-2 text-left text-xs font-semibold">
-                        <template v-if="selectedDataset">
-                          <div class="flex items-center gap-2 min-w-0">
-                            <img v-if="selectedDataset.thumb_url"
-                                 :src="selectedDataset.thumb_url"
-                                 class="w-7 h-5 rounded object-cover bg-black border border-slate-700 shrink-0" />
-                            <span class="font-semibold text-white wc-mono truncate">{{ selectedDataset.name }}</span>
-                          </div>
-                          <div class="flex items-center gap-1.5 shrink-0">
-                            <span class="px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-[10px] text-slate-300 wc-mono">
-                              {{ selectedDataset.frame_count }}{{ t('datasets.framesShort') }} · {{ selectedDataset.width }}×{{ selectedDataset.height }}
-                            </span>
-                            <span v-if="selectedDataset.has_eval_sequence"
-                                  class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"
-                                  :title="t('wizard.datasetHasSeqBadge', { frames: selectedDataset.seq_frame_count })"></span>
-                          </div>
-                        </template>
-                        <span v-else class="text-amber-300 truncate">{{ t('msg.errSelectDatasetFirst') }}</span>
-                      </button>
-                      <div v-if="selectedDataset" class="flex flex-wrap items-center gap-1.5 text-[10px] wc-mono text-slate-400">
-                        <span>{{ selectedDataset.width }}×{{ selectedDataset.height }}</span>
-                        <span>· {{ selectedDataset.in_channels }}ch→{{ selectedDataset.out_channels }}ch</span>
-                        <span>· {{ selectedDataset.frame_count }} {{ t('wizard.framesUnit') }}</span>
-                        <span v-if="selectedDataset.has_eval_sequence" class="text-emerald-300 font-semibold">
-                          · ✓ {{ t('wizard.datasetHasSeqBadge', { frames: selectedDataset.seq_frame_count }) }}
-                        </span>
-                        <span v-else class="text-amber-300/80">
-                          · {{ t('lab.comboSeqOptionalHint') }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <!-- Col 2: Training Task Type -->
-                    <div class="lg:col-span-3 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                      <div class="flex items-center justify-between gap-2">
-                        <label class="text-xs font-bold text-slate-200">{{ t('lab.comboTaskTypeLabel') }}<help-tip doc="lab_combo_task_type"></help-tip></label>
-                        <span v-if="labComboCfg.taskType === 'auto'"
-                              class="px-2 py-0.5 rounded text-[10px] font-semibold truncate border"
-                              :class="hasExplicitDatasetTaskType
-                                ? 'bg-emerald-500/15 border-emerald-400/35 text-emerald-200'
-                                : 'bg-violet-500/15 border-violet-400/35 text-violet-200'">
-                          {{ hasExplicitDatasetTaskType
-                              ? t('lab.comboDatasetTypeFmt', { type: t('adv.preset_' + detectedLabComboTaskType) })
-                              : t('lab.comboAutoInferredFmt', { type: t('adv.preset_' + detectedLabComboTaskType) }) }}
-                        </span>
-                      </div>
-                      <select v-model="labComboCfg.taskType" class="wc-select text-xs font-semibold">
-                        <option value="auto">{{ t('lab.comboTaskAutoOpt') }}</option>
-                        <option value="cleanup_grain">{{ t('adv.preset_cleanup_grain') }}</option>
-                        <option value="keying_despill">{{ t('adv.preset_keying_despill') }}</option>
-                        <option value="bokeh_focus">{{ t('adv.preset_bokeh_focus') }}</option>
-                        <option value="degrain_clean">{{ t('adv.preset_degrain_clean') }}</option>
-                        <option value="roto_matte">{{ t('adv.preset_roto_matte') }}</option>
-                        <option value="face_edit">{{ t('adv.preset_face_edit') }}</option>
-                      </select>
-                      <div class="text-[11px] text-slate-400 leading-snug">
-                        {{ docSummary('preset_' + effectiveLabComboTaskType) }}
-                      </div>
-                    </div>
-
-                    <!-- Col 3: Exploration Scope -->
-                    <div class="lg:col-span-2 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                      <label class="text-xs font-bold text-slate-200 block">{{ t('lab.comboScopeLabel') }}<help-tip doc="lab_combo_scope"></help-tip></label>
-                      <div class="grid grid-cols-1 gap-1.5">
-                        <button v-for="sc in [
-                                  { id: 'compact',  lbl: t('lab.comboScopeCompact') },
-                                  { id: 'standard', lbl: t('lab.comboScopeStandard') },
-                                  { id: 'thorough', lbl: t('lab.comboScopeThorough') }
-                                ]"
-                                :key="sc.id"
-                                type="button"
-                                @click="labComboCfg.scope = sc.id"
-                                class="px-2.5 py-1.5 rounded-lg border text-left text-[11px] font-semibold transition-all flex items-center justify-between"
-                                :class="labComboCfg.scope === sc.id
-                                  ? 'bg-indigo-600/30 border-indigo-400/60 text-white shadow'
-                                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'">
-                          <span>{{ sc.lbl }}</span>
-                          <span v-if="labComboCfg.scope === sc.id" class="text-emerald-300 text-[10px]">✓</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Col 4: Unified Combo Epochs & Target GPU -->
-                    <div class="lg:col-span-3 bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
-                      <div>
-                        <label class="flex items-center justify-between text-xs font-bold text-slate-200 mb-1">
-                          <span class="inline-flex items-center">{{ t('lab.comboEpochsLabel') }}<help-tip doc="epochs"></help-tip></span>
-                          <span v-if="labComboSuitePreview.candidates.length" class="text-[10px] text-emerald-300 wc-mono">
-                            {{ labComboSuitePreview.candidates[0].cfg.train.total_steps.toLocaleString() }} st
-                          </span>
-                        </label>
-                        <input v-model.number="labComboCfg.epochs"
-                               type="number"
-                               min="100"
-                               :max="userMaxEpochs > 0 ? userMaxEpochs : null"
-                               step="10000"
-                               class="wc-input wc-input-sm wc-mono text-xs" />
-                      </div>
-                      <div>
-                        <label class="flex items-center text-xs font-bold text-slate-200 mb-1">
-                          <span>{{ t('wizard.useDeviceLabel') }}</span>
-                          <help-tip doc="device"></help-tip>
-                        </label>
-                        <select v-model="form.preferred_gpu" class="wc-select text-xs">
-                          <option value="auto">
-                            {{ queue.all_gpus_disabled ? t('wizard.autoQueuePaused') : (queue.idle_gpu_count > 0 ? t('wizard.autoQueueIdle') : t('wizard.autoQueueWait', { eta: formatEta(queue.next_auto_wait_sec) })) }}
-                          </option>
-                          <option v-for="g in queue.gpus" :key="'cb-gpu-' + g.gpu_id" :value="g.gpu_id" :disabled="g.enabled === false">
-                            {{ formatGpuOptionLabel(g) }}
-                          </option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Row 2: Optional Shared Base Settings (applies uniformly to all tasks in this combo) -->
-                  <div class="bg-slate-950/65 border border-slate-800 rounded-xl overflow-hidden">
-                    <button type="button"
-                            @click="labComboCfg.baseOpen = !labComboCfg.baseOpen"
-                            class="w-full px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-slate-900/60 transition-colors">
-                      <div class="flex flex-wrap items-center gap-2 text-xs">
-                        <span class="text-indigo-300 transition-transform duration-150 inline-block" :class="labComboCfg.baseOpen ? 'rotate-90' : ''">▸</span>
-                        <span class="font-semibold text-slate-200">{{ t('lab.comboSharedBaseTitle') }}</span>
-                        <span class="text-[11px] text-slate-400">{{ t('lab.comboSharedBaseHint') }}</span>
-                      </div>
-                      <span class="text-[11px] text-slate-400 wc-mono">
-                        Batch {{ form.batch_size_mode === 'Auto' ? 'Auto(8)' : form.batch_size }} · Seed {{ form.seed }} · LR {{ form.learning_rate }} · {{ form.precision }} · Ckpt {{ form.checkpoint_interval }}
-                      </span>
-                    </button>
-                    <div v-if="labComboCfg.baseOpen" class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-800/80 grid grid-cols-2 md:grid-cols-3 gap-3">
-                      <div>
-                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
-                          <span>Batch Size</span><help-tip doc="batch_size"></help-tip>
-                        </label>
-                        <div class="flex items-center gap-1.5">
-                          <select v-model="form.batch_size_mode" @change="onBsModeChange" class="wc-select text-xs flex-1">
-                            <option value="Auto">{{ t('wizard.batchAutoOpt') }}</option>
-                            <option value="Manual">{{ t('wizard.batchManualOpt') }}</option>
-                          </select>
-                          <input v-if="form.batch_size_mode === 'Manual'"
-                                 v-model.number="form.batch_size"
-                                 type="number" min="1" step="1"
-                                 class="wc-input wc-mono text-xs !w-16 text-center" />
-                        </div>
-                      </div>
-                      <div>
-                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
-                          <span>Seed</span><help-tip doc="seed"></help-tip>
-                        </label>
-                        <input v-model.number="form.seed" type="number" min="0" class="wc-input wc-mono text-xs" />
-                      </div>
-                      <div>
-                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
-                          <span>Learning Rate</span><help-tip doc="learning_rate"></help-tip>
-                        </label>
-                        <input v-model.number="form.learning_rate" type="number" step="0.00001" class="wc-input wc-mono text-xs" />
-                      </div>
-                      <div>
-                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
-                          <span>Mixed Precision</span><help-tip doc="mixed_precision"></help-tip>
-                        </label>
-                        <select v-model="form.precision" class="wc-select text-xs">
-                          <option value="adaptive">{{ t('wizard.precAdaptiveOpt') }}</option>
-                          <option value="fp32">{{ t('wizard.precFp32Opt') }}</option>
-                          <option value="fp16">{{ t('wizard.precFp16Opt') }}</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
-                          <span>Checkpoint Interval</span><help-tip doc="checkpoint_interval"></help-tip>
-                        </label>
-                        <input v-model.number="form.checkpoint_interval" type="number" min="10" step="100" class="wc-input wc-mono text-xs" />
-                      </div>
-                      <div>
-                        <label class="flex items-center text-[11px] font-medium text-slate-300 mb-1">
-                          <span>Contact Sheet Interval</span><help-tip doc="contact_sheet_interval"></help-tip>
-                        </label>
-                        <input v-model.number="form.preview_interval" type="number" min="10" step="50" class="wc-input wc-mono text-xs" />
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Row 3: Live Candidate Matrix Preview & Multi-GPU Parallel Runtime Estimate -->
-                  <div class="bg-slate-950/75 border border-slate-800 rounded-xl p-3.5 space-y-3">
-                    <div class="flex flex-wrap items-center justify-between gap-2">
-                      <div class="flex flex-wrap items-center gap-2 text-xs">
-                        <span class="font-bold text-white">
-                          {{ t('lab.comboPreviewHeaderFmt', { count: labComboSuitePreview.candidates.length }) }}
-                        </span>
-                        <span class="px-2.5 py-0.5 rounded-lg bg-indigo-500/15 border border-indigo-500/35 text-[11px] font-semibold text-indigo-200 wc-mono">
-                          {{ t('lab.comboEtaFullBudgetFmt', {
-                                  gpus: labComboSuitePreview.gpuSlots,
-                                  max: formatEta(labComboSuitePreview.maxBudgetParallelSec)
-                                }) }}
-                        </span>
-                      </div>
-                      <button type="button"
-                              @click="labComboCfg.previewOpen = !labComboCfg.previewOpen"
-                              class="text-[11px] text-indigo-300 hover:text-white font-semibold">
-                        {{ labComboCfg.previewOpen ? t('lab.comboHidePreviewBtn') : t('lab.comboShowPreviewBtn') }}
-                      </button>
-                    </div>
-
-                    <!-- why no recipe uses keyframe commonality on this dataset (face / paint shots only) -->
-                    <div v-if="labComboKfNote"
-                         class="px-3.5 py-2.5 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-[11px] leading-relaxed">
-                      ⚠ {{ labComboKfNote }}
-                    </div>
-                    <div v-if="labComboCfg.previewOpen" class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      <div v-for="cand in labComboSuitePreview.candidates"
-                           :key="'cb-cand-' + cand.idx"
-                           class="p-3 rounded-xl border bg-slate-900/80 space-y-1.5"
-                           :class="cand.role === 'anchor'
-                             ? 'border-emerald-500/45 bg-emerald-950/15'
-                             : (cand.role === 'control' ? 'border-slate-700' : 'border-violet-500/30')">
-                        <div class="flex items-center justify-between gap-2">
-                          <div class="flex items-center gap-1.5 min-w-0">
-                            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold wc-mono shrink-0"
-                                  :class="cand.role === 'anchor'
-                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                    : (cand.role === 'control'
-                                        ? 'bg-slate-800 text-slate-300 border border-slate-700'
-                                        : 'bg-violet-500/20 text-violet-200 border border-violet-500/35')">
-                              #{{ cand.idx }} {{ t('lab.comboRole_' + cand.role) }}
-                            </span>
-                            <span class="text-xs font-bold text-white wc-mono truncate">Combo{{ cand.idx }}_{{ cand.code }}</span>
-                          </div>
-                          <span class="text-[10px] text-slate-400 wc-mono shrink-0">
-                            {{ cand.cfg.train.epochs.toLocaleString() }} Ep · ~{{ formatEta(cand.etaSec) }}
-                          </span>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-1">
-                          <span v-if="cand.role === 'anchor'"
-                                class="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-semibold text-emerald-200">
-                            ✓ {{ t('lab.comboPresetActiveBadge', { type: t('adv.preset_' + labComboSuitePreview.effType) }) }}
-                          </span>
-                          <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-indigo-300 wc-mono">
-                            {{ cand.diff.model_size }}
-                          </span>
-                          <span v-if="cand.diff.is_nuke_native || cand.role === 'control'"
-                                class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-[10px] text-emerald-300 wc-mono">
-                            {{ cand.diff.is_nuke_native ? t('lab.nukeNativeTag') : t('lab.nukeNativeSameSizeTag') }}
-                          </span>
-                          <span v-for="tg in (cand.diff.tags || []).filter((x) => x !== cand.diff.model_size)"
-                                :key="'cbtg-' + cand.idx + '-' + tg"
-                                class="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-[10px] text-slate-300 wc-mono">
-                            {{ tg }}
-                          </span>
-                        </div>
-                        <div class="text-[11px] text-slate-300/95 leading-snug">
-                          {{ t(cand.reasonKey) }}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Row 4: Group Name & 1-Click Launch / Stage Buttons -->
-                  <div class="flex flex-wrap items-center justify-between gap-3 pt-1">
-                    <div class="flex items-center gap-2 flex-1 min-w-[240px]">
-                      <label class="text-xs text-slate-400 shrink-0 inline-flex items-center">{{ t('lab.comboGroupNameLabel') }}<help-tip doc="lab_group_name"></help-tip></label>
-                      <input v-model="labComboCfg.groupName"
-                             type="text"
-                             class="wc-input wc-input-sm text-xs flex-1"
-                             :placeholder="labComboSuitePreview.defaultGroupName" />
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2.5 shrink-0">
-                      <button type="button"
-                              @click="stageRecommendedComboSuite(false)"
-                              :disabled="!canUseLab || !pairedAssets.length || labSubmitting"
-                              class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 border border-violet-500/45 text-violet-200 hover:text-white text-xs font-bold transition-all">
-                        {{ t('lab.comboStageBtn', { count: labComboSuitePreview.candidates.length }) }}
-                      </button>
-                      <button type="button"
-                              @click="stageRecommendedComboSuite(true)"
-                              :disabled="!canUseLab || !pairedAssets.length || labSubmitting"
-                              class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-indigo-600 to-violet-600 hover:from-emerald-500 hover:via-indigo-500 hover:to-violet-500 disabled:opacity-45 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all">
-                        {{ labSubmitting ? t('lab.submittingBatchBtn') : t('lab.comboLaunchNowBtn', { count: labComboSuitePreview.candidates.length }) }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <!-- SINGLE-TASK CONFIGURATOR (STUDIO CREATE OR LAB SUB-MODE B: CUSTOM SINGLE TASK) -->
-              <template v-if="topNav === 'studio' || labPlanSubMode === 'custom'">
                 <!-- Active Staged-Item Edit Banner (when user clicked Edit on a staged item in Left Sidebar) -->
                 <div v-if="topNav === 'lab' && editingStagedItem"
                      class="bg-amber-950/35 border border-amber-500/50 rounded-2xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
@@ -1453,7 +1094,7 @@
                           {{ demoBadgeTitle(selectedDataset) }}
                         </span>
                         <span class="px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-[10px] font-bold text-indigo-300 wc-mono">
-                          {{ selectedDataset.file_format || 'EXR' }} · {{ selectedDataset.colorspace || 'ACEScg' }} (OCIO)
+                          {{ selectedDataset.file_format || 'EXR' }} · {{ (selectedDataset.input_colorspace && selectedDataset.input_colorspace !== (selectedDataset.working_colorspace || 'ACEScg')) ? (selectedDataset.input_colorspace + ' → ' + (selectedDataset.working_colorspace || 'ACEScg')) : (selectedDataset.working_colorspace || selectedDataset.colorspace || 'ACEScg') }} (OCIO)
                         </span>
                         <span class="text-slate-400 wc-mono">
                           · <strong class="text-white">{{ selectedDataset.frame_count }}</strong> {{ t('wizard.framesUnit') }}
@@ -1478,18 +1119,6 @@
                     </div>
 
                     <div class="flex flex-wrap items-center gap-2 shrink-0">
-                      <select :value="selectedDataset.task_type || ''"
-                              @change="updateDatasetTaskType(selectedDataset, $event.target.value)"
-                              class="wc-select !w-auto !py-1 !px-2.5 text-[11px] font-semibold">
-                        <option value="">{{ t('datasets.taskTypeLabel') }}: {{ t('upload.taskTypeUnspecified') }}</option>
-                        <option value="cleanup_grain">{{ t('adv.preset_cleanup_grain') }}</option>
-                        <option value="keying_despill">{{ t('adv.preset_keying_despill') }}</option>
-                        <option value="bokeh_focus">{{ t('adv.preset_bokeh_focus') }}</option>
-                        <option value="degrain_clean">{{ t('adv.preset_degrain_clean') }}</option>
-                        <option value="roto_matte">{{ t('adv.preset_roto_matte') }}</option>
-                        <option value="face_edit">{{ t('adv.preset_face_edit') }}</option>
-                      </select>
-                      <help-tip doc="dataset_task_type"></help-tip>
                       <span v-if="selectedDataset.has_eval_sequence"
                             class="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/35 text-[11px] font-semibold text-emerald-300 wc-mono">
                         ✓ {{ t('wizard.datasetHasSeqBadge', { frames: selectedDataset.seq_frame_count }) }}
@@ -1726,16 +1355,9 @@
                       </span>
                       <span v-if="isBatchClampedByFrames" class="ml-2 min-w-0 truncate text-[11px] text-amber-400 wc-mono">{{ t('wizard.batchClampedHint', { eff: effectiveBatchSize }) }}</span>
                     </label>
-                    <div class="flex items-center gap-2">
-                      <select v-model="form.batch_size_mode" @change="onBsModeChange" class="wc-select flex-1">
-                        <option value="Auto">{{ t('wizard.batchAutoOpt') }}</option>
-                        <option value="Manual">{{ t('wizard.batchManualOpt') }}</option>
-                      </select>
-                      <input v-if="form.batch_size_mode === 'Manual'"
-                             v-model.number="form.batch_size"
-                             type="number" min="1" step="1"
-                             class="wc-input wc-mono !w-20 text-center" />
-                    </div>
+                    <input v-model.number="form.batch_size"
+                           type="number" min="1" step="1"
+                           class="wc-input wc-mono" />
                   </div>
 
                   <!-- 4. Crop Size -->
@@ -2555,7 +2177,6 @@
                   </div>
                 </div>
               </section>
-              </template>
             </div>
 
             <!-- ══════════ STUDIO STAGE B: SELECTED TASK LIVE MONITOR & CONTROLS ══════════ -->
@@ -4136,20 +3757,6 @@
                   <p v-if="demoDescText(a)" class="text-[11px] text-slate-300 leading-relaxed">
                     {{ demoDescText(a) }}
                   </p>
-                  <div v-if="a.kind !== 'eval_sequence'" class="pt-1 flex items-center gap-2" @click.stop>
-                    <span class="text-[11px] text-slate-400 shrink-0">{{ t('datasets.taskTypeLabel') }}<help-tip doc="dataset_task_type"></help-tip></span>
-                    <select :value="a.task_type || ''"
-                            @change="updateDatasetTaskType(a, $event.target.value)"
-                            class="wc-select !py-1 !px-2 text-[11px] flex-1">
-                      <option value="">{{ t('upload.taskTypeUnspecified') }}</option>
-                      <option value="cleanup_grain">{{ t('adv.preset_cleanup_grain') }}</option>
-                      <option value="keying_despill">{{ t('adv.preset_keying_despill') }}</option>
-                      <option value="bokeh_focus">{{ t('adv.preset_bokeh_focus') }}</option>
-                      <option value="degrain_clean">{{ t('adv.preset_degrain_clean') }}</option>
-                      <option value="roto_matte">{{ t('adv.preset_roto_matte') }}</option>
-                      <option value="face_edit">{{ t('adv.preset_face_edit') }}</option>
-                    </select>
-                  </div>
                   <div class="text-[11px] text-slate-400 wc-mono truncate">
                     {{ a.source_path }}<span v-if="a.kind !== 'eval_sequence'"> → {{ a.target_path }}</span><span v-if="a.has_eval_sequence && a.seq_path"> · {{ t('datasets.seqPathLabel') }}: {{ a.seq_path }}</span> ({{ ((a.size_bytes || 0) / 1048576).toFixed(1) }} MB)
                   </div>
@@ -4219,7 +3826,7 @@
                   <h3 class="text-sm font-bold text-white flex flex-wrap items-center gap-2">
                     <span>{{ t('inferSeq.title') }}<help-tip doc="tool_infer_seq"></help-tip></span>
                     <span class="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-bold text-emerald-300 wc-mono">
-                      32-bit Float · ZIP Lossless EXR · ACEScg
+                      {{ t('inferSeq.headerFormatBadge') }}
                     </span>
                   </h3>
                   <p class="text-xs text-slate-400 leading-relaxed">{{ t('inferSeq.subtitle') }}</p>
@@ -5587,7 +5194,7 @@
             </span>
             <help-tip doc="dataset_files"></help-tip>
           </div>
-          <button @click="uploadModal.open = false" class="text-slate-400 hover:text-white text-sm">✕</button>
+          <button @click="!uploadModal.uploading && (uploadModal.open = false)" :disabled="uploadModal.uploading" class="text-slate-400 hover:text-white text-sm disabled:opacity-40">✕</button>
         </div>
 
         <!-- MODE B: Attach / Replace Validation Sequence on Existing Dataset -->
@@ -5605,22 +5212,61 @@
               <span>{{ t('upload.inputCsLabel') }}</span>
               <help-tip doc="dataset_input_colorspace"></help-tip>
             </label>
-            <select v-model="uploadModal.inputColorspace" class="wc-select text-xs">
-              <option value="auto">{{ t('upload.csAutoOpt') }}</option>
-              <option value="ACEScg">{{ t('upload.csAcesOpt') }}</option>
-              <option value="sRGB">{{ t('upload.csSrgbOpt') }}</option>
+            <select v-model="uploadModal.inputColorspace"
+                    :disabled="uploadModal.uploading"
+                    class="wc-select text-xs"
+                    :class="!uploadModal.inputColorspace ? 'border-amber-500/60 text-amber-200' : ''">
+              <option value="" disabled>{{ t('upload.csPlaceholder') }}</option>
+              <option value="ACEScg">{{ t('upload.csAcescgOpt') }}</option>
+              <option value="Output - sRGB">{{ t('upload.csOutputSrgbOpt') }}</option>
+              <option value="sRGB - Texture">{{ t('upload.csSrgbTexOpt') }}</option>
+              <option value="Linear sRGB">{{ t('upload.csLinSrgbOpt') }}</option>
+              <option value="Output - Rec.709">{{ t('upload.csOutputRec709Opt') }}</option>
+              <option value="Rec.709 - Texture">{{ t('upload.csRec709TexOpt') }}</option>
+              <option value="ACES2065-1">{{ t('upload.csAces2065Opt') }}</option>
+              <option value="ACEScct">{{ t('upload.csAcescctOpt') }}</option>
               <option value="Raw">{{ t('upload.csRawOpt') }}</option>
             </select>
           </div>
 
-          <div class="bg-slate-950/90 border border-amber-500/35 rounded-xl p-4 space-y-2.5">
+          <div @dragenter.prevent="onUploadDragEnter('seq', $event)"
+               @dragover.prevent="onUploadDragOver('seq', $event)"
+               @dragleave.prevent="onUploadDragLeave('seq', $event)"
+               @drop.prevent="onUploadDrop('seq', $event)"
+               class="bg-slate-950/90 border rounded-xl p-4 space-y-2.5 transition-all"
+               :class="uploadModal.dragRole === 'seq' ? 'border-amber-400 ring-2 ring-amber-400/35 bg-amber-950/20' : 'border-amber-500/35'">
             <label class="block text-xs font-bold text-amber-300">{{ t('upload.optSeqTitle') }}<help-tip doc="dataset_validation_sequence"></help-tip></label>
             <p class="text-[11px] text-slate-400 leading-relaxed" v-html="tHtml('upload.optSeqHintHtml')"></p>
-            <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
-                   @change="onPairFilesSelected('seq', $event)"
-                   class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-600 file:text-white hover:file:bg-amber-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
-            <div class="text-xs" :class="uploadModal.seqFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
-              {{ formatSelectedFilesInfo(uploadModal.seqFiles) }}
+            <div class="rounded-xl border border-dashed border-slate-700 bg-slate-900/80 p-3 flex flex-wrap items-center gap-2">
+              <label class="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold cursor-pointer transition-all"
+                     :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                <span>{{ t('upload.pickFilesBtn') }}</span>
+                <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
+                       :disabled="uploadModal.uploading"
+                       @change="onPairFilesSelected('seq', $event)"
+                       class="hidden" />
+              </label>
+              <label class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-200 text-xs font-semibold cursor-pointer transition-all"
+                     :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                <span>{{ t('upload.pickFolderBtn') }}</span>
+                <input type="file" webkitdirectory directory multiple
+                       :disabled="uploadModal.uploading"
+                       @change="onPairFolderSelected('seq', $event)"
+                       class="hidden" />
+              </label>
+              <span class="text-[11px] text-slate-400">{{ t('upload.dropFolderHint') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-2 text-xs">
+              <span v-if="uploadModal.scanningRole === 'seq'" class="text-amber-300">{{ t('upload.scanningFolder') }}</span>
+              <span v-else :class="uploadModal.seqFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
+                {{ formatSelectedFilesInfo(uploadModal.seqFiles) }}
+              </span>
+              <button v-if="uploadModal.seqFiles.length && !uploadModal.uploading"
+                      type="button"
+                      @click="clearUploadFiles('seq')"
+                      class="text-[11px] text-slate-400 hover:text-rose-300">
+                {{ t('upload.clearFilesBtn') }}
+              </button>
             </div>
           </div>
         </template>
@@ -5630,10 +5276,10 @@
           <div class="flex items-center justify-between p-3 rounded-xl border transition"
                :class="uploadModal.enableCheck ? 'bg-indigo-950/35 border-indigo-500/40' : 'bg-slate-950/80 border-slate-800'">
             <label class="flex items-center gap-2.5 cursor-pointer select-none">
-              <input type="checkbox" v-model="uploadModal.enableCheck" class="wc-check" />
+              <input type="checkbox" v-model="uploadModal.enableCheck" :disabled="uploadModal.uploading" class="wc-check" />
               <div>
                 <div class="text-xs font-bold" :class="uploadModal.enableCheck ? 'text-indigo-200' : 'text-slate-400'">
-                  {{ t('upload.enableCheckTitle') }}<help-tip doc="dataset_check"></help-tip> <span class="text-[10px] font-normal text-emerald-400 ml-1">{{ t('upload.enableCheckDefaultTag') }}</span>
+                  {{ t('upload.enableCheckTitle') }}<help-tip doc="dataset_check"></help-tip>
                 </div>
                 <div class="text-[11px] text-slate-400">
                   {{ uploadModal.enableCheck ? t('upload.checkOnDesc') : t('upload.checkOffDesc') }}
@@ -5649,89 +5295,189 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-semibold text-slate-200 mb-1">{{ t('upload.nameLabel') }}<help-tip doc="dataset_name"></help-tip></label>
-              <input v-model="uploadModal.name" type="text" class="wc-input text-xs wc-mono" :placeholder="t('upload.namePlaceholder')" />
-            </div>
-            <div>
-              <label class="flex items-center gap-1 text-xs font-semibold text-slate-200 mb-1">
-                <span>{{ t('upload.taskTypeLabel') }}</span>
-                <help-tip doc="dataset_task_type"></help-tip>
-              </label>
-              <select v-model="uploadModal.taskType" @change="onUploadTaskTypeChange" class="wc-select text-xs">
-                <option value="">{{ t('upload.taskTypeUnspecified') }}</option>
-                <option value="cleanup_grain">{{ t('adv.preset_cleanup_grain') }}</option>
-                <option value="keying_despill">{{ t('adv.preset_keying_despill') }}</option>
-                <option value="bokeh_focus">{{ t('adv.preset_bokeh_focus') }}</option>
-                <option value="degrain_clean">{{ t('adv.preset_degrain_clean') }}</option>
-                <option value="roto_matte">{{ t('adv.preset_roto_matte') }}</option>
-                <option value="face_edit">{{ t('adv.preset_face_edit') }}</option>
-              </select>
-            </div>
-            <div>
-              <label class="flex items-center gap-1 text-xs font-semibold text-slate-200 mb-1">
-                <span>{{ t('upload.inputCsLabel') }}</span>
-                <help-tip doc="dataset_input_colorspace"></help-tip>
-              </label>
-              <select v-model="uploadModal.inputColorspace" class="wc-select text-xs">
-                <option value="auto">{{ t('upload.csAutoOpt') }}</option>
-                <option value="ACEScg">{{ t('upload.csAcesOpt') }}</option>
-                <option value="sRGB">{{ t('upload.csSrgbOpt') }}</option>
-                <option value="Raw">{{ t('upload.csRawOpt') }}</option>
-              </select>
+              <input v-model="uploadModal.name" :disabled="uploadModal.uploading" type="text" class="wc-input text-xs wc-mono" :placeholder="t('upload.namePlaceholder')" />
             </div>
             <div :class="!uploadModal.enableCheck ? 'opacity-45 pointer-events-none' : ''">
               <label class="block text-xs font-semibold text-slate-200 mb-1">{{ t('upload.toleranceLabel', { pct: uploadModal.maxErrorPct }) }}<help-tip doc="dataset_tolerance"></help-tip></label>
               <div class="flex items-center gap-1.5">
-                <select v-model="uploadModal.strategy" @change="onUploadStrategyChange" :disabled="!uploadModal.enableCheck" class="wc-select text-xs flex-1">
+                <select v-model="uploadModal.strategy" @change="onUploadStrategyChange" :disabled="!uploadModal.enableCheck || uploadModal.uploading" class="wc-select text-xs flex-1">
                   <option value="standard">{{ t('upload.stratStandard') }}</option>
                   <option value="loose">{{ t('upload.stratLoose') }}</option>
                   <option value="strict">{{ t('upload.stratStrict') }}</option>
                   <option value="alpha_matting">{{ t('upload.stratAlpha') }}</option>
                 </select>
                 <input v-model.number="uploadModal.maxErrorPct"
-                       :disabled="!uploadModal.enableCheck || uploadModal.strategy === 'alpha_matting'"
+                       :disabled="!uploadModal.enableCheck || uploadModal.strategy === 'alpha_matting' || uploadModal.uploading"
                        type="number" min="5" max="95" step="1"
                        class="wc-input text-xs wc-mono !w-14 text-center" />
               </div>
+            </div>
+            <div class="md:col-span-2">
+              <label class="flex items-center gap-1 text-xs font-semibold text-slate-200 mb-1">
+                <span>{{ t('upload.inputCsLabel') }}</span>
+                <help-tip doc="dataset_input_colorspace"></help-tip>
+              </label>
+              <select v-model="uploadModal.inputColorspace"
+                      :disabled="uploadModal.uploading"
+                      class="wc-select text-xs"
+                      :class="!uploadModal.inputColorspace ? 'border-amber-500/60 text-amber-200' : ''">
+                <option value="" disabled>{{ t('upload.csPlaceholder') }}</option>
+                <option value="ACEScg">{{ t('upload.csAcescgOpt') }}</option>
+                <option value="Output - sRGB">{{ t('upload.csOutputSrgbOpt') }}</option>
+                <option value="sRGB - Texture">{{ t('upload.csSrgbTexOpt') }}</option>
+                <option value="Linear sRGB">{{ t('upload.csLinSrgbOpt') }}</option>
+                <option value="Output - Rec.709">{{ t('upload.csOutputRec709Opt') }}</option>
+                <option value="Rec.709 - Texture">{{ t('upload.csRec709TexOpt') }}</option>
+                <option value="ACES2065-1">{{ t('upload.csAces2065Opt') }}</option>
+                <option value="ACEScct">{{ t('upload.csAcescctOpt') }}</option>
+                <option value="Raw">{{ t('upload.csRawOpt') }}</option>
+              </select>
             </div>
           </div>
 
           <!-- Required Paired Keyframes: Source + Target -->
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="bg-slate-950/90 border border-indigo-500/30 rounded-xl p-4 space-y-2.5">
+            <div @dragenter.prevent="onUploadDragEnter('source', $event)"
+                 @dragover.prevent="onUploadDragOver('source', $event)"
+                 @dragleave.prevent="onUploadDragLeave('source', $event)"
+                 @drop.prevent="onUploadDrop('source', $event)"
+                 class="bg-slate-950/90 border rounded-xl p-4 space-y-2.5 transition-all"
+                 :class="uploadModal.dragRole === 'source' ? 'border-indigo-400 ring-2 ring-indigo-400/35 bg-indigo-950/25' : 'border-indigo-500/30'">
               <label class="block text-xs font-bold text-indigo-300">{{ t('upload.sourceTitle') }}<help-tip doc="dataset_keyframes"></help-tip></label>
               <p class="text-[11px] text-slate-400" v-html="tHtml('upload.sourceHintHtml')"></p>
-              <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
-                     @change="onPairFilesSelected('source', $event)"
-                     class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
-              <div class="text-xs" :class="uploadModal.sourceFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
-                {{ formatSelectedFilesInfo(uploadModal.sourceFiles) }}
+              <div class="rounded-xl border border-dashed border-slate-700 bg-slate-900/80 p-2.5 space-y-1.5">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <label class="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer transition-all"
+                         :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                    <span>{{ t('upload.pickFilesBtn') }}</span>
+                    <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
+                           :disabled="uploadModal.uploading"
+                           @change="onPairFilesSelected('source', $event)"
+                           class="hidden" />
+                  </label>
+                  <label class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-indigo-500/40 text-indigo-200 text-xs font-semibold cursor-pointer transition-all"
+                         :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                    <span>{{ t('upload.pickFolderBtn') }}</span>
+                    <input type="file" webkitdirectory directory multiple
+                           :disabled="uploadModal.uploading"
+                           @change="onPairFolderSelected('source', $event)"
+                           class="hidden" />
+                  </label>
+                </div>
+                <div class="text-[11px] text-slate-400">{{ t('upload.dropFolderHint') }}</div>
+              </div>
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <span v-if="uploadModal.scanningRole === 'source'" class="text-indigo-300">{{ t('upload.scanningFolder') }}</span>
+                <span v-else :class="uploadModal.sourceFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
+                  {{ formatSelectedFilesInfo(uploadModal.sourceFiles) }}
+                </span>
+                <button v-if="uploadModal.sourceFiles.length && !uploadModal.uploading"
+                        type="button"
+                        @click="clearUploadFiles('source')"
+                        class="text-[11px] text-slate-400 hover:text-rose-300">
+                  {{ t('upload.clearFilesBtn') }}
+                </button>
               </div>
             </div>
 
-            <div class="bg-slate-950/90 border border-emerald-500/30 rounded-xl p-4 space-y-2.5">
+            <div @dragenter.prevent="onUploadDragEnter('target', $event)"
+                 @dragover.prevent="onUploadDragOver('target', $event)"
+                 @dragleave.prevent="onUploadDragLeave('target', $event)"
+                 @drop.prevent="onUploadDrop('target', $event)"
+                 class="bg-slate-950/90 border rounded-xl p-4 space-y-2.5 transition-all"
+                 :class="uploadModal.dragRole === 'target' ? 'border-emerald-400 ring-2 ring-emerald-400/35 bg-emerald-950/25' : 'border-emerald-500/30'">
               <label class="block text-xs font-bold text-emerald-300">{{ t('upload.targetTitle') }}<help-tip doc="dataset_keyframes"></help-tip></label>
               <p class="text-[11px] text-slate-400" v-html="tHtml('upload.targetHintHtml')"></p>
-              <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
-                     @change="onPairFilesSelected('target', $event)"
-                     class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
-              <div class="text-xs" :class="uploadModal.targetFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
-                {{ formatSelectedFilesInfo(uploadModal.targetFiles) }}
+              <div class="rounded-xl border border-dashed border-slate-700 bg-slate-900/80 p-2.5 space-y-1.5">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <label class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-all"
+                         :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                    <span>{{ t('upload.pickFilesBtn') }}</span>
+                    <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
+                           :disabled="uploadModal.uploading"
+                           @change="onPairFilesSelected('target', $event)"
+                           class="hidden" />
+                  </label>
+                  <label class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 text-emerald-200 text-xs font-semibold cursor-pointer transition-all"
+                         :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                    <span>{{ t('upload.pickFolderBtn') }}</span>
+                    <input type="file" webkitdirectory directory multiple
+                           :disabled="uploadModal.uploading"
+                           @change="onPairFolderSelected('target', $event)"
+                           class="hidden" />
+                  </label>
+                </div>
+                <div class="text-[11px] text-slate-400">{{ t('upload.dropFolderHint') }}</div>
+              </div>
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <span v-if="uploadModal.scanningRole === 'target'" class="text-emerald-300">{{ t('upload.scanningFolder') }}</span>
+                <span v-else :class="uploadModal.targetFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
+                  {{ formatSelectedFilesInfo(uploadModal.targetFiles) }}
+                </span>
+                <button v-if="uploadModal.targetFiles.length && !uploadModal.uploading"
+                        type="button"
+                        @click="clearUploadFiles('target')"
+                        class="text-[11px] text-slate-400 hover:text-rose-300">
+                  {{ t('upload.clearFilesBtn') }}
+                </button>
               </div>
             </div>
           </div>
 
           <!-- Optional Full Continuous Validation Sequence -->
-          <div class="bg-slate-950/90 border border-amber-500/30 rounded-xl p-4 space-y-2">
+          <div @dragenter.prevent="onUploadDragEnter('seq', $event)"
+               @dragover.prevent="onUploadDragOver('seq', $event)"
+               @dragleave.prevent="onUploadDragLeave('seq', $event)"
+               @drop.prevent="onUploadDrop('seq', $event)"
+               class="bg-slate-950/90 border rounded-xl p-4 space-y-2 transition-all"
+               :class="uploadModal.dragRole === 'seq' ? 'border-amber-400 ring-2 ring-amber-400/35 bg-amber-950/20' : 'border-amber-500/30'">
             <label class="block text-xs font-bold text-amber-300">{{ t('upload.optSeqTitle') }}<help-tip doc="dataset_validation_sequence"></help-tip></label>
             <p class="text-[11px] text-slate-400 leading-relaxed" v-html="tHtml('upload.optSeqHintHtml')"></p>
-            <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
-                   @change="onPairFilesSelected('seq', $event)"
-                   class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-600/85 file:text-white hover:file:bg-amber-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
-            <div class="text-xs" :class="uploadModal.seqFiles.length ? 'text-amber-300 font-semibold' : 'text-slate-500'">
-              {{ formatSelectedFilesInfo(uploadModal.seqFiles) }}
+            <div class="rounded-xl border border-dashed border-slate-700 bg-slate-900/80 p-2.5 flex flex-wrap items-center gap-2">
+              <label class="px-3 py-1.5 rounded-lg bg-amber-600/85 hover:bg-amber-500 text-white text-xs font-semibold cursor-pointer transition-all"
+                     :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                <span>{{ t('upload.pickFilesBtn') }}</span>
+                <input type="file" multiple accept=".exr,.EXR,.zip,.png,.PNG,.tif,.tiff,.TIF,.TIFF,.jpg,.jpeg,.JPG,.JPEG"
+                       :disabled="uploadModal.uploading"
+                       @change="onPairFilesSelected('seq', $event)"
+                       class="hidden" />
+              </label>
+              <label class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-amber-500/40 text-amber-200 text-xs font-semibold cursor-pointer transition-all"
+                     :class="uploadModal.uploading ? 'opacity-50 pointer-events-none' : ''">
+                <span>{{ t('upload.pickFolderBtn') }}</span>
+                <input type="file" webkitdirectory directory multiple
+                       :disabled="uploadModal.uploading"
+                       @change="onPairFolderSelected('seq', $event)"
+                       class="hidden" />
+              </label>
+              <span class="text-[11px] text-slate-400">{{ t('upload.dropFolderHint') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-2 text-xs">
+              <span v-if="uploadModal.scanningRole === 'seq'" class="text-amber-300">{{ t('upload.scanningFolder') }}</span>
+              <span v-else :class="uploadModal.seqFiles.length ? 'text-amber-300 font-semibold' : 'text-slate-500'">
+                {{ formatSelectedFilesInfo(uploadModal.seqFiles) }}
+              </span>
+              <button v-if="uploadModal.seqFiles.length && !uploadModal.uploading"
+                      type="button"
+                      @click="clearUploadFiles('seq')"
+                      class="text-[11px] text-slate-400 hover:text-rose-300">
+                {{ t('upload.clearFilesBtn') }}
+              </button>
             </div>
           </div>
         </template>
+
+        <!-- Live Upload & EXR Conversion Progress -->
+        <div v-if="uploadModal.uploading" class="p-3.5 rounded-xl bg-slate-950 border border-indigo-500/40 space-y-2">
+          <div class="flex items-center justify-between gap-2 text-xs wc-mono">
+            <span class="text-slate-200 truncate">{{ uploadProgressText }}</span>
+            <span class="text-indigo-300 font-bold shrink-0">{{ uploadModal.progressPct }}%</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+            <div class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-200"
+                 :style="{ width: Math.min(100, Math.max(2, uploadModal.progressPct)) + '%' }"></div>
+          </div>
+        </div>
 
         <div v-if="uploadModal.errorMsg" class="p-3.5 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 leading-relaxed space-y-1.5">
           <div class="font-bold text-rose-300">{{ t('upload.checkFailedTitle') }}</div>
@@ -5742,9 +5488,9 @@
         </div>
 
         <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
-          <button @click="uploadModal.open = false" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs">{{ t('upload.cancelBtn') }}</button>
-          <button @click="doUploadPairedDataset" :disabled="uploadModal.uploading"
-                  class="px-5 py-2 rounded-xl text-white text-xs font-bold shadow-lg transition-all"
+          <button @click="uploadModal.open = false" :disabled="uploadModal.uploading" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs disabled:opacity-40">{{ t('upload.cancelBtn') }}</button>
+          <button @click="doUploadPairedDataset" :disabled="uploadModal.uploading || !uploadModal.inputColorspace"
+                  class="px-5 py-2 rounded-xl text-white text-xs font-bold shadow-lg transition-all disabled:opacity-45 disabled:cursor-not-allowed"
                   :class="uploadModal.mode === 'attach_seq' ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/25' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/25'">
             {{ uploadModal.mode === 'attach_seq'
                 ? (uploadModal.uploading ? t('upload.attachingBtn') : t('upload.attachSeqSubmitBtn'))
@@ -5881,17 +5627,6 @@
               </button>
             </div>
             <help-tip doc="dataset_validation_sequence"></help-tip>
-            <select v-model="datasetPickerModal.taskTypeFilter"
-                    class="wc-select wc-select-sm !w-auto text-[11px] font-semibold">
-              <option value="all">{{ t('datasets.taskTypeLabel') }}: {{ t('datasets.pickerFilterTaskAll') }}</option>
-              <option value="cleanup_grain">{{ t('adv.preset_cleanup_grain') }}</option>
-              <option value="keying_despill">{{ t('adv.preset_keying_despill') }}</option>
-              <option value="bokeh_focus">{{ t('adv.preset_bokeh_focus') }}</option>
-              <option value="degrain_clean">{{ t('adv.preset_degrain_clean') }}</option>
-              <option value="roto_matte">{{ t('adv.preset_roto_matte') }}</option>
-              <option value="face_edit">{{ t('adv.preset_face_edit') }}</option>
-            </select>
-            <help-tip doc="dataset_task_type"></help-tip>
           </div>
         </div>
 
@@ -6001,13 +5736,8 @@
                   </span>
                 </div>
 
-                <div v-if="demoBadgeTitle(a) || a.task_type" class="flex items-center gap-1.5 min-w-0">
-                  <span v-if="a.task_type"
-                        class="px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-[10px] font-semibold text-violet-200 truncate">
-                    {{ t('adv.preset_' + a.task_type) }}
-                  </span>
-                  <span v-else-if="demoBadgeTitle(a)"
-                        class="text-[11px] font-medium text-violet-300 truncate">
+                <div v-if="demoBadgeTitle(a)" class="flex items-center gap-1.5 min-w-0">
+                  <span class="text-[11px] font-medium text-violet-300 truncate">
                     {{ demoBadgeTitle(a) }}
                   </span>
                 </div>
@@ -6044,6 +5774,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261118_v304"></script>
+  <script type="module" src="/static/app.js?v=20261119_v306"></script>
 </body>
 </html>

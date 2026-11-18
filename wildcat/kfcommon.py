@@ -324,7 +324,10 @@ def apply_to_training(kc, src_files, tgt_files, src_full, tgt_full, plate_files,
     usable = False  # the Shot may be handed to the caller: the step ended normally or with a reason of its own
     try:
         cv2.setNumThreads(kfprop.NUM_THREADS)
-        shot = _PlateShot(src_files, tgt_files, plate_files, colour.get("input_colorspace", "auto"), colour.get("working_colorspace", "ACEScg"),
+        work_cs = colour.get("working_colorspace", "ACEScg")
+        raw_in_cs = colour.get("input_colorspace")
+        in_cs = work_cs if raw_in_cs in (None, "", "auto") else raw_in_cs
+        shot = _PlateShot(src_files, tgt_files, plate_files, in_cs, work_cs,
                           colour.get("ocio_config_path", ""), tmp)
         shot.match_keyframes()
         if len(shot.keys) < 3:

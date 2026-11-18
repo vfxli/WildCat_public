@@ -262,7 +262,7 @@ class Shot:
     arguments), first three channels.  Frames are read on demand; only a few are kept in memory.
     """
 
-    def __init__(self, source_files, target_files, plate_files, input_colorspace="auto", working_colorspace="ACEScg",
+    def __init__(self, source_files, target_files, plate_files, input_colorspace="ACEScg", working_colorspace="ACEScg",
                  ocio_config_path="", scratch_dir=None, ram_limit=RAM_LIMIT_BYTES, ignore_alpha=False):
         n_pair = min(len(source_files), len(target_files))
         self.source_files = list(source_files)[:n_pair]
@@ -537,7 +537,7 @@ class Shot:
             self._tmp_dir = None
 
 
-def open_shot(source_files, target_files, plate_files, input_colorspace="auto", working_colorspace="ACEScg", ocio_config_path="",
+def open_shot(source_files, target_files, plate_files, input_colorspace="ACEScg", working_colorspace="ACEScg", ocio_config_path="",
               scratch_dir=None, progress=None, ram_limit=RAM_LIMIT_BYTES, flow="dis", ignore_alpha=False):
     """Load a dataset as a Shot: match the keyframes onto the plate and compute the plate's optical flow
     (``flow``: "dis" or "raft", see ``Shot.compute_flows``).

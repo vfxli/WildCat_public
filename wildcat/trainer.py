@@ -148,8 +148,10 @@ class Trainer:
         # ---------------- colour ----------------
         col = cfg.get("color", {})
         self.working_colorspace = col.get("working_colorspace", "ACEScg")
-        self.source_colorspace = col.get("source_colorspace", "auto")
-        self.target_colorspace = col.get("target_colorspace", "auto")
+        raw_src_cs = col.get("source_colorspace")
+        raw_tgt_cs = col.get("target_colorspace")
+        self.source_colorspace = self.working_colorspace if raw_src_cs in (None, "", "auto") else raw_src_cs
+        self.target_colorspace = self.working_colorspace if raw_tgt_cs in (None, "", "auto") else raw_tgt_cs
         self.ocio_config = col.get("ocio_config", "")
         self.view_transform = col.get("view_transform", "ACES 1.0 - SDR Video")
 

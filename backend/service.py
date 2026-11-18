@@ -810,7 +810,11 @@ def _enrich_asset_row(r: dict) -> dict:
 
     ext = os.path.splitext(s_files[0])[1].lower().lstrip(".") if s_files else "exr"
     r["file_format"] = ext.upper()
-    r["colorspace"] = "ACEScg" if ext == "exr" else "sRGB"
+    work_cs = str(r.get("working_colorspace") or "").strip() or "ACEScg"
+    in_cs = str(r.get("input_colorspace") or "").strip() or work_cs
+    r["working_colorspace"] = work_cs
+    r["input_colorspace"] = in_cs
+    r["colorspace"] = work_cs
     r["source_thumb_url"] = telemetry.to_jpg_url(s_files[0]) if s_files else None
     r["target_thumb_url"] = telemetry.to_jpg_url(t_files[0]) if t_files else None
     r["seq_thumb_url"] = telemetry.to_jpg_url(seq_files[0]) if seq_files else None
@@ -938,12 +942,13 @@ def create_paired_dataset(
     max_error_pct: float = 35.0,
     strategy: str = "standard",
     enable_check: bool = True,
-    input_colorspace: str = "auto",
+    input_colorspace: str = "ACEScg",
     working_colorspace: str = "ACEScg",
     seq_tuples: list | None = None,
     task_type: str = "",
     is_admin: bool = False,
     restricted: bool | None = None,
+    upload_id: str = "",
 ) -> dict:
     clean_name = storage.sanitize_name(dataset_name, "dataset")
     clean_task_type = normalize_dataset_task_type(task_type)
@@ -962,6 +967,7 @@ def create_paired_dataset(
         working_colorspace=working_colorspace,
         seq_tuples=seq_tuples,
         restricted=eff_restricted,
+        upload_id=upload_id,
     )
     now = time.time()
     existing = db.query_one(
@@ -977,7 +983,8 @@ def create_paired_dataset(
             SET kind = 'paired_dataset', rel_path = ?, source_path = ?, target_path = ?,
                 seq_path = ?, frame_count = ?, seq_frame_count = ?, demo_key = '',
                 width = ?, height = ?, in_channels = ?, out_channels = ?,
-                avg_mae = ?, max_mae = ?, strategy = ?, task_type = ?, size_bytes = ?, created_at = ?
+                avg_mae = ?, max_mae = ?, strategy = ?, task_type = ?,
+                input_colorspace = ?, working_colorspace = ?, size_bytes = ?, created_at = ?
             WHERE id = ?
             """,
             (
@@ -995,6 +1002,8 @@ def create_paired_dataset(
                 info["max_mae"],
                 info["strategy"],
                 clean_task_type,
+                info["input_colorspace"],
+                info["working_colorspace"],
                 info["size_bytes"],
                 now,
                 aid,
@@ -1006,8 +1015,8 @@ def create_paired_dataset(
             INSERT INTO assets (
                 user_id, name, kind, rel_path, source_path, target_path, seq_path,
                 frame_count, seq_frame_count, demo_key, width, height, in_channels, out_channels,
-                avg_mae, max_mae, strategy, task_type, size_bytes, created_at
-            ) VALUES (?, ?, 'paired_dataset', ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                avg_mae, max_mae, strategy, task_type, input_colorspace, working_colorspace, size_bytes, created_at
+            ) VALUES (?, ?, 'paired_dataset', ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -1026,6 +1035,8 @@ def create_paired_dataset(
                 info["max_mae"],
                 info["strategy"],
                 clean_task_type,
+                info["input_colorspace"],
+                info["working_colorspace"],
                 info["size_bytes"],
                 now,
             ),
@@ -1060,9 +1071,10 @@ def attach_asset_eval_sequence(
     username: str,
     asset_id: int,
     seq_tuples: list,
-    input_colorspace: str = "auto",
+    input_colorspace: str = "ACEScg",
     working_colorspace: str = "ACEScg",
     restricted: bool | None = None,
+    upload_id: str = "",
 ) -> dict:
     row = db.query_one("SELECT * FROM assets WHERE id = ?", (asset_id,))
     if not row:
@@ -1075,6 +1087,7 @@ def attach_asset_eval_sequence(
     eff_restricted = is_user_upload_restricted(user_id, is_admin=is_admin) if restricted is None else bool(restricted)
     if eff_restricted:
         _enforce_temp_user_upload_quota(row["user_id"], owner_name, is_admin=is_admin, replacing_name=row["name"])
+    eff_work_cs = str(row.get("working_colorspace") or working_colorspace or "ACEScg")
     seq_info = storage.attach_eval_sequence_to_dataset(
         username=owner_name,
         dataset_name=row["name"],
@@ -1085,8 +1098,9 @@ def attach_asset_eval_sequence(
         expected_in_ch=int(row.get("in_channels") or 3),
         seq_tuples=seq_tuples,
         input_colorspace=input_colorspace,
-        working_colorspace=working_colorspace,
+        working_colorspace=eff_work_cs,
         restricted=eff_restricted,
+        upload_id=upload_id,
     )
     _, sb = storage.dir_stats(row["source_path"])
     _, tb = storage.dir_stats(row["target_path"])

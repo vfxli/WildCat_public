@@ -16,7 +16,7 @@ from urllib.parse import quote, unquote
 import cv2
 import numpy as np
 
-from wildcat import color
+from wildcat import cat_format, color
 
 from . import db, storage
 
@@ -513,13 +513,16 @@ def list_task_models(run_dir_rel: str, cfg: dict = None, parsed_log: dict = None
         }
 
     max_step = max(step_records.keys())
+    model_sz = str(((cfg or {}).get("model") or {}).get("model_size") or rinfo.get("model_size") or "")
+    is_wcl1 = model_sz == "WildCatLargeV1"
 
     items = []
     for st in sorted(step_records.keys(), reverse=True):
         rec = step_records[st]
         pfx = rec.get("prefix") or nuke_prefix
+        pt_ok = bool(rec.get("pt_abs")) and not (is_wcl1 and cat_format.is_legacy_wildcat_v1_export(rec["pt_abs"]))
         primary_ext = "pt"
-        stat_target = rec.get("pt_abs") or rec.get("ckpt_abs")
+        stat_target = (rec.get("pt_abs") if pt_ok else None) or rec.get("ckpt_abs")
         size_mb = 0.0
         mtime_str = ""
         if stat_target and os.path.isfile(stat_target):
@@ -536,7 +539,7 @@ def list_task_models(run_dir_rel: str, cfg: dict = None, parsed_log: dict = None
             "epoch": ep_est,
             "filename": primary_name,
             "pt_filename": rec.get("pt_file") or f"{pfx}.{st}.pt",
-            "has_pt": bool(rec.get("pt_abs")),
+            "has_pt": pt_ok,
             "size_mb": size_mb,
             "created_time": mtime_str,
             "loss": loss_by_step.get(st),

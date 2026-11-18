@@ -56,12 +56,19 @@ def summarize_config_diff(cfg: dict) -> dict:
         non_default = True
         tags.append(prec.upper())
 
-    # Batch size (Nuke default: Auto -> 8)
-    bs_auto = tr.get("batch_size_auto")
-    bs_raw = tr.get("batch_size", "auto")
-    if bs_auto is False or (bs_auto is None and str(bs_raw).lower() != "auto"):
-        non_default = True
-        tags.append(f"Batch={bs_raw}")
+    # Batch size (Nuke default: min(8, n_frames))
+    bs_raw = tr.get("batch_size", 8)
+    if not bool(tr.get("batch_size_auto")) and str(bs_raw).lower() != "auto":
+        try:
+            bs_int = int(bs_raw)
+        except Exception:
+            bs_int = 8
+        src_probe = str((cfg.get("paths") or {}).get("source") or "").strip()
+        n_f = len(storage.expand_sequence_files(src_probe)) if src_probe else 0
+        nuke_def_bs = min(8, n_f) if n_f > 0 else 8
+        if bs_int not in (8, nuke_def_bs):
+            non_default = True
+            tags.append(f"Batch={bs_int}")
 
     # Crop size (Nuke default: 256)
     crop = int(tr.get("crop_size") or 256)

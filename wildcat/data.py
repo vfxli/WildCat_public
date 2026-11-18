@@ -10,6 +10,7 @@ Sampling semantics (CopyCat-compatible):
 """
 import glob
 import os
+import re
 import threading
 import queue
 
@@ -26,7 +27,15 @@ from . import color
 # --------------------------------------------------------------------------------------
 # Loading
 # --------------------------------------------------------------------------------------
-def _read(p, input_colorspace="auto", working_colorspace="ACEScg", ocio_config_path="", is_data_pass=False):
+_NAT_SPLIT_RE = re.compile(r"(\d+)")
+
+
+def _natural_sort_key(path_or_name: str):
+    bn = os.path.basename(str(path_or_name))
+    return tuple((0, int(p), p) if p.isdigit() else (1, 0, p.lower()) for p in _NAT_SPLIT_RE.split(bn))
+
+
+def _read(p, input_colorspace="ACEScg", working_colorspace="ACEScg", ocio_config_path="", is_data_pass=False):
     im = color.read_image_float(
         p,
         input_colorspace=input_colorspace,
@@ -44,7 +53,7 @@ def _read(p, input_colorspace="auto", working_colorspace="ACEScg", ocio_config_p
 def _dedup_sorted(paths):
     seen = set()
     out = []
-    for f in sorted(paths):
+    for f in sorted(paths, key=_natural_sort_key):
         k = os.path.normcase(os.path.abspath(f))
         if k not in seen:
             seen.add(k)
@@ -143,7 +152,7 @@ def _probe_frame_bytes(path, channels):
 def load_sequence(
     pattern,
     channels,
-    input_colorspace="auto",
+    input_colorspace="ACEScg",
     working_colorspace="ACEScg",
     ocio_config_path="",
     dtype="float32",
