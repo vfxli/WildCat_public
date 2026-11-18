@@ -60,7 +60,9 @@ DETAIL_SIGMA = 10.0  # mode "detail": Gaussian sigma (px); structures finer than
 REF_TOL = 0.03  # automatic reference: keyframes whose mean reach is within this of the best are candidates
 SELECT_MAX_PIXELS = 700_000  # the automatic choice is a score, not a picture: larger plates are scored on a reduced picture
 SELECT_MAX_KEYS = 32  # ... and on at most this many evenly spaced keyframes
-MATCH_TOL = 2e-3  # a keyframe source "is" a plate frame when no pixel differs by more than this
+MATCH_TOL = 2e-3  # fast path: same frame number is accepted immediately when no pixel differs by more than this
+MATCH_MEAN_TOL = 0.020  # perceptual [0, 1) mean abs diff across the frame (accepts DWAA/PNG/JPG/HDR fp16/denoise)
+MATCH_LOCAL_TOL = 0.038  # perceptual [0, 1) max abs diff after 2.5 px Gaussian blur (rejects painted targets & >= 0.5 px motion)
 NUM_THREADS = 4  # OpenCV worker threads (the web service shares the machine with training jobs)
 RAM_LIMIT_BYTES = 2 * 1024**3  # flow / label buffers beyond this go to a memory-mapped scratch file
 
@@ -120,6 +122,20 @@ def _srgb(a):
     """working space (ACEScg) -> display sRGB without tone mapping, 0..1 (for the flow luma and the report picture)."""
     lin = np.clip(np.einsum("dc,hwc->hwd", color._AP1_TO_SRGB_MAT, a[..., :3]), 0, None)
     return np.clip(np.where(lin <= 0.0031308, lin * 12.92, 1.055 * np.power(np.maximum(lin, 1e-8), 1 / 2.4) - 0.055), 0, 1).astype(np.float32)
+
+
+def _match_tone(a):
+    """Perceptual [0, 1) tone curve across linear + HDR values: avoids amplifying half-float ULP noise on bright
+    highlights (> 1) while still distinguishing different HDR intensities."""
+    u = np.asarray(a[..., :3], dtype=np.float32)
+    pos = np.maximum(u, 0.0)
+    return (np.sqrt(pos / (1.0 + pos)) + 0.5 * np.clip(u, -0.5, 0.0)).astype(np.float32)
+
+
+def _match_pair_err(ta, tb):
+    """(mean perceptual abs diff, peak local perceptual diff after 2.5 px Gaussian smoothing)."""
+    diff = ta - tb
+    return float(np.abs(diff).mean()), float(np.abs(cv2.GaussianBlur(diff, (0, 0), 2.5)).max())
 
 
 def _lp(z):
@@ -247,13 +263,14 @@ class Shot:
     """
 
     def __init__(self, source_files, target_files, plate_files, input_colorspace="auto", working_colorspace="ACEScg",
-                 ocio_config_path="", scratch_dir=None, ram_limit=RAM_LIMIT_BYTES):
+                 ocio_config_path="", scratch_dir=None, ram_limit=RAM_LIMIT_BYTES, ignore_alpha=False):
         n_pair = min(len(source_files), len(target_files))
         self.source_files = list(source_files)[:n_pair]
         self.target_files = list(target_files)[:n_pair]
         self.input_colorspace = input_colorspace
         self.working_colorspace = working_colorspace
         self.ocio_config_path = ocio_config_path
+        self.ignore_alpha = bool(ignore_alpha)
         if n_pair < 2:
             raise KfError("too_few_keyframes", "at least 2 keyframes are needed (found %d)" % n_pair, count=n_pair, need=2)
         if len(plate_files) < 2:
@@ -298,7 +315,7 @@ class Shot:
         if im.ndim != 3 or im.shape[2] < 3:
             raise KfError("rgb_only", "only RGB to RGB datasets are supported (%s is not an RGB image)" % os.path.basename(path),
                           name=os.path.basename(path))
-        if check_alpha and im.shape[2] >= 4:
+        if check_alpha and not self.ignore_alpha and im.shape[2] >= 4:
             a = im[..., 3]
             if float(a.max()) - float(a.min()) > 1e-3:
                 raise KfError("alpha", "datasets with a varying alpha channel are not supported (%s)" % os.path.basename(path),
@@ -335,14 +352,16 @@ class Shot:
 
     # ------------------------------------------------------------------ keyframes -> plate frames
     def match_keyframes(self, tick=None):
-        """Find the plate frame of every keyframe: the frame with the same file number if the picture is the same,
-        otherwise any plate frame with the same picture.  Raises KfError when a keyframe is not a plate frame."""
+        """Find the plate frame of every keyframe: fast path by file number when bit-exact, otherwise global best
+        perceptual match across all plate frames (tolerating compression, bit-depth and HDR fp16 rounding while
+        rejecting painted targets or neighbouring moving frames).  Raises KfError when a keyframe is not in the plate."""
         tick = tick or (lambda done, total: None)
-        thumb = lambda a: cv2.resize(a, (48, 48), interpolation=cv2.INTER_AREA)
+        thumb = lambda a: cv2.resize(a, (64, 64), interpolation=cv2.INTER_AREA)
         num_to_idx = {n: i for i, n in enumerate(self.plate_nums)} if self.plate_has_nums else {}
         n_key = len(self.source_files)
         total = n_key + self.n
         matched, pending = {}, {}
+        key_tones = _Lru(6)
         for i, p in enumerate(self.source_files):
             tick(i, total)
             ks = self._read_rgb(p, check_alpha=True)
@@ -355,30 +374,74 @@ class Shot:
             if j is not None and float(np.abs(ks - self._plate_raw(j)).max()) < MATCH_TOL:
                 matched[i] = j
             else:
-                pending[i] = thumb(ks)
+                kt = _match_tone(ks)
+                key_tones.get(i, lambda _idx, _kt=kt: _kt)
+                pending[i] = thumb(kt)
         self.matched_by_number = len(matched)
         if len(set(matched.values())) != len(matched):
             raise KfError("duplicate_keyframe", "two keyframes are the same plate frame")
         if pending:
-            taken = set(matched.values())
+            used_j = set(matched.values())
+            pass_cands = {i: [] for i in pending}  # up to top-2 (score, m_err, l_err, j) passing full-res tolerances
+            best_thumb = {}  # i -> (thumb_score, j) across all plate frames, for diagnostic reporting on mismatch
+            exact_locked = set()
+            locked_frames = set()
             for j in range(self.n):
-                if not pending:
+                if len(exact_locked) == len(pending):
                     break
                 tick(n_key + j, total)
-                if j in taken:
-                    continue
                 pj = self._plate_raw(j)
-                tj = thumb(pj)
+                pt = _match_tone(pj)
+                tj = thumb(pt)
                 for i in sorted(pending):
-                    if float(np.abs(pending[i] - tj).max()) < MATCH_TOL * 1.5:  # cheap screen, then the exact test
-                        if float(np.abs(self._read_rgb(self.source_files[i]) - pj).max()) < MATCH_TOL:
-                            matched[i] = j
-                            taken.add(j)
-                            del pending[i]
-                            break
-            if pending:
-                name = os.path.basename(self.source_files[min(pending)])
-                raise KfError("not_plate_frame", "keyframe %s is not a frame of the plate" % name, name=name, count=len(pending))
+                    if i in exact_locked:
+                        continue
+                    td = pending[i] - tj
+                    t_mean = float(np.abs(td).mean())
+                    t_local = float(np.abs(cv2.GaussianBlur(td, (0, 0), 1.0)).max())
+                    if i not in best_thumb or t_mean < best_thumb[i][0]:
+                        best_thumb[i] = (t_mean, j)
+                    if t_mean <= MATCH_MEAN_TOL * 2.0 and t_local <= MATCH_LOCAL_TOL * 2.0:
+                        kt = key_tones.get(i, lambda idx: _match_tone(self._read_rgb(self.source_files[idx])))
+                        m_err, l_err = _match_pair_err(kt, pt)
+                        if m_err <= MATCH_MEAN_TOL and l_err <= MATCH_LOCAL_TOL:
+                            cands = pass_cands[i]
+                            cands.append((l_err + m_err, m_err, l_err, j))
+                            cands.sort(key=lambda x: (x[0], x[3]))
+                            if len(cands) > 2:
+                                del cands[2:]
+                            if m_err < 2e-4 and l_err < 5e-4 and j not in used_j and j not in locked_frames:
+                                exact_locked.add(i)
+                                locked_frames.add(j)
+            unmatched = []
+            for i in sorted(pending):
+                cands = pass_cands[i]
+                if not cands:
+                    unmatched.append(i)
+                    continue
+                best_score, _, _, best_j = cands[0]
+                if best_j not in used_j:
+                    matched[i] = best_j
+                    used_j.add(best_j)
+                elif len(cands) > 1 and cands[1][3] not in used_j and cands[1][0] <= best_score + 1e-4:
+                    matched[i] = cands[1][3]
+                    used_j.add(cands[1][3])
+                else:
+                    raise KfError("duplicate_keyframe", "two keyframes are the same plate frame")
+            if unmatched:
+                i0 = unmatched[0]
+                name = os.path.basename(self.source_files[i0])
+                cj = best_thumb[i0][1] if i0 in best_thumb else 0
+                kt0 = key_tones.get(i0, lambda idx: _match_tone(self._read_rgb(self.source_files[idx])))
+                m_err, l_err = _match_pair_err(kt0, _match_tone(self._plate_raw(cj)))
+                c_num = self.plate_nums[cj]
+                raise KfError(
+                    "not_plate_frame",
+                    "keyframe %s is not a frame of the plate (closest plate frame %s: mean diff %.2f%%, local diff %.1f%%)"
+                    % (name, c_num, m_err * 100.0, l_err * 100.0),
+                    name=name,
+                    count=len(unmatched),
+                )
         if len(matched) < 2:
             raise KfError("too_few_keyframes", "at least 2 keyframes are needed (found %d)" % len(matched), count=len(matched), need=2)
         self.keys = sorted(matched.values())
@@ -475,14 +538,15 @@ class Shot:
 
 
 def open_shot(source_files, target_files, plate_files, input_colorspace="auto", working_colorspace="ACEScg", ocio_config_path="",
-              scratch_dir=None, progress=None, ram_limit=RAM_LIMIT_BYTES, flow="dis"):
+              scratch_dir=None, progress=None, ram_limit=RAM_LIMIT_BYTES, flow="dis", ignore_alpha=False):
     """Load a dataset as a Shot: match the keyframes onto the plate and compute the plate's optical flow
     (``flow``: "dis" or "raft", see ``Shot.compute_flows``).
     ``progress`` is a ``Progress`` whose plan contains the stages "match" and "flow"."""
     if flow not in FLOW_ENGINES:
         raise KfError("bad_flow", "unknown optical-flow engine %r" % (flow,), flow=str(flow)[:40])
     cv2.setNumThreads(NUM_THREADS)
-    shot = Shot(source_files, target_files, plate_files, input_colorspace, working_colorspace, ocio_config_path, scratch_dir, ram_limit)
+    shot = Shot(source_files, target_files, plate_files, input_colorspace, working_colorspace, ocio_config_path, scratch_dir, ram_limit,
+                ignore_alpha=ignore_alpha)
     try:
         shot.match_keyframes((lambda d, n: progress.tick("match", d, n)) if progress else None)
         shot.compute_flows((lambda d, n: progress.tick("flow", d, n)) if progress else None, engine=flow)

@@ -1363,6 +1363,19 @@ async function mountWildCatApp() {
         if (kfFlowCapsKnown && !kfCommonRaftOffered.value) adv.kf_common.flow = 'dis';
       }
 
+      function onKfCommonToggle() {
+        if (
+          adv.kf_common.enabled &&
+          !isChannelsLocked.value &&
+          (Number(form.in_channels) !== 3 || Number(form.out_channels) !== 3) &&
+          Number(form.out_channels) >= 3 &&
+          isChannelPresetAllowed('3->3')
+        ) {
+          syncLockedChannels(3, 3);
+        }
+        if (adv.kf_common.enabled) ensureKfFlowCaps();
+      }
+
       function syncLossFamilyEnabled() {
         if (Number(form.out_channels) === 1) {
           adv.loss_family.hdr_alpha = 0;
@@ -2595,8 +2608,14 @@ async function mountWildCatApp() {
         if (!isChannelsLocked.value && ds.in_channels && ds.out_channels) {
           const ic = Number(ds.in_channels || 3);
           const oc = Number(ds.out_channels || 3);
+          const preferRgb33 =
+            activeAdvPreset.value === 'face_edit' ||
+            ds.task_type === 'face_edit' ||
+            !!(adv.kf_common && adv.kf_common.enabled);
           if (oc === 1) {
             syncLockedChannels(ic >= 4 ? 4 : 3, 1);
+          } else if (preferRgb33 && ic >= 3 && oc >= 3) {
+            syncLockedChannels(3, 3);
           } else if (ic >= 4 && oc >= 4) {
             syncLockedChannels(4, 4);
           } else if (ic === 3 && oc >= 4) {
@@ -7983,6 +8002,7 @@ async function mountWildCatApp() {
         kfCommonLimits,
         kfCommonRaftOffered,
         syncKfCommonParams,
+        onKfCommonToggle,
         activeTaskKfCommon,
         kfCommonPct,
         kfCommonReasonText,

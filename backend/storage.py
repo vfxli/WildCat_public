@@ -439,11 +439,23 @@ def _resolve_upload_colorspace(filename: str, input_colorspace: str, working_col
     return input_colorspace
 
 
+def _is_dummy_constant_alpha(a_min: float, a_max: float) -> bool:
+    """True when a 4th channel is uniformly 0.0 or uniformly 1.0 (e.g. Nuke empty rgba.alpha or solid PNG alpha)."""
+    if a_min > a_max:
+        return True
+    if (a_max - a_min) > 1e-3:
+        return False
+    return abs(a_min - 1.0) <= 1e-3 or abs(a_min - 0.0) <= 1e-3
+
+
 def _has_varying_alpha(imgs: list) -> bool:
+    a_min, a_max = float("inf"), float("-inf")
     for im in imgs:
         if im is not None and im.ndim == 3 and im.shape[2] >= 4:
             a = im[..., 3]
-            if float(np.min(a)) < 0.999 or float(np.max(a)) > 1.001:
+            a_min = min(a_min, float(np.min(a)))
+            a_max = max(a_max, float(np.max(a)))
+            if not _is_dummy_constant_alpha(a_min, a_max):
                 return True
     return False
 
@@ -587,8 +599,8 @@ def validate_and_save_paired_dataset(
         h0, w0 = 0, 0
         in_ch = 99
         out_ch = 99
-        src_var_alpha = False
-        tgt_var_alpha = False
+        src_a_min, src_a_max = float("inf"), float("-inf")
+        tgt_a_min, tgt_a_max = float("inf"), float("-inf")
         maes = []
         worst_mae = -1.0
         worst_idx = 0
@@ -625,14 +637,14 @@ def validate_and_save_paired_dataset(
             tc = 1 if t_im.ndim == 2 else int(t_im.shape[2])
             in_ch = min(in_ch, sc)
             out_ch = min(out_ch, tc)
-            if not src_var_alpha and s_im.ndim == 3 and s_im.shape[2] >= 4:
+            if s_im.ndim == 3 and s_im.shape[2] >= 4:
                 sa = s_im[..., 3]
-                if float(np.min(sa)) < 0.999 or float(np.max(sa)) > 1.001:
-                    src_var_alpha = True
-            if not tgt_var_alpha and t_im.ndim == 3 and t_im.shape[2] >= 4:
+                src_a_min = min(src_a_min, float(np.min(sa)))
+                src_a_max = max(src_a_max, float(np.max(sa)))
+            if t_im.ndim == 3 and t_im.shape[2] >= 4:
                 ta = t_im[..., 3]
-                if float(np.min(ta)) < 0.999 or float(np.max(ta)) > 1.001:
-                    tgt_var_alpha = True
+                tgt_a_min = min(tgt_a_min, float(np.min(ta)))
+                tgt_a_max = max(tgt_a_max, float(np.max(ta)))
 
             s_f = _norm_img_float(s_im)
             t_f = _norm_img_float(t_im)
@@ -654,11 +666,18 @@ def validate_and_save_paired_dataset(
                 del s_im, t_im
             del s_f, t_f
 
-        if in_ch >= 3 and out_ch >= 3 and in_ch != out_ch:
-            if in_ch == 4 and not src_var_alpha:
-                in_ch = 3
-            if out_ch == 4 and not tgt_var_alpha:
-                out_ch = 3
+        src_dummy_alpha = _is_dummy_constant_alpha(src_a_min, src_a_max)
+        tgt_dummy_alpha = _is_dummy_constant_alpha(tgt_a_min, tgt_a_max)
+        if in_ch >= 3 and out_ch >= 3:
+            if in_ch == 4 and out_ch == 4 and strategy != "alpha_matting":
+                if src_dummy_alpha and tgt_dummy_alpha and abs(src_a_min - tgt_a_min) <= 1e-3:
+                    in_ch = 3
+                    out_ch = 3
+            elif in_ch != out_ch:
+                if in_ch == 4 and src_dummy_alpha:
+                    in_ch = 3
+                if out_ch == 4 and tgt_dummy_alpha:
+                    out_ch = 3
 
         avg_mae = float(np.mean(maes)) if maes else 0.0
 
@@ -861,11 +880,18 @@ def inspect_paired_dirs(source_rel: str, target_rel: str, seq_rel: str = "") -> 
     h, w = (int(s0.shape[0]), int(s0.shape[1])) if s0 is not None else (0, 0)
     in_ch = (1 if s0.ndim == 2 else int(s0.shape[2])) if s0 is not None else 3
     out_ch = (1 if t0.ndim == 2 else int(t0.shape[2])) if t0 is not None else 3
-    if in_ch >= 3 and out_ch >= 3 and in_ch != out_ch:
-        if in_ch == 4 and not _has_varying_alpha([s0]):
-            in_ch = 3
-        if out_ch == 4 and not _has_varying_alpha([t0]):
-            out_ch = 3
+    if in_ch >= 3 and out_ch >= 3:
+        if in_ch == 4 and out_ch == 4 and not _has_varying_alpha([s0]) and not _has_varying_alpha([t0]):
+            sa0 = float(np.min(s0[..., 3])) if (s0 is not None and s0.ndim == 3 and s0.shape[2] >= 4) else 1.0
+            ta0 = float(np.min(t0[..., 3])) if (t0 is not None and t0.ndim == 3 and t0.shape[2] >= 4) else 1.0
+            if abs(sa0 - ta0) <= 1e-3:
+                in_ch = 3
+                out_ch = 3
+        elif in_ch != out_ch:
+            if in_ch == 4 and not _has_varying_alpha([s0]):
+                in_ch = 3
+            if out_ch == 4 and not _has_varying_alpha([t0]):
+                out_ch = 3
 
     maes = []
     for sp, tp in zip(s_files[:n], t_files[:n]):

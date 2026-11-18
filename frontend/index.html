@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261118_v302" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261118_v303" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -2428,7 +2428,7 @@
                                     : t(adv.kf_common.flow === 'raft' ? 'adv.kc.statusOnRaft' : 'adv.kc.statusOn', { threshold: adv.kf_common.threshold, span: adv.kf_common.span }))
                                 : t('adv.kc.statusOff') }}
                           </span>
-                          <input type="checkbox" v-model="adv.kf_common.enabled" class="wc-switch wc-switch-violet" :title="t('adv.kc.switchTip')" />
+                          <input type="checkbox" v-model="adv.kf_common.enabled" @change="onKfCommonToggle" class="wc-switch wc-switch-violet" :title="t('adv.kc.switchTip')" />
                         </div>
                       </div>
 
@@ -5497,6 +5497,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261118_v302"></script>
+  <script type="module" src="/static/app.js?v=20261118_v303"></script>
 </body>
 </html>
