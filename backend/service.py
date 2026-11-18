@@ -894,18 +894,28 @@ def get_asset_frames(user_id: int, is_admin: bool, asset_id: int) -> dict:
     }
 
 
+def is_user_upload_restricted(user_id: int, is_admin: bool = False) -> bool:
+    """True only while temporary-user restrictions are enabled AND `user_id` is a temporary user."""
+    if is_admin or not is_temp_restrictions_enabled():
+        return False
+    u_row = db.query_one("SELECT role, perm_lab, perm_api FROM users WHERE id = ?", (int(user_id),))
+    if not u_row or u_row.get("role") == "admin":
+        return False
+    if u_row.get("perm_lab") and u_row.get("perm_api"):
+        return False
+    return True
+
+
 def _enforce_temp_user_upload_quota(
     user_id: int,
     username: str,
     is_admin: bool = False,
     replacing_name: str = "",
 ) -> None:
-    if is_admin or not is_temp_restrictions_enabled():
+    if not is_user_upload_restricted(user_id, is_admin=is_admin):
         return
-    u_row = db.query_one("SELECT role, max_tasks FROM users WHERE id = ?", (int(user_id),))
-    if not u_row or u_row.get("role") == "admin":
-        return
-    max_t = int(u_row.get("max_tasks") if u_row.get("max_tasks") is not None else 2)
+    u_row = db.query_one("SELECT max_tasks FROM users WHERE id = ?", (int(user_id),))
+    max_t = int((u_row or {}).get("max_tasks") if (u_row or {}).get("max_tasks") is not None else 2)
     max_custom_assets = max(4, max_t * 2)
     cnt_row = db.query_one(
         "SELECT COUNT(*) AS c FROM assets WHERE user_id = ? AND demo_key = '' AND name != ?",
@@ -933,10 +943,13 @@ def create_paired_dataset(
     seq_tuples: list | None = None,
     task_type: str = "",
     is_admin: bool = False,
+    restricted: bool | None = None,
 ) -> dict:
     clean_name = storage.sanitize_name(dataset_name, "dataset")
     clean_task_type = normalize_dataset_task_type(task_type)
-    _enforce_temp_user_upload_quota(user_id, username, is_admin=is_admin, replacing_name=clean_name)
+    eff_restricted = is_user_upload_restricted(user_id, is_admin=is_admin) if restricted is None else bool(restricted)
+    if eff_restricted:
+        _enforce_temp_user_upload_quota(user_id, username, is_admin=is_admin, replacing_name=clean_name)
     info = storage.validate_and_save_paired_dataset(
         username=username,
         dataset_name=clean_name,
@@ -948,6 +961,7 @@ def create_paired_dataset(
         input_colorspace=input_colorspace,
         working_colorspace=working_colorspace,
         seq_tuples=seq_tuples,
+        restricted=eff_restricted,
     )
     now = time.time()
     existing = db.query_one(
@@ -1048,6 +1062,7 @@ def attach_asset_eval_sequence(
     seq_tuples: list,
     input_colorspace: str = "auto",
     working_colorspace: str = "ACEScg",
+    restricted: bool | None = None,
 ) -> dict:
     row = db.query_one("SELECT * FROM assets WHERE id = ?", (asset_id,))
     if not row:
@@ -1057,7 +1072,9 @@ def attach_asset_eval_sequence(
 
     owner = get_user_by_id(row["user_id"])
     owner_name = (owner or {}).get("username") or username
-    _enforce_temp_user_upload_quota(row["user_id"], owner_name, is_admin=is_admin, replacing_name=row["name"])
+    eff_restricted = is_user_upload_restricted(user_id, is_admin=is_admin) if restricted is None else bool(restricted)
+    if eff_restricted:
+        _enforce_temp_user_upload_quota(row["user_id"], owner_name, is_admin=is_admin, replacing_name=row["name"])
     seq_info = storage.attach_eval_sequence_to_dataset(
         username=owner_name,
         dataset_name=row["name"],
@@ -1069,6 +1086,7 @@ def attach_asset_eval_sequence(
         seq_tuples=seq_tuples,
         input_colorspace=input_colorspace,
         working_colorspace=working_colorspace,
+        restricted=eff_restricted,
     )
     _, sb = storage.dir_stats(row["source_path"])
     _, tb = storage.dir_stats(row["target_path"])

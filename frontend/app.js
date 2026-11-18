@@ -4451,6 +4451,20 @@ async function mountWildCatApp() {
         else if (uploadModal.strategy === 'loose') uploadModal.maxErrorPct = 50;
       }
 
+      function formatSelectedFilesInfo(list) {
+        const arr = Array.isArray(list) ? list : [];
+        if (!arr.length) return t('upload.noFilesSelected');
+        let bytes = 0;
+        for (const f of arr) {
+          bytes += Number((f && f.size) || 0);
+        }
+        if (bytes <= 0) return t('upload.filesSelected', { count: arr.length });
+        const gb = bytes / (1024 * 1024 * 1024);
+        const mb = bytes / (1024 * 1024);
+        const szStr = gb >= 1.0 ? `${gb.toFixed(2)} GB` : mb >= 1.0 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+        return t('upload.filesSelectedWithSize', { count: arr.length, size: szStr });
+      }
+
       function onPairFilesSelected(role, e) {
         uploadModal.errorMsg = '';
         const list = Array.from(e.target.files || []);
@@ -8075,6 +8089,7 @@ async function mountWildCatApp() {
         formatLabDatasetOptionLabel,
         onUploadTaskTypeChange,
         onUploadStrategyChange,
+        formatSelectedFilesInfo,
         onPairFilesSelected,
         doUploadPairedDataset,
         importDemoAssets,

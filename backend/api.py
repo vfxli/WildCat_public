@@ -6,7 +6,8 @@ import sys
 import traceback
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -48,23 +49,22 @@ def _mask_user_for_client(user: dict) -> dict:
     return out
 
 
-async def _read_upload_bounded(uf: UploadFile, budget: list[int], default_name: str = "frame.exr") -> tuple[str, bytes]:
-    fname = os.path.basename((uf.filename or default_name).replace("\\", "/"))
+def _prepare_upload_item(uf, budget: list[int], restricted: bool, default_name: str = "frame.exr") -> tuple[str, object]:
+    fname = os.path.basename((getattr(uf, "filename", None) or default_name).replace("\\", "/"))
     ext = os.path.splitext(fname)[1].lower()
     if ext not in security.ALLOWED_UPLOAD_EXTS:
         raise ValueError(i18n.t("server.uploadUnsupportedExt", filename=fname))
-    chunks = []
-    size = 0
-    while True:
-        chunk = await uf.read(1024 * 1024)
-        if not chunk:
-            break
-        size += len(chunk)
-        budget[0] += len(chunk)
-        if size > security.MAX_SINGLE_UPLOAD_BYTES or budget[0] > security.MAX_REQUEST_BODY_BYTES:
+    fobj = uf.file
+    fobj.seek(0, os.SEEK_END)
+    size = int(fobj.tell())
+    fobj.seek(0)
+    budget[0] += size
+    if restricted:
+        if budget[0] > security.MAX_REQUEST_BODY_BYTES:
+            raise HTTPException(status_code=413, detail=i18n.t("server.payloadTooLarge"))
+        if size > security.MAX_SINGLE_UPLOAD_BYTES:
             raise ValueError(i18n.t("server.uploadTooLarge", role=fname))
-        chunks.append(chunk)
-    return fname, b"".join(chunks)
+    return fname, fobj
 
 
 # ─────────────────────── Algorithmic Identity, Permissions & Admin Dependencies ───────────────────────
@@ -389,50 +389,66 @@ def api_get_asset_frames(asset_id: int, user: dict = Depends(get_current_user)):
 @router.post("/assets/upload-pair")
 async def api_upload_paired_dataset(
     request: Request,
-    name: str = Form(...),
-    strategy: str = Form("standard"),
-    task_type: str = Form(""),
-    max_error_pct: float = Form(35.0),
-    enable_check: bool = Form(True),
-    input_colorspace: str = Form("auto"),
-    working_colorspace: str = Form("ACEScg"),
-    source_files: List[UploadFile] = File(...),
-    target_files: List[UploadFile] = File(...),
-    seq_files: List[UploadFile] = File(default=[]),
     user: dict = Depends(get_current_user),
 ):
     security.enforce_rate_limit("upload", security.extract_client_ip(request), limit=20, window_sec=60.0)
+    restricted = bool(user.get("is_temp_user"))
+    cl_raw = request.headers.get("content-length")
+    if restricted and cl_raw and cl_raw.isdigit() and int(cl_raw) > security.MAX_REQUEST_BODY_BYTES:
+        raise HTTPException(status_code=413, detail=i18n.t("server.payloadTooLarge"))
+
+    max_files = security.MAX_UPLOAD_FILES_TOTAL * 3 + 16 if restricted else 100_000
+    max_fields = 1000 if restricted else 100_000
     try:
-        total_files = len(source_files) + len(target_files) + len(seq_files or [])
-        if total_files > security.MAX_UPLOAD_FILES_TOTAL * 3:
-            raise ValueError(i18n.t("server.uploadTooManyFiles", role="upload", limit=security.MAX_UPLOAD_FILES_TOTAL))
-        budget = [0]
-        src_tuples = []
-        for uf in source_files:
-            src_tuples.append(await _read_upload_bounded(uf, budget, "src.exr"))
-        tgt_tuples = []
-        for uf in target_files:
-            tgt_tuples.append(await _read_upload_bounded(uf, budget, "tgt.exr"))
-        seq_tuples = []
-        for uf in seq_files or []:
-            if uf and uf.filename:
-                seq_tuples.append(await _read_upload_bounded(uf, budget, "seq.exr"))
-        asset = service.create_paired_dataset(
-            user_id=user["id"],
-            username=user["username"],
-            dataset_name=name,
-            source_tuples=src_tuples,
-            target_tuples=tgt_tuples,
-            max_error_pct=float(max_error_pct),
-            strategy=strategy,
-            enable_check=bool(enable_check),
-            input_colorspace=input_colorspace,
-            working_colorspace=working_colorspace,
-            seq_tuples=seq_tuples or None,
-            task_type=task_type,
-            is_admin=bool(user.get("is_admin")),
-        )
-        return {"status": "ok", "asset": asset}
+        async with request.form(max_files=max_files, max_fields=max_fields) as form:
+            name = str(form.get("name") or "").strip()
+            strategy = str(form.get("strategy") or "standard")
+            task_type = str(form.get("task_type") or "")
+            raw_err = form.get("max_error_pct")
+            max_error_pct = float(raw_err if raw_err not in (None, "") else 35.0)
+            raw_chk = str(form.get("enable_check") if form.get("enable_check") is not None else "true").strip().lower()
+            enable_check = raw_chk not in ("0", "false", "no", "off")
+            input_colorspace = str(form.get("input_colorspace") or "auto")
+            working_colorspace = str(form.get("working_colorspace") or "ACEScg")
+
+            source_files = [x for x in form.getlist("source_files") if hasattr(x, "file") and getattr(x, "filename", None)]
+            target_files = [x for x in form.getlist("target_files") if hasattr(x, "file") and getattr(x, "filename", None)]
+            seq_files = [x for x in form.getlist("seq_files") if hasattr(x, "file") and getattr(x, "filename", None)]
+
+            if not source_files:
+                raise ValueError(i18n.t("server.uploadNoValidImages", role=i18n.t("server.roleSource")))
+            if not target_files:
+                raise ValueError(i18n.t("server.uploadNoValidImages", role=i18n.t("server.roleTarget")))
+
+            total_files = len(source_files) + len(target_files) + len(seq_files)
+            if restricted and total_files > security.MAX_UPLOAD_FILES_TOTAL * 3:
+                raise ValueError(i18n.t("server.uploadTooManyFiles", role="upload", limit=security.MAX_UPLOAD_FILES_TOTAL))
+
+            budget = [0]
+            src_tuples = [_prepare_upload_item(uf, budget, restricted, "src.exr") for uf in source_files]
+            tgt_tuples = [_prepare_upload_item(uf, budget, restricted, "tgt.exr") for uf in target_files]
+            seq_tuples = [_prepare_upload_item(uf, budget, restricted, "seq.exr") for uf in seq_files]
+
+            asset = await run_in_threadpool(
+                service.create_paired_dataset,
+                user_id=user["id"],
+                username=user["username"],
+                dataset_name=name,
+                source_tuples=src_tuples,
+                target_tuples=tgt_tuples,
+                max_error_pct=float(max_error_pct),
+                strategy=strategy,
+                enable_check=bool(enable_check),
+                input_colorspace=input_colorspace,
+                working_colorspace=working_colorspace,
+                seq_tuples=seq_tuples or None,
+                task_type=task_type,
+                is_admin=bool(user.get("is_admin")),
+                restricted=restricted,
+            )
+            return {"status": "ok", "asset": asset}
+    except HTTPException:
+        raise
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
@@ -467,29 +483,41 @@ def api_update_asset_task_type(
 async def api_attach_eval_sequence(
     request: Request,
     asset_id: int,
-    input_colorspace: str = Form("auto"),
-    working_colorspace: str = Form("ACEScg"),
-    seq_files: List[UploadFile] = File(...),
     user: dict = Depends(get_current_user),
 ):
     security.enforce_rate_limit("upload", security.extract_client_ip(request), limit=20, window_sec=60.0)
+    restricted = bool(user.get("is_temp_user"))
+    cl_raw = request.headers.get("content-length")
+    if restricted and cl_raw and cl_raw.isdigit() and int(cl_raw) > security.MAX_REQUEST_BODY_BYTES:
+        raise HTTPException(status_code=413, detail=i18n.t("server.payloadTooLarge"))
+
+    max_files = security.MAX_UPLOAD_FILES_TOTAL + 16 if restricted else 100_000
+    max_fields = 1000 if restricted else 100_000
     try:
-        if len(seq_files) > security.MAX_UPLOAD_FILES_TOTAL:
-            raise ValueError(i18n.t("server.uploadTooManyFiles", role="eval", limit=security.MAX_UPLOAD_FILES_TOTAL))
-        budget = [0]
-        seq_tuples = []
-        for uf in seq_files:
-            seq_tuples.append(await _read_upload_bounded(uf, budget, "seq.exr"))
-        asset = service.attach_asset_eval_sequence(
-            user_id=user["id"],
-            is_admin=bool(user.get("is_admin")),
-            username=user["username"],
-            asset_id=asset_id,
-            seq_tuples=seq_tuples,
-            input_colorspace=input_colorspace,
-            working_colorspace=working_colorspace,
-        )
-        return {"status": "ok", "asset": asset}
+        async with request.form(max_files=max_files, max_fields=max_fields) as form:
+            input_colorspace = str(form.get("input_colorspace") or "auto")
+            working_colorspace = str(form.get("working_colorspace") or "ACEScg")
+            seq_files = [x for x in form.getlist("seq_files") if hasattr(x, "file") and getattr(x, "filename", None)]
+            if not seq_files:
+                raise ValueError(i18n.t("server.uploadNoValidImages", role=i18n.t("server.roleEvalSeq")))
+            if restricted and len(seq_files) > security.MAX_UPLOAD_FILES_TOTAL:
+                raise ValueError(i18n.t("server.uploadTooManyFiles", role="eval", limit=security.MAX_UPLOAD_FILES_TOTAL))
+            budget = [0]
+            seq_tuples = [_prepare_upload_item(uf, budget, restricted, "seq.exr") for uf in seq_files]
+            asset = await run_in_threadpool(
+                service.attach_asset_eval_sequence,
+                user_id=user["id"],
+                is_admin=bool(user.get("is_admin")),
+                username=user["username"],
+                asset_id=asset_id,
+                seq_tuples=seq_tuples,
+                input_colorspace=input_colorspace,
+                working_colorspace=working_colorspace,
+                restricted=restricted,
+            )
+            return {"status": "ok", "asset": asset}
+    except HTTPException:
+        raise
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:

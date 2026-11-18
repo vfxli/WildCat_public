@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261118_v301" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261118_v302" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -5034,6 +5034,10 @@
             <span class="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-[10px] font-semibold text-indigo-300 wc-mono">
               {{ t('upload.modalFormatBadge') }}
             </span>
+            <span v-if="user && user.is_temp_user"
+                  class="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-[10px] font-semibold text-amber-300 wc-mono">
+              {{ t('upload.tempUploadLimitBadge') }}
+            </span>
             <help-tip doc="dataset_files"></help-tip>
           </div>
           <button @click="uploadModal.open = false" class="text-slate-400 hover:text-white text-sm">✕</button>
@@ -5069,7 +5073,7 @@
                    @change="onPairFilesSelected('seq', $event)"
                    class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-600 file:text-white hover:file:bg-amber-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
             <div class="text-xs" :class="uploadModal.seqFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
-              {{ uploadModal.seqFiles.length ? t('upload.filesSelected', { count: uploadModal.seqFiles.length }) : t('upload.noFilesSelected') }}
+              {{ formatSelectedFilesInfo(uploadModal.seqFiles) }}
             </div>
           </div>
         </template>
@@ -5153,7 +5157,7 @@
                      @change="onPairFilesSelected('source', $event)"
                      class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
               <div class="text-xs" :class="uploadModal.sourceFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
-                {{ uploadModal.sourceFiles.length ? t('upload.filesSelected', { count: uploadModal.sourceFiles.length }) : t('upload.noFilesSelected') }}
+                {{ formatSelectedFilesInfo(uploadModal.sourceFiles) }}
               </div>
             </div>
 
@@ -5164,7 +5168,7 @@
                      @change="onPairFilesSelected('target', $event)"
                      class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
               <div class="text-xs" :class="uploadModal.targetFiles.length ? 'text-emerald-400 font-semibold' : 'text-slate-500'">
-                {{ uploadModal.targetFiles.length ? t('upload.filesSelected', { count: uploadModal.targetFiles.length }) : t('upload.noFilesSelected') }}
+                {{ formatSelectedFilesInfo(uploadModal.targetFiles) }}
               </div>
             </div>
           </div>
@@ -5177,7 +5181,7 @@
                    @change="onPairFilesSelected('seq', $event)"
                    class="block w-full text-xs text-slate-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-600/85 file:text-white hover:file:bg-amber-500 cursor-pointer bg-slate-900 border border-slate-800 rounded-xl p-1.5" />
             <div class="text-xs" :class="uploadModal.seqFiles.length ? 'text-amber-300 font-semibold' : 'text-slate-500'">
-              {{ uploadModal.seqFiles.length ? t('upload.filesSelected', { count: uploadModal.seqFiles.length }) : t('upload.noFilesSelected') }}
+              {{ formatSelectedFilesInfo(uploadModal.seqFiles) }}
             </div>
           </div>
         </template>
@@ -5493,6 +5497,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261118_v301"></script>
+  <script type="module" src="/static/app.js?v=20261118_v302"></script>
 </body>
 </html>

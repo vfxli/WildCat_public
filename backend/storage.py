@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """User-Isolated Storage Manager for Assets (Sequences) and Task Run Directories."""
+import contextlib
 import glob
 import io
 import os
@@ -286,72 +287,135 @@ def _norm_img_float(img: np.ndarray) -> np.ndarray:
     return arr
 
 
-def _extract_upload_images(file_tuples: list, role_label: str) -> list:
-    """Decode uploaded files (.exr/.png/.tif/.jpg/.zip) into sorted list of (stem_name, filename, float32_rgb_ndarray)
-    with strict anti-DoS caps on archive entries, decompressed bytes, and image dimensions."""
-    MAX_ROLE_FILES = 300
-    MAX_SINGLE_BYTES = 128 * 1024 * 1024  # 128 MB
-    MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # 1 GB
-    MAX_IMG_DIM = 8192
+def _payload_byte_len(content) -> int:
+    if isinstance(content, (bytes, bytearray, memoryview)):
+        return len(content)
+    if isinstance(content, (str, os.PathLike)):
+        return int(os.path.getsize(content))
+    if hasattr(content, "seek") and hasattr(content, "tell"):
+        pos = content.tell()
+        content.seek(0, os.SEEK_END)
+        sz = int(content.tell())
+        content.seek(pos)
+        return sz
+    return 0
 
-    raw_items = []
+
+def _read_zip_member_checked(zf: zipfile.ZipFile, member_name: str, max_single_bytes: int | None, role_label: str) -> bytes:
+    data = zf.read(member_name)
+    if max_single_bytes is not None and len(data) > max_single_bytes:
+        raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
+    return data
+
+
+def _read_filelike_all(fh) -> bytes:
+    fh.seek(0)
+    return fh.read()
+
+
+def _collect_upload_readers(
+    file_tuples: list,
+    role_label: str,
+    stack: contextlib.ExitStack,
+    restricted: bool = False,
+) -> list[tuple[str, object]]:
+    """Build a sorted list of `(basename, lazy_bytes_reader)` without loading all uploaded files into RAM at once.
+    Temporary-user caps (300 files, 128 MB/file, 1 GB decompressed) apply only when `restricted=True`."""
+    max_role_files = 300 if restricted else None
+    max_single_bytes = 128 * 1024 * 1024 if restricted else None
+    max_total_bytes = 1024 * 1024 * 1024 if restricted else None
+
+    entries = []
     total_uncompressed = 0
     valid_exts = (".exr", ".png", ".tif", ".tiff", ".jpg", ".jpeg")
     for fname, content in file_tuples:
         lower = (fname or "").lower()
         if lower.endswith(".zip"):
-            if len(content) > MAX_TOTAL_BYTES:
+            zlen = _payload_byte_len(content)
+            if max_total_bytes is not None and zlen > max_total_bytes:
                 raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
-            with zipfile.ZipFile(io.BytesIO(content), "r") as z:
-                infos = [zi for zi in sorted(z.infolist(), key=lambda x: x.filename) if not zi.is_dir()]
-                if len(infos) > MAX_ROLE_FILES * 2:
-                    raise ValueError(i18n.t("server.uploadTooManyFiles", role=role_label, limit=MAX_ROLE_FILES))
-                for zi in infos:
-                    bn = PureWindowsPath(zi.filename).name
-                    if bn.startswith(".") or "__MACOSX" in zi.filename:
-                        continue
-                    ext = PureWindowsPath(bn).suffix.lower()
-                    if ext in valid_exts:
-                        if zi.file_size > MAX_SINGLE_BYTES:
-                            raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
-                        total_uncompressed += int(zi.file_size)
-                        if total_uncompressed > MAX_TOTAL_BYTES:
-                            raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
-                        if len(raw_items) >= MAX_ROLE_FILES:
-                            raise ValueError(i18n.t("server.uploadTooManyFiles", role=role_label, limit=MAX_ROLE_FILES))
-                        data = z.read(zi.filename)
-                        if len(data) > MAX_SINGLE_BYTES:
-                            raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
-                        raw_items.append((bn, data))
+            if isinstance(content, (bytes, bytearray, memoryview)):
+                zsrc = io.BytesIO(content)
+            elif isinstance(content, (str, os.PathLike)):
+                zsrc = os.fspath(content)
+            else:
+                content.seek(0)
+                zsrc = content
+            zf = stack.enter_context(zipfile.ZipFile(zsrc, "r"))
+            infos = [zi for zi in sorted(zf.infolist(), key=lambda x: x.filename) if not zi.is_dir()]
+            if max_role_files is not None and len(infos) > max_role_files * 2:
+                raise ValueError(i18n.t("server.uploadTooManyFiles", role=role_label, limit=max_role_files))
+            for zi in infos:
+                bn = PureWindowsPath(zi.filename).name
+                if bn.startswith(".") or "__MACOSX" in zi.filename:
+                    continue
+                ext = PureWindowsPath(bn).suffix.lower()
+                if ext in valid_exts:
+                    if max_single_bytes is not None and zi.file_size > max_single_bytes:
+                        raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
+                    total_uncompressed += int(zi.file_size)
+                    if max_total_bytes is not None and total_uncompressed > max_total_bytes:
+                        raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
+                    if max_role_files is not None and len(entries) >= max_role_files:
+                        raise ValueError(i18n.t("server.uploadTooManyFiles", role=role_label, limit=max_role_files))
+                    entries.append(
+                        (
+                            bn,
+                            lambda z=zf, zname=zi.filename, lim=max_single_bytes, rlbl=role_label: _read_zip_member_checked(
+                                z, zname, lim, rlbl
+                            ),
+                        )
+                    )
         else:
             bn = PureWindowsPath(fname or "").name
             ext = PureWindowsPath(bn).suffix.lower()
             if ext in valid_exts:
-                if len(content) > MAX_SINGLE_BYTES:
+                flen = _payload_byte_len(content)
+                if max_single_bytes is not None and flen > max_single_bytes:
                     raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
-                total_uncompressed += len(content)
-                if total_uncompressed > MAX_TOTAL_BYTES:
+                total_uncompressed += flen
+                if max_total_bytes is not None and total_uncompressed > max_total_bytes:
                     raise ValueError(i18n.t("server.uploadTooLarge", role=role_label))
-                if len(raw_items) >= MAX_ROLE_FILES:
-                    raise ValueError(i18n.t("server.uploadTooManyFiles", role=role_label, limit=MAX_ROLE_FILES))
-                raw_items.append((bn, content))
+                if max_role_files is not None and len(entries) >= max_role_files:
+                    raise ValueError(i18n.t("server.uploadTooManyFiles", role=role_label, limit=max_role_files))
+                if isinstance(content, (bytes, bytearray, memoryview)):
+                    b_ref = bytes(content) if not isinstance(content, bytes) else content
+                    reader = lambda b=b_ref: b
+                elif isinstance(content, (str, os.PathLike)):
+                    p_str = os.fspath(content)
+                    reader = lambda p=p_str: Path(p).read_bytes()
+                else:
+                    reader = lambda fh=content: _read_filelike_all(fh)
+                entries.append((bn, reader))
 
-    if not raw_items:
+    if not entries:
         raise ValueError(i18n.t("server.uploadNoValidImages", role=role_label))
 
-    raw_items.sort(key=lambda x: x[0])
-    decoded = []
-    for idx, (bn, data_bytes) in enumerate(raw_items, start=1):
-        try:
-            img = color.decode_image_bytes(data_bytes, bn)
-        except Exception as e:
-            raise ValueError(i18n.t("server.uploadDecodeFailed", role=role_label, filename=bn, err=e))
-        ih, iw = int(img.shape[0]), int(img.shape[1])
-        if ih <= 0 or iw <= 0 or ih > MAX_IMG_DIM or iw > MAX_IMG_DIM:
-            raise ValueError(i18n.t("server.uploadResolutionExceeded", filename=bn, w=iw, h=ih, max_dim=MAX_IMG_DIM))
-        stem = sanitize_name(PureWindowsPath(bn).stem, f"frame_{idx:04d}")
-        decoded.append((stem, bn, img))
-    return decoded
+    entries.sort(key=lambda x: x[0])
+    return entries
+
+
+def _decode_checked_image(data_bytes: bytes, bn: str, role_label: str, idx: int, restricted: bool = False) -> tuple[str, str, np.ndarray]:
+    max_img_dim = 8192 if restricted else 16384
+    try:
+        img = color.decode_image_bytes(data_bytes, bn)
+    except Exception as e:
+        raise ValueError(i18n.t("server.uploadDecodeFailed", role=role_label, filename=bn, err=e))
+    ih, iw = int(img.shape[0]), int(img.shape[1])
+    if ih <= 0 or iw <= 0 or ih > max_img_dim or iw > max_img_dim:
+        raise ValueError(i18n.t("server.uploadResolutionExceeded", filename=bn, w=iw, h=ih, max_dim=max_img_dim))
+    stem = sanitize_name(PureWindowsPath(bn).stem, f"frame_{idx:04d}")
+    return stem, bn, img
+
+
+def _extract_upload_images(file_tuples: list, role_label: str, restricted: bool = False) -> list:
+    """Decode uploaded files (.exr/.png/.tif/.jpg/.zip) into sorted list of `(stem_name, filename, float32_ndarray)`."""
+    with contextlib.ExitStack() as stack:
+        entries = _collect_upload_readers(file_tuples, role_label, stack, restricted=restricted)
+        decoded = []
+        for idx, (bn, reader) in enumerate(entries, start=1):
+            decoded.append(_decode_checked_image(reader(), bn, role_label, idx, restricted=restricted))
+        return decoded
 
 
 _FRAME_NUM_RE = re.compile(r"(\d+)(?=\.[^.]+$)")
@@ -392,41 +456,55 @@ def _save_eval_frames_to_dir(
     expected_in_ch: int = 0,
     input_colorspace: str = "auto",
     working_colorspace: str = "ACEScg",
+    restricted: bool = False,
 ) -> int:
-    seq_imgs = _extract_upload_images(seq_tuples, i18n.t("server.roleEvalSeq"))
-    if len(seq_imgs) < 2:
-        raise ValueError(i18n.t("server.evalSeqMinFrames", count=len(seq_imgs)))
+    role_lbl = i18n.t("server.roleEvalSeq")
+    with contextlib.ExitStack() as stack:
+        entries = _collect_upload_readers(seq_tuples, role_lbl, stack, restricted=restricted)
+        if len(entries) < 2:
+            raise ValueError(i18n.t("server.evalSeqMinFrames", count=len(entries)))
 
-    h0 = expected_h or int(seq_imgs[0][2].shape[0])
-    w0 = expected_w or int(seq_imgs[0][2].shape[1])
-    for idx, (_, s_bn, s_im) in enumerate(seq_imgs, start=1):
-        sh, sw = int(s_im.shape[0]), int(s_im.shape[1])
-        if (sw, sh) != (w0, h0):
-            raise ValueError(
-                i18n.t(
-                    "server.evalSeqDatasetSizeMismatch",
-                    index=idx,
-                    filename=s_bn,
-                    sw=sw,
-                    sh=sh,
-                    w0=w0,
-                    h0=h0,
-                )
-            )
+        tmp_eval_abs = f"{eval_abs}.tmp_{os.getpid()}"
+        if os.path.exists(tmp_eval_abs):
+            shutil.rmtree(tmp_eval_abs, ignore_errors=True)
+        os.makedirs(tmp_eval_abs, exist_ok=True)
+        try:
+            h0 = int(expected_h or 0)
+            w0 = int(expected_w or 0)
+            for idx, (bn, reader) in enumerate(entries, start=1):
+                _, s_bn, s_im = _decode_checked_image(reader(), bn, role_lbl, idx, restricted=restricted)
+                sh, sw = int(s_im.shape[0]), int(s_im.shape[1])
+                if idx == 1 and (w0 == 0 or h0 == 0):
+                    h0 = h0 or sh
+                    w0 = w0 or sw
+                if (sw, sh) != (w0, h0):
+                    raise ValueError(
+                        i18n.t(
+                            "server.evalSeqDatasetSizeMismatch",
+                            index=idx,
+                            filename=s_bn,
+                            sw=sw,
+                            sh=sh,
+                            w0=w0,
+                            h0=h0,
+                        )
+                    )
+                s_out = s_im
+                if expected_in_ch in (1, 3, 4) and s_out.ndim == 3 and s_out.shape[2] > expected_in_ch:
+                    s_out = s_out[..., :expected_in_ch]
+                s_cs = _resolve_upload_colorspace(s_bn, input_colorspace, working_colorspace)
+                if s_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and s_out.shape[2] >= 3:
+                    s_out = color.transform_colorspace(s_out, s_cs, working_colorspace)
+                color.write_exr_file(os.path.join(tmp_eval_abs, f"frame_{idx:04d}.exr"), s_out, bit_depth="half")
+                del s_im, s_out
+        except Exception:
+            shutil.rmtree(tmp_eval_abs, ignore_errors=True)
+            raise
 
-    if os.path.exists(eval_abs):
-        shutil.rmtree(eval_abs, ignore_errors=True)
-    os.makedirs(eval_abs, exist_ok=True)
-
-    for idx, (_, s_bn, s_im) in enumerate(seq_imgs, start=1):
-        s_out = s_im
-        if expected_in_ch in (1, 3, 4) and s_out.ndim == 3 and s_out.shape[2] > expected_in_ch:
-            s_out = s_out[..., :expected_in_ch]
-        s_cs = _resolve_upload_colorspace(s_bn, input_colorspace, working_colorspace)
-        if s_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and s_out.shape[2] >= 3:
-            s_out = color.transform_colorspace(s_out, s_cs, working_colorspace)
-        color.write_exr_file(os.path.join(eval_abs, f"frame_{idx:04d}.exr"), s_out, bit_depth="half")
-    return len(seq_imgs)
+        if os.path.exists(eval_abs):
+            shutil.rmtree(eval_abs, ignore_errors=True)
+        os.replace(tmp_eval_abs, eval_abs)
+        return len(entries)
 
 
 def validate_and_save_paired_dataset(
@@ -440,6 +518,7 @@ def validate_and_save_paired_dataset(
     input_colorspace: str = "auto",
     working_colorspace: str = "ACEScg",
     seq_tuples: list | None = None,
+    restricted: bool = False,
 ) -> dict:
     """
     Validate a paired (Source Input, Ground Truth Target) sequence upload before saving:
@@ -450,178 +529,224 @@ def validate_and_save_paired_dataset(
           3. 100% duplicate identical sequence check (MAE == 0).
           4. Generous pixel error tolerance check (default 35% MAE threshold).
     """
-    src_imgs = _extract_upload_images(source_tuples, i18n.t("server.roleSource"))
-    tgt_imgs = _extract_upload_images(target_tuples, i18n.t("server.roleTarget"))
+    src_role = i18n.t("server.roleSource")
+    tgt_role = i18n.t("server.roleTarget")
+    with contextlib.ExitStack() as stack:
+        src_entries = _collect_upload_readers(source_tuples, src_role, stack, restricted=restricted)
+        tgt_entries = _collect_upload_readers(target_tuples, tgt_role, stack, restricted=restricted)
 
-    src_fnums = [_extract_frame_num(x[1]) for x in src_imgs]
-    tgt_fnums = [_extract_frame_num(x[1]) for x in tgt_imgs]
-    has_fnums = all(n is not None for n in src_fnums) and all(n is not None for n in tgt_fnums)
+        src_fnums = [_extract_frame_num(bn) for bn, _ in src_entries]
+        tgt_fnums = [_extract_frame_num(bn) for bn, _ in tgt_entries]
+        has_fnums = all(n is not None for n in src_fnums) and all(n is not None for n in tgt_fnums)
 
-    # 1. Missing Frame / Unequal Frame Count Detection (with exact missing frame number report!)
-    if len(src_imgs) != len(tgt_imgs):
-        detail = ""
-        if has_fnums:
-            s_set, t_set = set(src_fnums), set(tgt_fnums)
-            miss_in_tgt = sorted(s_set - t_set)
-            miss_in_src = sorted(t_set - s_set)
-            parts = []
-            if miss_in_tgt:
-                parts.append(i18n.t("server.missingInTarget", frames=miss_in_tgt[:10]))
-            if miss_in_src:
-                parts.append(i18n.t("server.missingInSource", frames=miss_in_src[:10]))
-            if parts:
-                detail = i18n.t("server.missingDetailPrefix", parts="; ".join(parts))
-        raise ValueError(
-            i18n.t("server.pairCountMismatch", src_count=len(src_imgs), tgt_count=len(tgt_imgs), detail=detail)
-        )
-
-    # 2. Frame Number Alignment Check (when enable_check is ON)
-    if enable_check and has_fnums:
-        for idx, (sn, tn, (_, s_bn, _), (_, t_bn, _)) in enumerate(
-            zip(src_fnums, tgt_fnums, src_imgs, tgt_imgs)
-        ):
-            if sn != tn:
+        # 1. Missing Frame / Unequal Frame Count Detection (with exact missing frame number report!)
+        if len(src_entries) != len(tgt_entries):
+            detail = ""
+            if has_fnums:
                 s_set, t_set = set(src_fnums), set(tgt_fnums)
                 miss_in_tgt = sorted(s_set - t_set)
                 miss_in_src = sorted(t_set - s_set)
-                extra = ""
-                if miss_in_tgt or miss_in_src:
-                    extra = i18n.t("server.pairFrameExtraMissing", miss_tgt=miss_in_tgt[:8], miss_src=miss_in_src[:8])
+                parts = []
+                if miss_in_tgt:
+                    parts.append(i18n.t("server.missingInTarget", frames=miss_in_tgt[:10]))
+                if miss_in_src:
+                    parts.append(i18n.t("server.missingInSource", frames=miss_in_src[:10]))
+                if parts:
+                    detail = i18n.t("server.missingDetailPrefix", parts="; ".join(parts))
+            raise ValueError(
+                i18n.t("server.pairCountMismatch", src_count=len(src_entries), tgt_count=len(tgt_entries), detail=detail)
+            )
+
+        # 2. Frame Number Alignment Check (when enable_check is ON)
+        if enable_check and has_fnums:
+            for idx, (sn, tn, (s_bn, _), (t_bn, _)) in enumerate(
+                zip(src_fnums, tgt_fnums, src_entries, tgt_entries)
+            ):
+                if sn != tn:
+                    s_set, t_set = set(src_fnums), set(tgt_fnums)
+                    miss_in_tgt = sorted(s_set - t_set)
+                    miss_in_src = sorted(t_set - s_set)
+                    extra = ""
+                    if miss_in_tgt or miss_in_src:
+                        extra = i18n.t("server.pairFrameExtraMissing", miss_tgt=miss_in_tgt[:8], miss_src=miss_in_src[:8])
+                    raise ValueError(
+                        i18n.t(
+                            "server.pairFrameNumMismatch",
+                            index=idx + 1,
+                            src_name=s_bn,
+                            src_num=sn,
+                            tgt_name=t_bn,
+                            tgt_num=tn,
+                            extra=extra,
+                        )
+                    )
+
+        # Stream pair-by-pair when keyframe count > 32 so large sequences never hold hundreds of float32 frames in RAM
+        keep_in_ram = len(src_entries) <= 32
+        cached_pairs = []
+        h0, w0 = 0, 0
+        in_ch = 99
+        out_ch = 99
+        src_var_alpha = False
+        tgt_var_alpha = False
+        maes = []
+        worst_mae = -1.0
+        worst_idx = 0
+        worst_pair_names = ("", "")
+        thumbs_s = []
+        thumbs_t = []
+
+        for idx, ((s_bn_raw, s_reader), (t_bn_raw, t_reader)) in enumerate(zip(src_entries, tgt_entries), start=1):
+            _, s_bn, s_im = _decode_checked_image(s_reader(), s_bn_raw, src_role, idx, restricted=restricted)
+            _, t_bn, t_im = _decode_checked_image(t_reader(), t_bn_raw, tgt_role, idx, restricted=restricted)
+            sh, sw = int(s_im.shape[0]), int(s_im.shape[1])
+            th, tw = int(t_im.shape[0]), int(t_im.shape[1])
+            if idx == 1:
+                h0, w0 = sh, sw
+            if sh != th or sw != tw:
                 raise ValueError(
                     i18n.t(
-                        "server.pairFrameNumMismatch",
-                        index=idx + 1,
+                        "server.pairSizeMismatch",
+                        index=idx,
                         src_name=s_bn,
-                        src_num=sn,
+                        sw=sw,
+                        sh=sh,
                         tgt_name=t_bn,
-                        tgt_num=tn,
-                        extra=extra,
+                        tw=tw,
+                        th=th,
                     )
                 )
-
-    h0, w0 = int(src_imgs[0][2].shape[0]), int(src_imgs[0][2].shape[1])
-    in_ch = min(1 if im.ndim == 2 else int(im.shape[2]) for _, _, im in src_imgs)
-    out_ch = min(1 if im.ndim == 2 else int(im.shape[2]) for _, _, im in tgt_imgs)
-    if in_ch >= 3 and out_ch >= 3 and in_ch != out_ch:
-        if in_ch == 4 and not _has_varying_alpha([im for _, _, im in src_imgs]):
-            in_ch = 3
-        if out_ch == 4 and not _has_varying_alpha([im for _, _, im in tgt_imgs]):
-            out_ch = 3
-
-    maes = []
-    worst_mae = -1.0
-    worst_idx = 0
-    worst_pair_names = ("", "")
-    thumbs_s = []
-    thumbs_t = []
-
-    for idx, ((s_stem, s_bn, s_im), (t_stem, t_bn, t_im)) in enumerate(zip(src_imgs, tgt_imgs)):
-        sh, sw = int(s_im.shape[0]), int(s_im.shape[1])
-        th, tw = int(t_im.shape[0]), int(t_im.shape[1])
-        if sh != th or sw != tw:
-            raise ValueError(
-                i18n.t(
-                    "server.pairSizeMismatch",
-                    index=idx + 1,
-                    src_name=s_bn,
-                    sw=sw,
-                    sh=sh,
-                    tgt_name=t_bn,
-                    tw=tw,
-                    th=th,
-                )
-            )
-        if sh != h0 or sw != w0:
-            raise ValueError(
-                i18n.t("server.seqInternalSizeMismatch", w0=w0, h0=h0, index=idx + 1, sw=sw, sh=sh)
-            )
-
-        s_f = _norm_img_float(s_im)
-        t_f = _norm_img_float(t_im)
-        c_cmp = min(s_f.shape[2], t_f.shape[2], 3)
-        frame_mae = float(np.mean(np.abs(s_f[..., :c_cmp] - t_f[..., :c_cmp])))
-        maes.append(frame_mae)
-        if frame_mae > worst_mae:
-            worst_mae = frame_mae
-            worst_idx = idx
-            worst_pair_names = (s_bn, t_bn)
-
-        if enable_check and len(src_imgs) > 1 and in_ch == out_ch:
-            thumbs_s.append(cv2.resize(s_f[..., :c_cmp], (64, 64), interpolation=cv2.INTER_AREA))
-            thumbs_t.append(cv2.resize(t_f[..., :c_cmp], (64, 64), interpolation=cv2.INTER_AREA))
-
-    avg_mae = float(np.mean(maes)) if maes else 0.0
-
-    if enable_check:
-        # 3. Reject 100% identical duplicate sequences (only when channels match)
-        if in_ch == out_ch and worst_mae < 1e-5:
-            raise ValueError(i18n.t("server.pairDuplicateSeq"))
-
-        # 4. Cross-Frame Content Shift Detection (detects if frame i is misaligned and actually matches frame j != i)
-        if len(thumbs_s) > 1 and strategy != "alpha_matting":
-            for i in range(len(thumbs_s)):
-                self_diff = float(np.mean(np.abs(thumbs_s[i] - thumbs_t[i])))
-                if self_diff > 0.02:
-                    for j in range(len(thumbs_t)):
-                        if i == j:
-                            continue
-                        cross_diff = float(np.mean(np.abs(thumbs_s[i] - thumbs_t[j])))
-                        if cross_diff * 1.6 < self_diff and (self_diff - cross_diff) > 0.012:
-                            s_name = src_imgs[i][1]
-                            t_i_name = tgt_imgs[i][1]
-                            t_j_name = tgt_imgs[j][1]
-                            raise ValueError(
-                                i18n.t(
-                                    "server.pairCrossFrameShift",
-                                    i=i + 1,
-                                    src_name=s_name,
-                                    tgt_i_name=t_i_name,
-                                    self_pct=f"{self_diff * 100:.1f}",
-                                    j=j + 1,
-                                    tgt_j_name=t_j_name,
-                                    cross_pct=f"{cross_diff * 100:.1f}",
-                                )
-                            )
-
-        # 5. Generous Pixel Error Threshold Check
-        if strategy != "alpha_matting" and max_error_pct > 0:
-            limit = float(max_error_pct) / 100.0
-            if worst_mae > limit:
+            if sh != h0 or sw != w0:
                 raise ValueError(
-                    i18n.t(
-                        "server.pairMaeExceeded",
-                        index=worst_idx + 1,
-                        src_name=worst_pair_names[0],
-                        tgt_name=worst_pair_names[1],
-                        worst_pct=f"{worst_mae * 100:.2f}",
-                        avg_pct=f"{avg_mae * 100:.2f}",
-                        limit_pct=f"{max_error_pct:.1f}",
-                    )
+                    i18n.t("server.seqInternalSizeMismatch", w0=w0, h0=h0, index=idx, sw=sw, sh=sh)
                 )
 
-    # Validation passed -> write clean paired dataset directory in .exr (ACEScg 16-bit half-float)
-    ds_abs = user_dataset_dir(username, dataset_name)
-    src_abs = os.path.join(ds_abs, "source")
-    tgt_abs = os.path.join(ds_abs, "target")
-    if os.path.exists(ds_abs):
-        shutil.rmtree(ds_abs, ignore_errors=True)
-    os.makedirs(src_abs, exist_ok=True)
-    os.makedirs(tgt_abs, exist_ok=True)
+            sc = 1 if s_im.ndim == 2 else int(s_im.shape[2])
+            tc = 1 if t_im.ndim == 2 else int(t_im.shape[2])
+            in_ch = min(in_ch, sc)
+            out_ch = min(out_ch, tc)
+            if not src_var_alpha and s_im.ndim == 3 and s_im.shape[2] >= 4:
+                sa = s_im[..., 3]
+                if float(np.min(sa)) < 0.999 or float(np.max(sa)) > 1.001:
+                    src_var_alpha = True
+            if not tgt_var_alpha and t_im.ndim == 3 and t_im.shape[2] >= 4:
+                ta = t_im[..., 3]
+                if float(np.min(ta)) < 0.999 or float(np.max(ta)) > 1.001:
+                    tgt_var_alpha = True
 
-    norm_in_ch = 3 if in_ch == 3 else (4 if in_ch >= 4 else 1)
-    norm_out_ch = 3 if out_ch == 3 else (4 if out_ch >= 4 else 1)
+            s_f = _norm_img_float(s_im)
+            t_f = _norm_img_float(t_im)
+            c_cmp = min(s_f.shape[2], t_f.shape[2], 3)
+            frame_mae = float(np.mean(np.abs(s_f[..., :c_cmp] - t_f[..., :c_cmp])))
+            maes.append(frame_mae)
+            if frame_mae > worst_mae:
+                worst_mae = frame_mae
+                worst_idx = idx - 1
+                worst_pair_names = (s_bn, t_bn)
 
-    for idx, ((_, s_bn, s_im), (_, t_bn, t_im)) in enumerate(zip(src_imgs, tgt_imgs), start=1):
-        s_out = s_im[..., :norm_in_ch] if (s_im.ndim == 3 and s_im.shape[2] > norm_in_ch) else s_im
-        t_out = t_im[..., :norm_out_ch] if (t_im.ndim == 3 and t_im.shape[2] > norm_out_ch) else t_im
-        s_cs = _resolve_upload_colorspace(s_bn, input_colorspace, working_colorspace)
-        t_cs = _resolve_upload_colorspace(t_bn, input_colorspace, working_colorspace)
-        if s_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and s_out.shape[2] >= 3:
-            s_out = color.transform_colorspace(s_out, s_cs, working_colorspace)
-        if t_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and t_out.shape[2] >= 3:
-            t_out = color.transform_colorspace(t_out, t_cs, working_colorspace)
-        color.write_exr_file(os.path.join(src_abs, f"frame_{idx:04d}.exr"), s_out, bit_depth="half")
-        color.write_exr_file(os.path.join(tgt_abs, f"frame_{idx:04d}.exr"), t_out, bit_depth="half")
+            if enable_check and len(src_entries) > 1:
+                thumbs_s.append(cv2.resize(s_f[..., :c_cmp], (64, 64), interpolation=cv2.INTER_AREA))
+                thumbs_t.append(cv2.resize(t_f[..., :c_cmp], (64, 64), interpolation=cv2.INTER_AREA))
+
+            if keep_in_ram:
+                cached_pairs.append((s_bn, s_im, t_bn, t_im))
+            else:
+                del s_im, t_im
+            del s_f, t_f
+
+        if in_ch >= 3 and out_ch >= 3 and in_ch != out_ch:
+            if in_ch == 4 and not src_var_alpha:
+                in_ch = 3
+            if out_ch == 4 and not tgt_var_alpha:
+                out_ch = 3
+
+        avg_mae = float(np.mean(maes)) if maes else 0.0
+
+        if enable_check:
+            # 3. Reject 100% identical duplicate sequences (only when channels match)
+            if in_ch == out_ch and worst_mae < 1e-5:
+                raise ValueError(i18n.t("server.pairDuplicateSeq"))
+
+            # 4. Cross-Frame Content Shift Detection (detects if frame i is misaligned and actually matches frame j != i)
+            if in_ch == out_ch and len(thumbs_s) > 1 and strategy != "alpha_matting":
+                for i in range(len(thumbs_s)):
+                    self_diff = float(np.mean(np.abs(thumbs_s[i] - thumbs_t[i])))
+                    if self_diff > 0.02:
+                        for j in range(len(thumbs_t)):
+                            if i == j:
+                                continue
+                            cross_diff = float(np.mean(np.abs(thumbs_s[i] - thumbs_t[j])))
+                            if cross_diff * 1.6 < self_diff and (self_diff - cross_diff) > 0.012:
+                                s_name = src_entries[i][0]
+                                t_i_name = tgt_entries[i][0]
+                                t_j_name = tgt_entries[j][0]
+                                raise ValueError(
+                                    i18n.t(
+                                        "server.pairCrossFrameShift",
+                                        i=i + 1,
+                                        src_name=s_name,
+                                        tgt_i_name=t_i_name,
+                                        self_pct=f"{self_diff * 100:.1f}",
+                                        j=j + 1,
+                                        tgt_j_name=t_j_name,
+                                        cross_pct=f"{cross_diff * 100:.1f}",
+                                    )
+                                )
+
+            # 5. Generous Pixel Error Threshold Check
+            if strategy != "alpha_matting" and max_error_pct > 0:
+                limit = float(max_error_pct) / 100.0
+                if worst_mae > limit:
+                    raise ValueError(
+                        i18n.t(
+                            "server.pairMaeExceeded",
+                            index=worst_idx + 1,
+                            src_name=worst_pair_names[0],
+                            tgt_name=worst_pair_names[1],
+                            worst_pct=f"{worst_mae * 100:.2f}",
+                            avg_pct=f"{avg_mae * 100:.2f}",
+                            limit_pct=f"{max_error_pct:.1f}",
+                        )
+                    )
+
+        # Validation passed -> write clean paired dataset directory in .exr (ACEScg 16-bit half-float)
+        ds_abs = user_dataset_dir(username, dataset_name)
+        src_abs = os.path.join(ds_abs, "source")
+        tgt_abs = os.path.join(ds_abs, "target")
+        if os.path.exists(ds_abs):
+            shutil.rmtree(ds_abs, ignore_errors=True)
+        os.makedirs(src_abs, exist_ok=True)
+        os.makedirs(tgt_abs, exist_ok=True)
+
+        norm_in_ch = 3 if in_ch == 3 else (4 if in_ch >= 4 else 1)
+        norm_out_ch = 3 if out_ch == 3 else (4 if out_ch >= 4 else 1)
+
+        if keep_in_ram:
+            pair_iter = cached_pairs
+        else:
+            pair_iter = (
+                (
+                    s_bn_raw,
+                    _decode_checked_image(s_reader(), s_bn_raw, src_role, idx, restricted=restricted)[2],
+                    t_bn_raw,
+                    _decode_checked_image(t_reader(), t_bn_raw, tgt_role, idx, restricted=restricted)[2],
+                )
+                for idx, ((s_bn_raw, s_reader), (t_bn_raw, t_reader)) in enumerate(zip(src_entries, tgt_entries), start=1)
+            )
+
+        for idx, (s_bn, s_im, t_bn, t_im) in enumerate(pair_iter, start=1):
+            s_out = s_im[..., :norm_in_ch] if (s_im.ndim == 3 and s_im.shape[2] > norm_in_ch) else s_im
+            t_out = t_im[..., :norm_out_ch] if (t_im.ndim == 3 and t_im.shape[2] > norm_out_ch) else t_im
+            s_cs = _resolve_upload_colorspace(s_bn, input_colorspace, working_colorspace)
+            t_cs = _resolve_upload_colorspace(t_bn, input_colorspace, working_colorspace)
+            if s_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and s_out.shape[2] >= 3:
+                s_out = color.transform_colorspace(s_out, s_cs, working_colorspace)
+            if t_cs not in ("", "Raw", working_colorspace) and working_colorspace != "Raw" and t_out.shape[2] >= 3:
+                t_out = color.transform_colorspace(t_out, t_cs, working_colorspace)
+            color.write_exr_file(os.path.join(src_abs, f"frame_{idx:04d}.exr"), s_out, bit_depth="half")
+            color.write_exr_file(os.path.join(tgt_abs, f"frame_{idx:04d}.exr"), t_out, bit_depth="half")
+
+        frame_total = len(src_entries)
 
     seq_rel = ""
     seq_count = 0
@@ -636,6 +761,7 @@ def validate_and_save_paired_dataset(
                 expected_in_ch=norm_in_ch,
                 input_colorspace=input_colorspace,
                 working_colorspace=working_colorspace,
+                restricted=restricted,
             )
             seq_rel = rel_to_root(eval_abs)
         except Exception:
@@ -652,7 +778,7 @@ def validate_and_save_paired_dataset(
         "source_path": src_rel,
         "target_path": tgt_rel,
         "seq_path": seq_rel,
-        "frame_count": len(src_imgs),
+        "frame_count": frame_total,
         "seq_frame_count": seq_count,
         "width": w0,
         "height": h0,
@@ -676,6 +802,7 @@ def attach_eval_sequence_to_dataset(
     seq_tuples: list,
     input_colorspace: str = "auto",
     working_colorspace: str = "ACEScg",
+    restricted: bool = False,
 ) -> dict:
     """Attach or replace an optional full validation sequence (`eval/`) on an existing dataset."""
     abs_ds = os.path.abspath(abs_from_root(ds_rel))
@@ -697,6 +824,7 @@ def attach_eval_sequence_to_dataset(
         expected_in_ch=expected_in_ch,
         input_colorspace=input_colorspace,
         working_colorspace=working_colorspace,
+        restricted=restricted,
     )
     seq_rel = rel_to_root(eval_abs)
     _, seq_bytes = dir_stats(seq_rel)

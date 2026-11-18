@@ -546,6 +546,8 @@
     "optSeqTitle": "验证序列（可选）· EXR / PNG / TIFF / JPG / ZIP",
     "optSeqHintHtml": "镜头的完整原始素材，与关键帧分辨率相同，至少 2 帧。用于训练质量监测、关键帧共性和实验页的序列评测；也可以之后再添加。",
     "filesSelected": "已选择 {count} 个文件",
+    "filesSelectedWithSize": "已选择 {count} 个文件（{size}）",
+    "tempUploadLimitBadge": "临时用户单次上限 512 MB",
     "noFilesSelected": "未选择文件",
     "checkFailedTitle": "素材检测未通过：",
     "checkBypassHint": "如确认素材无误，可关闭上方的「素材检测」后再创建。",
@@ -711,7 +713,7 @@
     "exportAllJsonBtn": "⬇ 导出 JSON",
     "backToStudioBtn": "← 返回训练",
     "tempControlTitle": "临时用户与默认配额",
-    "tempControlDesc": "开启限制时，未获授权的账号作为临时用户使用：受任务数、Epochs 和上传配额限制，不能使用实验和 API。关闭限制后，所有用户不受配额限制，可使用全部功能。",
+    "tempControlDesc": "开启限制时，未获授权的账号作为临时用户使用：受任务数、Epochs 及上传限制（单次 512 MB、单文件 128 MB、每组 300 帧、总空间 2 GB），不能使用实验和 API。关闭限制后，所有用户可使用全部功能，且解除上传大小、帧数与配额限制（团队内部大素材建议关闭）。",
     "modeRestrictedBadge": "● 限制已开启",
     "modeUnrestrictedBadge": "✓ 限制已关闭",
     "oneClickDisableRestrictBtn": "关闭临时用户限制",
@@ -1058,7 +1060,7 @@
     "errRoamCodeEmpty": "请输入漫游找回码（格式 U-XXXXXX-YYYY-ZZZZ）。",
     "roamRecoveredToast": "已切换到工作空间：{user}",
     "apiKeyCopiedToast": "已复制 API Key。",
-    "tempRestrictDisabledToast": "临时用户限制已关闭：所有用户均可使用全部功能，不受配额限制。",
+    "tempRestrictDisabledToast": "临时用户限制已关闭：所有用户可使用全部功能，且已解除 512 MB 上传大小与配额限制。",
     "tempRestrictEnabledToast": "临时用户限制已开启：临时用户按配额和权限使用。",
     "defQuotasSyncedToast": "默认配额已保存，并已应用到 {count} 个现有临时用户。",
     "userCreatedToast": "已创建用户：{user}",
@@ -1131,10 +1133,10 @@
     "csrfForbidden": "请求来源校验未通过，已拦截",
     "rateLimited": "请求过于频繁，请 {seconds} 秒后再试",
     "bruteForceLocked": "验证失败次数过多，请 {seconds} 秒后再试",
-    "payloadTooLarge": "单次上传不能超过 512 MB",
+    "payloadTooLarge": "当前开启了临时用户限制：单次上传不能超过 512 MB（团队内部使用可在管理后台一键关闭「临时用户限制」以解除大小限制）",
     "internalServerError": "服务器内部错误，请稍后重试",
     "requestFailed": "请求失败，请检查输入后重试",
-    "uploadTooLarge": "上传文件 [{role}] 超过大小上限",
+    "uploadTooLarge": "当前开启了临时用户限制：上传文件 [{role}] 超过临时用户大小上限（可在管理后台关闭「临时用户限制」解除）",
     "uploadTooManyFiles": "上传文件 [{role}] 数量超过上限（最多 {limit} 帧）",
     "uploadResolutionExceeded": "图像 [{filename}] 的分辨率 {w}×{h} 超过上限（单边 {max_dim} px）",
     "uploadUnsupportedExt": "不支持的文件格式 [{filename}]（支持 .exr / .png / .tif / .tiff / .jpg / .jpeg / .zip）",
@@ -1623,7 +1625,7 @@
     "dataset_files": {
       "title": "文件格式与限制",
       "summary": "支持 .exr、.png、.tif / .tiff、.jpg / .jpeg 图像，或包含这些图像的 .zip 文件。保存时统一转换为 ACEScg 线性、16 位半浮点 EXR。",
-      "body": "## 要求\n- 输入、目标、验证序列每组最多 300 个文件；单个文件不超过 128 MB；图像宽和高均不超过 8192 px。\n- 单次上传总大小不超过 512 MB。\n- 同一组内的图像分辨率相同。\n\n## 推荐值\n使用 ACEScg 线性 EXR，与 Nuke 中的工作数据一致。8 位 PNG / JPG 的高光和暗部精度有限。\n\n## 限制\n数据以 16 位半浮点保存，32 位浮点输入会降为半浮点精度。"
+      "body": "## 要求\n- 同一组内的图像分辨率必须相同。\n- **关闭临时用户限制时（或管理员、已授权账号）**：不限制单次上传总大小、单文件大小与序列帧数（仅受服务器磁盘空间限制），图像单边最高 16384 px，支持直接上传数 GB 的实拍 EXR 序列或 .zip 包（参见 [[doc:admin_temp_restrictions]]）。\n- **开启临时用户限制时的临时用户**：输入、目标、验证序列每组最多 300 个文件，单个文件不超过 128 MB，单次上传总大小不超过 512 MB，图像单边最高 8192 px。\n\n## 推荐值\n使用 ACEScg 线性 EXR，与 Nuke 中的工作数据一致。8 位 PNG / JPG 的高光和暗部精度有限。\n\n## 限制\n数据以 16 位半浮点保存，32 位浮点输入会降为半浮点精度。"
     },
     "dataset_demo": {
       "title": "示例数据集",
@@ -1642,8 +1644,8 @@
     },
     "admin_temp_restrictions": {
       "title": "临时用户限制",
-      "summary": "开启时，未获授权的账号作为临时用户使用，受任务数、Epochs 和上传数量限制，不能使用实验和 API；关闭时所有用户不受限制。",
-      "body": "## 作用\n访问者无需注册，首次打开页面时自动获得一个工作空间。开启限制后，除管理员和同时拥有「实验」与「API」权限的用户外，其他用户均为临时用户：\n- 同时进行的任务数（排队中 + 训练中）和每个任务的 Epochs 受限，见 [[doc:admin_default_quotas]]；\n- 自定义数据集的数量（进行中任务上限的 2 倍，至少 4 个）和总容量（2 GB）受限；\n- 不能使用实验和 API Key，除非在用户列表中单独开通。\n\n开启限制时，除管理员外每个用户同时训练的任务数也有上限，见 [[doc:admin_max_running_per_user]]。\n\n关闭限制后，所有用户可以使用全部功能，不受配额和训练数上限的限制。\n\n## 何时使用\n对外开放服务时开启；团队内部使用时关闭。"
+      "summary": "开启时，未获授权的账号作为临时用户使用，受任务数、Epochs 和上传大小/数量限制，不能使用实验和 API；关闭时所有用户不受限制。",
+      "body": "## 作用\n访问者无需注册，首次打开页面时自动获得一个工作空间。开启限制后，除管理员和同时拥有「实验」与「API」权限的用户外，其他用户均为临时用户：\n- 同时进行的任务数（排队中 + 训练中）和每个任务的 Epochs 受限，见 [[doc:admin_default_quotas]]；\n- 上传与存储受限：单次上传不超过 512 MB、单文件不超过 128 MB、每组最多 300 帧，自定义数据集数量（进行中任务上限的 2 倍，至少 4 个）和总容量（2 GB）受限，见 [[doc:dataset_files]]；\n- 不能使用实验和 API Key，除非在用户列表中单独开通。\n\n开启限制时，除管理员外每个用户同时训练的任务数也有上限，见 [[doc:admin_max_running_per_user]]。\n\n点击「关闭临时用户限制」后，所有用户可以使用全部功能，并同时解除 512 MB 单次上传上限、单文件大小、帧数、任务配额及并发训练数上限。\n\n## 何时使用\n对外开放服务时开启；团队内部生产环境建议一键关闭。"
     },
     "admin_default_quotas": {
       "title": "临时用户默认配额",

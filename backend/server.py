@@ -122,8 +122,12 @@ async def _security_lang_and_cache_middleware(request: Request, call_next):
     tok = i18n.set_current_lang(req_lang)
     try:
         path = request.url.path
+        is_upload_route = request.method == "POST" and (
+            path == "/api/v1/assets/upload-pair"
+            or (path.startswith("/api/v1/assets/") and path.endswith("/eval-sequence"))
+        )
         cl_raw = request.headers.get("content-length")
-        if cl_raw and cl_raw.isdigit() and int(cl_raw) > security.MAX_REQUEST_BODY_BYTES:
+        if not is_upload_route and cl_raw and cl_raw.isdigit() and int(cl_raw) > security.MAX_REQUEST_BODY_BYTES:
             return JSONResponse(status_code=413, content={"detail": i18n.t("server.payloadTooLarge")})
 
         if path.startswith("/api/"):
