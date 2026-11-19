@@ -283,6 +283,7 @@ def eval_profile_stage_sps(profile: dict[str, Any], cfg: dict[str, Any] | None) 
     emult = float(c.get("adv_ema_mult", 1.015)) if aema else 1.0
     gmult = float(c.get("adv_aug_mult", 1.015)) if aaug else 1.0
     rmult = float(c.get("ref_engine_mult", 2.15)) if is_ref_engine else 1.0
+    glob_mult = 1.03 if (msize == "WildCatLargeV1" and bool(mo.get("global_attention", False))) else 1.0
     warmup_sec = float(c.get("warmup_sec", 7.5))
 
     out_sps: list[float] = []
@@ -299,7 +300,7 @@ def eval_profile_stage_sps(profile: dict[str, Any], cfg: dict[str, Any] | None) 
         else:
             sps = curve_sps
 
-        sps = sps / (emult * gmult * rmult)
+        sps = sps / (emult * gmult * rmult * glob_mult)
         out_sps.append(max(1.0, round(sps, 2)))
 
     return (out_sps[0], out_sps[1], out_sps[2], warmup_sec)

@@ -2,7 +2,7 @@
 """WildCat multi-scale coarse-to-fine EncoderDecoder neural architecture (Small, Medium, Large)."""
 import math
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -480,6 +480,303 @@ class WildCatLargeV1(nn.Module):
         return out.contiguous()
 
 
+def _log_compress(x: torch.Tensor) -> torch.Tensor:
+    """Smooth signed log1p compression for HDR-safe attention query/key matching."""
+    return torch.sign(x) * torch.log1p(torch.abs(x))
+
+
+def _coord_features_from_box(
+    b: int,
+    h: int,
+    w: int,
+    box: Optional[torch.Tensor],
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Generate 6-ch normalized 2D coordinate & 1st-harmonic Fourier map [B, 6, H, W]."""
+    ix = (torch.arange(w, device=device, dtype=torch.float32) + 0.5) / float(max(w, 1))
+    iy = (torch.arange(h, device=device, dtype=torch.float32) + 0.5) / float(max(h, 1))
+    if box is None:
+        cx = (-1.0 + 2.0 * ix).view(1, 1, 1, w).expand(b, 1, h, w)
+        cy = (-1.0 + 2.0 * iy).view(1, 1, h, 1).expand(b, 1, h, w)
+    else:
+        bx = box.to(device=device, dtype=torch.float32)
+        x0 = bx[:, 0].view(b, 1, 1, 1)
+        y0 = bx[:, 1].view(b, 1, 1, 1)
+        x1 = bx[:, 2].view(b, 1, 1, 1)
+        y1 = bx[:, 3].view(b, 1, 1, 1)
+        cx = (x0 + (x1 - x0) * ix.view(1, 1, 1, w)).expand(b, 1, h, w)
+        cy = (y0 + (y1 - y0) * iy.view(1, 1, h, 1)).expand(b, 1, h, w)
+    pi = 3.141592653589793
+    feats = torch.cat(
+        [
+            cx,
+            cy,
+            torch.sin(pi * cx),
+            torch.cos(pi * cx),
+            torch.sin(pi * cy),
+            torch.cos(pi * cy),
+        ],
+        dim=1,
+    )
+    return feats.to(dtype=dtype)
+
+
+class GlobalRadianceStem(nn.Module):
+    """Sector radiance encoder ([B, C_in, 128, 128] -> [B, dim, G, G]) with zero spatial 3x3 convs."""
+
+    def __init__(self, channels_in: int = 3, dim: int = 160, grid_size: int = 16):
+        super().__init__()
+        self.channels_in = int(channels_in)
+        self.dim = int(dim)
+        self.grid_size = int(grid_size)
+        self.k = 128 // self.grid_size
+
+        in_feats = self.channels_in * 5
+        self.pw1 = nn.Conv2d(in_feats, 48, kernel_size=1, bias=True)
+        self.pw2 = nn.Conv2d(48, self.dim, kernel_size=1, bias=False)
+        _init_hom_conv(self.pw1, 1.0)
+        _init_hom_conv(self.pw2, 1.0)
+
+    def forward(self, thumb_128: torch.Tensor) -> torch.Tensor:
+        pad = self.k // 2
+        sm = F.avg_pool2d(
+            torch.ops.aten.replication_pad2d(thumb_128, [pad, pad, pad, pad]),
+            kernel_size=2 * pad + 1,
+            stride=1,
+        )
+        e_avg = F.avg_pool2d(sm, kernel_size=self.k, stride=self.k)
+        e_rms = torch.sqrt(F.avg_pool2d(sm * sm, kernel_size=self.k, stride=self.k) + 1e-6)
+        e_hi = F.avg_pool2d(F.relu(sm - 0.35), kernel_size=self.k, stride=self.k)
+        feats = torch.cat([e_avg, e_rms, e_hi, _log_compress(e_avg), _log_compress(e_rms)], dim=1)
+        return self.pw2(F.leaky_relu(self.pw1(feats), 0.05))
+
+
+class GlobalLightAttnFFNBlock(nn.Module):
+    """1-Layer Global Cosine Cross-Attention + Bilinear-HomFFN at the 1/8 bottleneck."""
+
+    def __init__(
+        self,
+        dim: int = 160,
+        grid_size: int = 16,
+        heads: int = 4,
+        head_dim: int = 32,
+        hidden: int = 320,
+        max_log_tau: float = 1.8,
+    ):
+        super().__init__()
+        self.dim = int(dim)
+        self.grid_size = int(grid_size)
+        self.heads = int(heads)
+        self.head_dim = int(head_dim)
+        self.inner_dim = self.heads * self.head_dim
+        self.max_log_tau = float(max_log_tau)
+
+        self.coord_q = nn.Conv2d(6, dim, kernel_size=1, bias=True)
+        self.coord_k = nn.Conv2d(6, dim, kernel_size=1, bias=True)
+
+        self.q_proj = nn.Conv2d(dim, self.inner_dim, kernel_size=1, bias=True)
+        self.k_proj = nn.Conv2d(dim, self.inner_dim, kernel_size=1, bias=True)
+        self.v_proj = nn.Conv2d(dim, self.inner_dim, kernel_size=1, bias=False)
+        init_tau = min(math.log(5.0), self.max_log_tau)
+        self.log_tau = nn.Parameter(torch.full((1, self.heads, 1, 1), init_tau))
+
+        self.pw_face = nn.Conv2d(dim, hidden, kernel_size=1, bias=True)
+        self.pw_light = nn.Conv2d(self.inner_dim, hidden, kernel_size=1, bias=False)
+        self.pw_cat = nn.Conv2d(dim + self.inner_dim, hidden, kernel_size=1, bias=True)
+        self.pw_out = nn.Conv2d(hidden, dim, kernel_size=1, bias=True)
+        self.gamma = nn.Parameter(torch.full((1, dim, 1, 1), 0.2))
+
+        for m in (
+            self.coord_q,
+            self.coord_k,
+            self.q_proj,
+            self.k_proj,
+            self.v_proj,
+            self.pw_face,
+            self.pw_light,
+            self.pw_cat,
+        ):
+            _init_hom_conv(m, 1.0)
+        _init_hom_conv(self.pw_out, 0.25)
+
+    def forward(
+        self,
+        m: torch.Tensor,
+        g_ctx: torch.Tensor,
+        crop_box: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        b, _, h8, w8 = m.shape
+        g = self.grid_size
+        n_q = h8 * w8
+        n_k = g * g
+
+        q_coords = _coord_features_from_box(b, h8, w8, crop_box, m.device, m.dtype)
+        k_coords = _coord_features_from_box(b, g, g, None, g_ctx.device, g_ctx.dtype)
+
+        q_in = _log_compress(m) + self.coord_q(q_coords)
+        k_in = _log_compress(g_ctx) + self.coord_k(k_coords)
+
+        q = self.q_proj(q_in).reshape(b, self.heads, self.head_dim, n_q).permute(0, 1, 3, 2)
+        k = self.k_proj(k_in).reshape(b, self.heads, self.head_dim, n_k)
+        v = self.v_proj(g_ctx).reshape(b, self.heads, self.head_dim, n_k).permute(0, 1, 3, 2)
+
+        qf = F.normalize(q.float(), p=2.0, dim=-1, eps=1e-6)
+        kf = F.normalize(k.float(), p=2.0, dim=-2, eps=1e-6)
+        scale = torch.exp(torch.clamp(self.log_tau.float(), min=0.0, max=self.max_log_tau))
+        sim = torch.matmul(qf, kf) * scale
+        attn = torch.softmax(sim, dim=-1)
+
+        out_v = torch.matmul(attn, v.float()).to(dtype=m.dtype)
+        retrieved = out_v.permute(0, 1, 3, 2).reshape(b, self.inner_dim, h8, w8)
+
+        bilin = torch.tanh(self.pw_face(m)) * self.pw_light(retrieved)
+        add_ffn = F.leaky_relu(self.pw_cat(torch.cat([m, retrieved], dim=1)), 0.05)
+        delta = self.pw_out(bilin + add_ffn)
+        return m + self.gamma.to(dtype=m.dtype) * delta
+
+
+class WildCatLargeV1Global(nn.Module):
+    """WildCatLargeV1 + optional 16x16 Global Radiance Cross-Attention + Bilinear-HomFFN."""
+
+    def __init__(self, channels_in: int = 3, channels_out: int = 3, grid_size: int = 16):
+        super().__init__()
+        self.channels_in = int(channels_in)
+        self.channels_out = int(channels_out)
+        self.grid_size = int(grid_size)
+        self.uses_global_thumb = True
+        c1, c2, c3, c4 = 64, 96, 128, 160
+
+        self.conv1 = nn.Conv2d(self.channels_in, c1, kernel_size=5, padding=2, bias=True)
+        self.enc1 = nn.Sequential(_HomResBlock(c1, 3), _HomResBlock(c1, 3))
+
+        self.conv2 = nn.Conv2d(c1, c2, kernel_size=5, stride=2, padding=2, bias=True)
+        self.enc2 = nn.Sequential(_HomResBlock(c2, 3), _HomResBlock(c2, 3))
+
+        self.conv3 = nn.Conv2d(c2, c3, kernel_size=5, stride=2, padding=2, bias=True)
+        self.enc3 = nn.Sequential(_HomResBlock(c3, 3), _HomResBlock(c3, 5))
+
+        self.conv4 = nn.Conv2d(c3, c4, kernel_size=3, stride=2, padding=1, bias=True)
+        self.mid = nn.Sequential(_HomResBlock(c4, 5), _HomResBlock(c4, 3))
+
+        self.light_stem = GlobalRadianceStem(channels_in=self.channels_in, dim=c4, grid_size=self.grid_size)
+        self.global_block = GlobalLightAttnFFNBlock(
+            dim=c4,
+            grid_size=self.grid_size,
+            heads=4,
+            head_dim=32,
+            hidden=320,
+            max_log_tau=1.8,
+        )
+
+        self.up3 = _UpShuffle(c4, c3)
+        self.dec3 = nn.Sequential(_HomResBlock(c3, 3), _HomFFNBlock(c3, expand=2))
+
+        self.up2 = _UpShuffle(c3, c2)
+        self.dec2 = nn.Sequential(_HomResBlock(c2, 3), _HomResBlock(c2, 3), _HomFFNBlock(c2, expand=2))
+
+        self.up1 = _UpShuffle(c2, c1)
+        self.dec1 = nn.Sequential(
+            _HomResBlock(c1, 3),
+            _HomResBlock(c1, 3),
+            _HomFFNBlock(c1, expand=3),
+            _HomFFNBlock(c1, expand=3),
+        )
+
+        for m in (self.conv1, self.conv2, self.conv3, self.conv4):
+            _init_hom_conv(m, 1.0)
+
+        self.head_q = nn.Conv2d(c3, self.channels_out, kernel_size=3, padding=1, bias=True)
+        self.head_h = nn.Conv2d(c2, self.channels_out, kernel_size=3, padding=1, bias=True)
+        self.head_f = nn.Conv2d(c1, self.channels_out, kernel_size=3, padding=1, bias=True)
+        for h in (self.head_q, self.head_h, self.head_f):
+            _init_hom_conv(h, 0.05)
+
+    def _encode_decode(
+        self,
+        x_pad: torch.Tensor,
+        orig_inputs: torch.Tensor,
+        full_thumb: Optional[torch.Tensor] = None,
+        crop_box: Optional[torch.Tensor] = None,
+    ):
+        e1 = self.enc1(F.leaky_relu(self.conv1(x_pad), 0.05))
+        e2 = self.enc2(F.leaky_relu(self.conv2(e1), 0.05))
+        e3 = self.enc3(F.leaky_relu(self.conv3(e2), 0.05))
+        m = self.mid(F.leaky_relu(self.conv4(e3), 0.05))
+
+        thumb = (
+            full_thumb
+            if full_thumb is not None
+            else F.interpolate(orig_inputs, size=(128, 128), mode="bilinear", align_corners=False)
+        )
+        g_ctx = self.light_stem(thumb)
+        m = self.global_block(m, g_ctx, crop_box)
+
+        d3 = self.dec3(F.leaky_relu(self.up3(m), 0.05) + e3)
+        d2 = self.dec2(F.leaky_relu(self.up2(d3), 0.05) + e2)
+        d1 = self.dec1(F.leaky_relu(self.up1(d2), 0.05) + e1)
+        return d3, d2, d1
+
+    @torch.jit.ignore
+    def forward_all(
+        self,
+        inputs: torch.Tensor,
+        full_thumb: Optional[torch.Tensor] = None,
+        crop_box: Optional[torch.Tensor] = None,
+    ) -> List[torch.Tensor]:
+        h, w = inputs.shape[2], inputs.shape[3]
+        ph = (8 - h % 8) % 8
+        pw = (8 - w % 8) % 8
+        x = F.pad(inputs, (0, pw, 0, ph), mode="replicate") if (ph > 0 or pw > 0) else inputs
+        adj_box = crop_box
+        if crop_box is not None and (ph > 0 or pw > 0):
+            bx = crop_box.float()
+            dx = (bx[:, 2] - bx[:, 0]) * (float(w + pw) / float(max(w, 1)))
+            dy = (bx[:, 3] - bx[:, 1]) * (float(h + ph) / float(max(h, 1)))
+            adj_box = torch.stack([bx[:, 0], bx[:, 1], bx[:, 0] + dx, bx[:, 1] + dy], dim=1)
+
+        d3, d2, d1 = self._encode_decode(x, inputs, full_thumb=full_thumb, crop_box=adj_box)
+        hp, wp = x.shape[2], x.shape[3]
+        same_c = self.channels_out == self.channels_in
+
+        pq = self.head_q(d3)
+        if same_c:
+            xq = F.interpolate(x, size=(hp // 4, wp // 4), mode="bilinear", align_corners=True)
+            pq = xq + pq
+
+        ph_out = self.head_h(d2)
+        if same_c:
+            xh = F.interpolate(x, size=(hp // 2, wp // 2), mode="bilinear", align_corners=True)
+            ph_out = xh + ph_out
+
+        pf = self.head_f(d1)[:, :, :h, :w]
+        if same_c:
+            pf = inputs + pf
+        return [pq, ph_out, pf]
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        inputs = inputs.contiguous()
+        h, w = inputs.shape[2], inputs.shape[3]
+        ph = (8 - h % 8) % 8
+        pw = (8 - w % 8) % 8
+        x = torch.ops.aten.replication_pad2d(inputs, [0, pw, 0, ph]) if (ph > 0 or pw > 0) else inputs
+        b = inputs.shape[0]
+        base_box = torch.tensor([[-1.0, -1.0, 1.0, 1.0]], device=inputs.device, dtype=torch.float32).expand(b, 4)
+        if ph > 0 or pw > 0:
+            dx = (base_box[:, 2] - base_box[:, 0]) * (float(w + pw) / float(max(w, 1)))
+            dy = (base_box[:, 3] - base_box[:, 1]) * (float(h + ph) / float(max(h, 1)))
+            box: Optional[torch.Tensor] = torch.stack(
+                [base_box[:, 0], base_box[:, 1], base_box[:, 0] + dx, base_box[:, 1] + dy],
+                dim=1,
+            )
+        else:
+            box = base_box
+        _, _, d1 = self._encode_decode(x, inputs, full_thumb=None, crop_box=box)
+        pf = self.head_f(d1)[:, :, :h, :w]
+        out = (inputs + pf) if (self.channels_out == self.channels_in) else pf
+        return out.contiguous()
+
+
 def build_generator(mo: dict, cudnn_pad: bool = False):
     model_size = mo.get("model_size", "Medium")
     if model_size not in MODEL_SPECS:
@@ -488,6 +785,8 @@ def build_generator(mo: dict, cudnn_pad: bool = False):
     c_in = int(mo.get("in_channels", 3))
     c_out = int(mo.get("out_channels", c_in))
     if model_size == "WildCatLargeV1":
+        if bool(mo.get("global_attention", False)):
+            return WildCatLargeV1Global(channels_in=c_in, channels_out=c_out), spec["k_size"]
         return WildCatLargeV1(channels_in=c_in, channels_out=c_out), spec["k_size"]
     net = EncoderDecoder(
         channels_in=c_in,
@@ -529,6 +828,7 @@ def inspect_weight_source(
     if not weight_source or weight_source == "None":
         return {
             "model_size": fb_size,
+            "global_attention": False,
             "in_channels": int(fallback_in),
             "out_channels": int(fallback_out),
             "lock_model_size": False,
@@ -552,10 +852,15 @@ def inspect_weight_source(
                     obj = cat_format._TorchScriptUnpickler(io.BytesIO(z.read(dp_list[0]))).load()
                     if isinstance(obj, dict):
                         sd = obj.get("G", obj)
+                        cfg = obj.get("config") or {}
+                        glob_attn = False
                         if "conv4.weight" in sd and "head_f.weight" in sd:
                             in_ch = int(sd["conv1.weight"][2][1])
                             out_ch = int(sd["head_f.weight"][2][0])
                             ms = "WildCatLargeV1"
+                            glob_attn = ("global_block.q_proj.weight" in sd) or bool(
+                                ((cfg.get("model") or {}).get("global_attention", False))
+                            )
                         else:
                             c1_shape = sd["conv1_1.weight"][2]
                             d3_shape = sd["deconv3_1.weight"][2]
@@ -564,9 +869,9 @@ def inspect_weight_source(
                             in_ch = int(c1_shape[1]) - out_ch
                             is_large = "block1_3.conv2d_1.weight" in sd
                             ms = "Large" if is_large else ("Small" if k_size == 3 else "Medium")
-                        cfg = obj.get("config") or {}
                         return {
                             "model_size": ms,
+                            "global_attention": glob_attn,
                             "in_channels": in_ch,
                             "out_channels": out_ch,
                             "lock_model_size": True,
@@ -580,10 +885,12 @@ def inspect_weight_source(
                     else:
                         st = getattr(obj, "state", {})
                         tensors = dict((k, shp) for k, _, shp in cat_format._walk_tensors(obj))
+                        glob_attn = False
                         if "conv4.weight" in tensors and "head_f.weight" in tensors:
                             in_ch = int(st.get("channels_in", tensors["conv1.weight"][1]))
                             out_ch = int(st.get("channels_out", tensors["head_f.weight"][0]))
                             ms = "WildCatLargeV1"
+                            glob_attn = "global_block.q_proj.weight" in tensors
                         else:
                             c1_shape = tensors.get("conv1_1.weight", (32, 6, 5, 5))
                             d3_shape = tensors.get("deconv3_1.weight", (32, 3, 5, 5))
@@ -594,6 +901,7 @@ def inspect_weight_source(
                             ms = "Large" if is_large else ("Small" if k_size == 3 else "Medium")
                         return {
                             "model_size": ms,
+                            "global_attention": glob_attn,
                             "in_channels": in_ch,
                             "out_channels": out_ch,
                             "lock_model_size": True,
@@ -612,6 +920,7 @@ def inspect_weight_source(
 
     return {
         "model_size": fb_size,
+        "global_attention": False,
         "in_channels": int(fallback_in),
         "out_channels": int(fallback_out),
         "lock_model_size": False,

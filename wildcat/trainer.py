@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from . import advanced
 from . import config as cfgmod
@@ -130,11 +131,13 @@ class Trainer:
             )
             if w_spec.get("lock_model_size"):
                 mo["model_size"] = w_spec["model_size"]
+                mo["global_attention"] = bool(w_spec.get("global_attention", False))
             if w_spec.get("lock_channels"):
                 mo["in_channels"] = w_spec["in_channels"]
                 mo["out_channels"] = w_spec["out_channels"]
 
         model_size = mo.get("model_size", "Medium")
+        mo["global_attention"] = bool(mo.get("global_attention", False)) if model_size == "WildCatLargeV1" else False
         self.model_size = model_size
         # cudnn_pad (symmetric padding folded into the conv) is bit-identical math -> always on
         self.raw_G, k_size = models.build_generator(mo, cudnn_pad=True)
@@ -179,6 +182,20 @@ class Trainer:
                 raise ValueError("Input/Ground Truth size mismatch at %s: %s vs %s" % (p, a.shape[:2], b.shape[:2]))
         self.pair_names = [os.path.splitext(os.path.basename(p))[0] for p in tgt_files]
         n_frames = len(self.src_full)
+        self.uses_global_thumb = bool(getattr(self.raw_G, "uses_global_thumb", False))
+        self.src_thumbs_dev = None
+        if self.uses_global_thumb:
+            mf_th = torch.channels_last if (self.opt_channels_last and self.is_cuda) else torch.contiguous_format
+            th_list = [
+                F.interpolate(
+                    torch.from_numpy(np.asarray(sf, dtype=np.float32)).permute(2, 0, 1).unsqueeze(0).to(self.device),
+                    size=(128, 128),
+                    mode="bilinear",
+                    align_corners=False,
+                )[0]
+                for sf in self.src_full
+            ]
+            self.src_thumbs_dev = torch.stack(th_list, dim=0).contiguous(memory_format=mf_th)
 
         # ---------------- optional: keyframe commonality (advanced.kf_common, off by default) ----------------
         # Rewrites Ground Truth keyframes where the other keyframes agree and one does not; everything after this point
@@ -322,12 +339,13 @@ class Trainer:
         if not _cf.torch_version_ok_for_nuke():
             log("WARNING: PyTorch %s is newer than 2.11; Nuke 17 may not load the exported TorchScript files."
                 % torch.__version__)
+        model_label = f"{model_size}+GlobalAttn" if self.uses_global_thumb else model_size
         log(
             "WildCat | device=%s | engine=%s | model=%s (k=%d, %.2fM params) | pairs=%d (%dx%d) | "
             "batch=%d crop=%d | epochs=%d steps=%d | lr=%.1e multires=%s | precision=%s | "
             "lossless=[resident=%s graph=%s fused=%s nhwc=%s autotune=%s async_io=%s preview=%s]"
             % (
-                self.device_label, self.engine, model_size, k_size, n_par / 1e6, n_frames,
+                self.device_label, self.engine, model_label, k_size, n_par / 1e6, n_frames,
                 self.src_full[0].shape[1], self.src_full[0].shape[0], self.batch_size, self.crop_size,
                 self.epochs, self.total_steps, self.lr, bool(tr.get("multi_resolution", True)), self.prec,
                 self.opt_gpu_resident, self.opt_cuda_graph, self.opt_fused_adam, self.opt_channels_last,
@@ -657,7 +675,16 @@ class Trainer:
             return  # skip this preview rather than stall training
         snap, ev = self._snapshot()
         if crops is not None:
-            crops = (crops[0][:3].detach().clone(), crops[1][:3].detach().clone(), int(scale))
+            if len(crops) == 4 and crops[2] is not None and crops[3] is not None:
+                crops = (
+                    crops[0][:3].detach().clone(),
+                    crops[1][:3].detach().clone(),
+                    int(scale),
+                    crops[2][:3].detach().clone(),
+                    crops[3][:3].detach().clone(),
+                )
+            else:
+                crops = (crops[0][:3].detach().clone(), crops[1][:3].detach().clone(), int(scale))
         done = None
         if monitor is not None and self.preview_worker.device == torch.device(self.device):
             # The monitor's inference would share the card with the training steps.  Beside them it gets a small part of
@@ -858,14 +885,40 @@ class Trainer:
                         rem -= k
                 src.start(host_iter(), bs, crop)
 
+            sizes_dev = (
+                torch.tensor(src.sizes, device=self.device, dtype=torch.float32)
+                if self.uses_global_thumb
+                else None
+            )
+
+            def _fill_thumb_and_box(p_row, engine):
+                f_idx = p_row[:, 0]
+                y0_f = p_row[:, 1].float()
+                x0_f = p_row[:, 2].float()
+                hw_f = sizes_dev.index_select(0, f_idx)
+                inv_sh = 2.0 / hw_f[:, 0].clamp_min(1.0)
+                inv_sw = 2.0 / hw_f[:, 1].clamp_min(1.0)
+                engine.thumb.copy_(self.src_thumbs_dev.index_select(0, f_idx))
+                engine.box[:, 0] = -1.0 + x0_f * inv_sw
+                engine.box[:, 1] = -1.0 + y0_f * inv_sh
+                engine.box[:, 2] = -1.0 + (x0_f + float(crop)) * inv_sw
+                engine.box[:, 3] = -1.0 + (y0_f + float(crop)) * inv_sh
+
             def feed(engine):
                 if resident:
                     i = next_plan_rows()
                     src.gather(plan_dev, i, bs, crop, engine.x, engine.y)
+                    if engine.use_thumb and self.src_thumbs_dev is not None:
+                        _fill_thumb_and_box(plan_dev[i], engine)
                 else:
-                    src.next_into(engine.x, engine.y)
+                    p_np = src.next_into(engine.x, engine.y)
+                    if engine.use_thumb and self.src_thumbs_dev is not None and p_np is not None:
+                        _fill_thumb_and_box(torch.from_numpy(p_np).to(self.device), engine)
                 if self.batch_augmenter is not None:
-                    self.batch_augmenter.apply_(engine.x, engine.y)
+                    if engine.use_thumb:
+                        self.batch_augmenter.apply_(engine.x, engine.y, engine.thumb, engine.box)
+                    else:
+                        self.batch_augmenter.apply_(engine.x, engine.y)
 
             def make_engine(amp):
                 lf_cfg = self.adv["loss_family"] if self.adv["loss_family"]["enabled"] else None
@@ -919,7 +972,12 @@ class Trainer:
                 if do_ck:
                     self._save_checkpoint(step)
                 if do_pv or do_ck:
-                    self._preview(step, do_pv, do_ck, (engine.x, engine.y) if do_pv else None, scale=scale, quality=do_q)
+                    pv_crops = (
+                        (engine.x, engine.y, engine.thumb, engine.box)
+                        if (do_pv and engine.use_thumb)
+                        else ((engine.x, engine.y) if do_pv else None)
+                    )
+                    self._preview(step, do_pv, do_ck, pv_crops, scale=scale, quality=do_q)
             engine = None
             try:
                 engine = make_engine(chosen_amp)

@@ -56,6 +56,13 @@ class StepEngine:
         mf = torch.channels_last if (channels_last and self.is_cuda) else torch.contiguous_format
         self.x = torch.empty((bs, c_in, c, c), device=device, memory_format=mf).zero_()
         self.y = torch.empty((bs, c_out, c, c), device=device, memory_format=mf).zero_()
+        self.use_thumb = bool(getattr(net, "uses_global_thumb", False))
+        self.thumb = torch.empty((bs, c_in, 128, 128), device=device, memory_format=mf).zero_() if self.use_thumb else None
+        self.box = (
+            torch.tensor([[-1.0, -1.0, 1.0, 1.0]], device=device, dtype=torch.float32).repeat(bs, 1)
+            if self.use_thumb
+            else None
+        )
         self.loss = torch.zeros((), device=device)
         self.use_graph = bool(use_graph and self.is_cuda and opt.defaults.get("fused"))
         self.warmup = int(warmup)
@@ -72,7 +79,11 @@ class StepEngine:
     def _body(self):
         ac = dict(dtype=self.amp_dtype or torch.float32, enabled=self.amp_dtype is not None and self.is_cuda)
         with torch.autocast("cuda" if self.is_cuda else "cpu", **ac):
-            outs = self.net.forward_all(self.x) if self.multi_scale else [self.net(self.x)]
+            if self.use_thumb:
+                all_outs = self.net.forward_all(self.x, full_thumb=self.thumb, crop_box=self.box)
+                outs = all_outs if self.multi_scale else [all_outs[-1]]
+            else:
+                outs = self.net.forward_all(self.x) if self.multi_scale else [self.net(self.x)]
         y = self.y.float()
         loss = None
         total = None

@@ -200,7 +200,7 @@ const PRESET_SPECS = Object.freeze({
 // "- " lines = list; "|a|b|" lines = table (first row header, "|---|" row skipped); inline **bold**, `code`,
 // [[doc:id]] / [[ev:id]] (optional "|label") = link to another entry. Raw HTML is escaped.
 const DOC_GROUPS = [
-  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'arch_wildcat_large_v1', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
+  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'global_attention', 'arch_wildcat_large_v1', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
   { id: 'adv', ids: ['adv_overview', 'adv_crop_grid', 'adv_crop_grid_step', 'adv_crop_grid_anchor', 'adv_loss', 'adv_loss_charbonnier', 'adv_loss_grad', 'adv_loss_hdr', 'adv_loss_eps', 'adv_stages', 'adv_stages_ratio', 'adv_stages_warmup', 'adv_ema', 'adv_ema_decay', 'adv_augment', 'adv_augment_flip', 'adv_augment_exposure', 'adv_kf_common', 'adv_kf_common_threshold', 'adv_kf_common_span', 'adv_kf_common_overall'] },
   { id: 'presets', ids: ['presets_overview', 'preset_nuke', 'preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
   { id: 'lab', ids: ['lab_overview', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
@@ -212,7 +212,7 @@ const DOC_GROUPS = [
 const EVIDENCE_GROUPS = [
   { id: 'method', ids: ['method', 'appendix_material'] },
   { id: 'adv', ids: ['adv_crop_grid', 'adv_crop_grid_anchor', 'adv_loss_grad', 'adv_loss_charbonnier', 'adv_loss_hdr', 'adv_stages', 'adv_ema', 'adv_augment_flip', 'adv_kf_common'] },
-  { id: 'training', ids: ['model_size', 'arch_wildcat_large_v1', 'crop_size', 'epochs', 'dataset_keyframes', 'speed_options'] },
+  { id: 'training', ids: ['model_size', 'arch_wildcat_large_v1', 'global_attention', 'crop_size', 'epochs', 'dataset_keyframes', 'speed_options'] },
   { id: 'presets', ids: ['preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
 ];
 
@@ -938,6 +938,7 @@ async function mountWildCatApp() {
             path: '',
             label: t('wizard.noCheckpointsSaved'),
             model_size: 'Medium',
+            global_attention: false,
             in_channels: 3,
             out_channels: 3,
           },
@@ -1224,6 +1225,7 @@ async function mountWildCatApp() {
         source: 'dataset/source',
         target: 'dataset/target',
         model_size: 'Medium',
+        global_attention: false,
         in_channels: 3,
         out_channels: 3,
         epochs: 10000,
@@ -1489,6 +1491,7 @@ async function mountWildCatApp() {
           if (!isModelSizeLocked.value && modelSz) {
             let nextModel = modelSz;
             form.model_size = nextModel;
+            form.global_attention = false;
           }
           if (!isChannelsLocked.value && chPreset && isChannelPresetAllowed(chPreset)) {
             const [ic, oc] = chPreset.split('->').map(Number);
@@ -1502,6 +1505,7 @@ async function mountWildCatApp() {
         if (presetId === 'nuke') {
           form.crop_size = 256;
           form.multi_resolution = true;
+          if (!isModelSizeLocked.value) form.global_attention = false;
           activeAdvPreset.value = 'nuke';
           return true;
         }
@@ -2817,6 +2821,7 @@ async function mountWildCatApp() {
         const meta = selectedCkptMeta.value;
         if (meta && meta.path) {
           form.model_size = meta.model_size || 'Medium';
+          form.global_attention = !!(form.model_size === 'WildCatLargeV1' && meta.global_attention);
           syncLockedChannels(meta.in_channels || 3, meta.out_channels || 3);
         }
       }
@@ -2846,6 +2851,7 @@ async function mountWildCatApp() {
           form.initial_weights_mode = 'None';
           form.checkpoint_path = '';
           form.model_size = 'Medium';
+          form.global_attention = false;
           if (selectedDataset.value) {
             syncFormWithSelectedDataset();
           } else {
@@ -2861,7 +2867,17 @@ async function mountWildCatApp() {
       }
 
       // ───────── Form & Hyperparameter Logic ─────────
-      function onModelSizeChange() {}
+      function onModelSizeChange() {
+        if (form.model_size !== 'WildCatLargeV1') {
+          form.global_attention = false;
+        }
+      }
+
+      function formatModelDisplay(moOrCfg) {
+        const m = moOrCfg && typeof moOrCfg === 'object' && moOrCfg.model ? moOrCfg.model : (moOrCfg || {});
+        const sz = m.model_size || 'Medium';
+        return sz === 'WildCatLargeV1' && m.global_attention ? 'WildCatLargeV1+GlobalAttn' : sz;
+      }
 
       // One master switch for all acceleration options (all lossless; fused_adam set before cuda_graph)
       const ACCEL_KEYS = ['opt_gpu_resident', 'opt_fused_adam', 'opt_cuda_graph', 'opt_channels_last', 'opt_cudnn_benchmark', 'opt_async_io'];
@@ -2936,6 +2952,7 @@ async function mountWildCatApp() {
         const prof = activeEtaGpuProfile.value;
 
         let b4, b2, b1, warmupSec = 7.5;
+        const globMult = msize === 'WildCatLargeV1' && mo.global_attention ? 1.03 : 1.0;
         if (prof && prof.curves && prof.curves[msize]) {
           const c = prof.curves[msize];
           const buckets = prof.buckets || {};
@@ -2956,7 +2973,7 @@ async function mountWildCatApp() {
             const curveSps = 1000.0 / Math.max(0.2, tMs);
             const bHit = buckets[`${msize}|${crop}|${bs}|${aloss}|${sc}`];
             const blended = bHit != null && bHit > 0 ? (0.75 * Number(bHit) + 0.25 * curveSps) : curveSps;
-            return Math.max(1.0, blended / (emult * gmult * rmult));
+            return Math.max(1.0, blended / (emult * gmult * rmult * globMult));
           };
           b4 = calcSps(4);
           b2 = calcSps(2);
@@ -2967,6 +2984,9 @@ async function mountWildCatApp() {
             : (msize === 'Large'
                 ? [134, 70, 26]
                 : (msize === 'WildCatLargeV1' ? [215, 90, 31] : [295, 158, 62]));
+          if (globMult !== 1.0) {
+            b4 /= globMult; b2 /= globMult; b1 /= globMult;
+          }
           if (bs !== 8) {
             const f = Math.pow(8 / bs, 0.72);
             b4 *= f; b2 *= f; b1 *= f;
@@ -3007,7 +3027,10 @@ async function mountWildCatApp() {
 
       const estimatedNewTaskDurationSec = computed(() => {
         return estimateConfigDurationSec({
-          model: { model_size: form.model_size || 'Medium' },
+          model: {
+            model_size: form.model_size || 'Medium',
+            global_attention: form.model_size === 'WildCatLargeV1' && !!form.global_attention,
+          },
           train: {
             total_steps: Math.max(1, Number(computedTotalSteps.value) || 1),
             batch_size: Math.max(1, Number(effectiveBatchSize.value) || 8),
@@ -3070,6 +3093,7 @@ async function mountWildCatApp() {
           },
           model: {
             model_size: form.model_size,
+            global_attention: !!(form.model_size === 'WildCatLargeV1' && form.global_attention),
             in_channels: Number(form.in_channels || 3),
             out_channels: Number(form.out_channels || 3),
             n_levels: 3,
@@ -3354,6 +3378,7 @@ async function mountWildCatApp() {
         }
         if (tr.epochs) form.epochs = Number(tr.epochs);
         if (mo.model_size) form.model_size = mo.model_size;
+        form.global_attention = !!(form.model_size === 'WildCatLargeV1' && mo.global_attention);
         if (mo.in_channels && mo.out_channels) {
           syncLockedChannels(mo.in_channels, mo.out_channels);
         }
@@ -6338,6 +6363,10 @@ async function mountWildCatApp() {
           nonDefault = true;
           tags.push(msize);
         }
+        if (msize === 'WildCatLargeV1' && mo.global_attention) {
+          nonDefault = true;
+          tags.push('GlobalAttn');
+        }
         if (tr.multi_resolution === false) {
           nonDefault = true;
           tags.push('MultiRes=Off');
@@ -6609,6 +6638,7 @@ async function mountWildCatApp() {
         const baseCfg = buildConfigPayload(false);
         delete baseCfg.advanced;
         baseCfg.model.model_size = 'Medium';
+        baseCfg.model.global_attention = false;
         baseCfg.train.multi_resolution = true;
         baseCfg.train.precision = 'adaptive';
         baseCfg.train.batch_size_auto = false;
@@ -6623,6 +6653,7 @@ async function mountWildCatApp() {
         const diff = summarizeClientConfig(baseCfg);
         const formSnap = JSON.parse(JSON.stringify(form));
         formSnap.model_size = 'Medium';
+        formSnap.global_attention = false;
         formSnap.multi_resolution = true;
         formSnap.precision = 'adaptive';
         formSnap.batch_size = 8;
@@ -8722,6 +8753,7 @@ async function mountWildCatApp() {
         statusBadgeText,
         statusLabel,
         progressPct,
+        formatModelDisplay,
       };
     },
   })

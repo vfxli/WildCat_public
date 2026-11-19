@@ -1028,6 +1028,7 @@ class TaskQueueScheduler:
             if msize not in ("Small", "Medium", "Large", "WildCatLargeV1"):
                 raise ValueError(i18n.t("server.invalidTrainParam", field="model.model_size"))
             mo["model_size"] = msize
+            mo["global_attention"] = bool(mo.get("global_attention", False)) if msize == "WildCatLargeV1" else False
 
             try:
                 in_ch = int(mo.get("in_channels", 3))
@@ -1078,6 +1079,11 @@ class TaskQueueScheduler:
                     if iv < min_v or iv > 10_000_000:
                         raise ValueError(i18n.t("server.invalidTrainParam", field=f"io.{io_k}"))
                     io_cfg[io_k] = iv
+
+        else:
+            mo_priv = out["model"]
+            ms_priv = str(mo_priv.get("model_size") or "Medium").strip()
+            mo_priv["global_attention"] = bool(mo_priv.get("global_attention", False)) if ms_priv == "WildCatLargeV1" else False
 
         return out
 
@@ -1316,9 +1322,15 @@ class TaskQueueScheduler:
                 )
                 if w_spec.get("lock_model_size"):
                     mo_cfg["model_size"] = w_spec["model_size"]
+                    mo_cfg["global_attention"] = bool(w_spec.get("global_attention", False))
                 if w_spec.get("lock_channels"):
                     mo_cfg["in_channels"] = w_spec["in_channels"]
                     mo_cfg["out_channels"] = w_spec["out_channels"]
+            mo_cfg["global_attention"] = (
+                bool(mo_cfg.get("global_attention", False))
+                if mo_cfg.get("model_size") == "WildCatLargeV1"
+                else False
+            )
 
             # Auto-guard against 4-channel config when source/target sequence files only have 3 channels
             if job_type == "train" and (int(mo_cfg.get("in_channels", 3)) > 3 or int(mo_cfg.get("out_channels", 3)) > 3):

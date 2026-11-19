@@ -374,6 +374,7 @@ class CPUCropSource:
              torch.empty((bs, c, c, Ct), dtype=torch.float32, pin_memory=pin))
             for _ in range(n_slots)
         ]
+        self._slot_plans = [None] * n_slots
         self._events = [None] * n_slots
         self._free = queue.Queue()
         for i in range(n_slots):
@@ -393,6 +394,7 @@ class CPUCropSource:
                     for b, (fi, y0, x0) in enumerate(p):
                         xn[b] = self.src[fi][y0:y0 + c, x0:x0 + c]
                         yn[b] = self.tgt[fi][y0:y0 + c, x0:x0 + c]
+                    self._slot_plans[k] = np.asarray(p, dtype=np.int64).copy()
                     self._q.put(k)
             finally:
                 self._q.put(None)
@@ -405,6 +407,7 @@ class CPUCropSource:
         if k is None:
             raise StopIteration
         xb, yb = self._slots[k]
+        p_row = self._slot_plans[k]
         out_x.copy_(xb.to(self.device, non_blocking=True).permute(0, 3, 1, 2))
         out_y.copy_(yb.to(self.device, non_blocking=True).permute(0, 3, 1, 2))
         if torch.cuda.is_available() and str(self.device).startswith("cuda"):
@@ -412,6 +415,7 @@ class CPUCropSource:
             ev.record()
             self._events[k] = ev
         self._free.put(k)
+        return p_row
 
     def stop(self):
         self._stop.set()

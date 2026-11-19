@@ -377,11 +377,15 @@ def _worker(job_id: str) -> None:
                 except Exception:
                     pr_final = {}
 
+            mo_meta = job["task_cfg"].get("model") or {}
+            ms_meta = str(mo_meta.get("model_size") or "Medium")
+            if ms_meta == "WildCatLargeV1" and bool(mo_meta.get("global_attention", False)):
+                ms_meta = "WildCatLargeV1+GlobalAttn"
             meta = {
                 "out_id": job["out_id"],
                 "task_id": job["task_id"],
                 "node_name": job["node_name"],
-                "model_size": str((job["task_cfg"].get("model") or {}).get("model_size") or "Medium"),
+                "model_size": ms_meta,
                 "in_channels": int((job["task_cfg"].get("model") or {}).get("in_channels") or 3),
                 "out_channels": int(pr_final.get("out_channels") or (job["task_cfg"].get("model") or {}).get("out_channels") or 3),
                 "step": job["step"],

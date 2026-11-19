@@ -43,6 +43,9 @@ def summarize_config_diff(cfg: dict) -> dict:
     if msize != "Medium":
         non_default = True
         tags.append(msize)
+    if msize == "WildCatLargeV1" and bool(mo.get("global_attention", False)):
+        non_default = True
+        tags.append("GlobalAttn")
 
     # Multi-Resolution (Nuke default: True)
     multi_res = bool(tr.get("multi_resolution", True))

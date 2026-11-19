@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261119_v306" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261119_v310" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -312,7 +312,7 @@
                 </div>
 
                 <div class="flex items-center justify-between text-[10px] text-slate-500 wc-mono">
-                  <span>{{ t('sidebar.modelLabel', { size: (task.config && task.config.model && task.config.model.model_size) || 'Medium' }) }}</span>
+                  <span>{{ t('sidebar.modelLabel', { size: formatModelDisplay(task.config) }) }}</span>
                   <span v-if="task.last_loss != null" class="text-amber-400/90">Loss: {{ task.last_loss.toFixed(5) }}</span>
                   <span v-else>{{ task.size_mb }} MB</span>
                 </div>
@@ -1248,7 +1248,7 @@
                   </div>
                   <span v-if="isModelSizeLocked || isChannelsLocked"
                         class="px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-semibold wc-mono">
-                    {{ t('wizard.lockedArchBadge', { size: form.model_size, inCh: form.in_channels, outCh: form.out_channels }) }}
+                    {{ t('wizard.lockedArchBadge', { size: formatModelDisplay(form), inCh: form.in_channels, outCh: form.out_channels }) }}
                   </span>
                 </div>
 
@@ -1324,6 +1324,24 @@
                       <option value="Large">Large</option>
                       <option value="WildCatLargeV1">{{ t('wizard.modelWildCatLargeV1Opt') }}</option>
                     </select>
+                    <label v-if="form.model_size === 'WildCatLargeV1'"
+                           class="mt-2 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border transition select-none"
+                           :class="[
+                             form.global_attention ? 'bg-indigo-950/45 border-indigo-500/45 text-indigo-200' : 'bg-slate-900/60 border-slate-800/80 text-slate-400',
+                             isModelSizeLocked ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:border-slate-700'
+                           ]">
+                      <span class="flex items-center gap-1.5 min-w-0 text-[11px] font-medium">
+                        <input type="checkbox"
+                               v-model="form.global_attention"
+                               :disabled="isModelSizeLocked"
+                               class="rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-500/40 disabled:opacity-50" />
+                        <span class="truncate">{{ t('wizard.globalAttnToggle') }}</span>
+                        <help-tip doc="global_attention"></help-tip>
+                      </span>
+                      <span class="shrink-0 text-[10px] wc-mono" :class="form.global_attention ? 'text-indigo-300' : 'text-slate-500'">
+                        {{ form.global_attention ? t('wizard.globalAttnOnBadge') : t('wizard.globalAttnOffBadge') }}
+                      </span>
+                    </label>
                   </div>
 
                   <!-- 2. Epochs -->
@@ -2102,7 +2120,7 @@
                     <div class="text-xs text-slate-400 wc-mono">
                       {{ t('wizard.summaryTask') }} <strong class="text-white">{{ form.run_name }}</strong> ·
                       {{ t('wizard.summaryInit') }} <strong class="text-indigo-300">{{ initSummaryText }}</strong> ·
-                      {{ t('wizard.summaryScale') }} <strong class="text-emerald-300">{{ form.model_size }} · {{ form.epochs }} Epochs = {{ computedTotalSteps }} Steps</strong> ·
+                      {{ t('wizard.summaryScale') }} <strong class="text-emerald-300">{{ formatModelDisplay(form) }} · {{ form.epochs }} Epochs = {{ computedTotalSteps }} Steps</strong> ·
                       {{ t('wizard.summaryStrategy') }}<help-tip doc="adv_overview"></help-tip> <strong :class="advActiveCount > 0 ? 'text-violet-300' : 'text-emerald-300'">{{ advActiveCount > 0 ? t('wizard.summaryAdvActive', { count: advActiveCount }) : t('wizard.summaryNukeNative') }}</strong> ·
                       {{ t('wizard.summaryEstDuration') }}<help-tip doc="eta_estimate"></help-tip> <strong class="text-indigo-300">{{ t('wizard.summaryApproxEta', { eta: formatEta(estimatedNewTaskDurationSec) }) }}</strong>
                       <span v-if="activeEtaGpuProfile"
@@ -2207,7 +2225,7 @@
                       {{ t('monitor.taskPathsFmt', {
                         src: (activeTask.config && activeTask.config.paths && activeTask.config.paths.source) || '—',
                         tgt: (activeTask.config && activeTask.config.paths && activeTask.config.paths.target) || '—',
-                        model: (activeTask.config && activeTask.config.model && activeTask.config.model.model_size) || 'Medium'
+                        model: formatModelDisplay(activeTask.config)
                       }) }}
                     </div>
                   </div>
@@ -5774,6 +5792,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261119_v306"></script>
+  <script type="module" src="/static/app.js?v=20261119_v310"></script>
 </body>
 </html>

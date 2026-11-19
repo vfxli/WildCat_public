@@ -100,6 +100,7 @@ def _load_model_for_infer(ckpt_path: str, task_cfg: dict, device: str, opt_nhwc:
         )
         if w_spec.get("model_size"):
             mo["model_size"] = w_spec["model_size"]
+            mo["global_attention"] = bool(w_spec.get("global_attention", mo.get("global_attention", False)))
         if w_spec.get("in_channels"):
             mo["in_channels"] = w_spec["in_channels"]
         if w_spec.get("out_channels"):

@@ -24,9 +24,10 @@ from .log import log
 def _run_padded(net, x, amp_dtype, channels_last):
     """x: (1,C,h,w) on device -> (1,Cout,h,w); pads to a multiple of 16 with edge replication."""
     h, w = x.shape[-2:]
-    ph, pw = (16 - h % 16) % 16, (16 - w % 16) % 16
-    if ph or pw:
-        x = F.pad(x, (0, pw, 0, ph), mode="replicate")
+    if not getattr(net, "uses_global_thumb", False):
+        ph, pw = (16 - h % 16) % 16, (16 - w % 16) % 16
+        if ph or pw:
+            x = F.pad(x, (0, pw, 0, ph), mode="replicate")
     is_cuda = x.is_cuda
     if channels_last and is_cuda:
         x = x.contiguous(memory_format=torch.channels_last)
@@ -43,14 +44,34 @@ def infer_image(net, x, amp_dtype=None, channels_last=False, tile=1024, overlap=
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
     _, _, h, w = x.shape
+    use_glob_tile = bool(getattr(net, "uses_global_thumb", False) and hasattr(net, "forward_all"))
+    full_thumb = (
+        F.interpolate(x.float(), size=(128, 128), mode="bilinear", align_corners=False).to(dtype=x.dtype)
+        if use_glob_tile
+        else None
+    )
     out = None
     step = tile
+    is_cuda = x.is_cuda
     for y0 in range(0, h, step):
         for x0 in range(0, w, step):
             y1, x1 = min(h, y0 + step), min(w, x0 + step)
             ya, xa = max(0, y0 - overlap), max(0, x0 - overlap)
             yb, xb = min(h, y1 + overlap), min(w, x1 + overlap)
-            o = _run_padded(net, x[:, :, ya:yb, xa:xb], amp_dtype, channels_last)
+            if use_glob_tile:
+                tx = x[:, :, ya:yb, xa:xb]
+                if channels_last and is_cuda:
+                    tx = tx.contiguous(memory_format=torch.channels_last)
+                tbox = torch.tensor(
+                    [[-1.0 + 2.0 * xa / max(w, 1), -1.0 + 2.0 * ya / max(h, 1), -1.0 + 2.0 * xb / max(w, 1), -1.0 + 2.0 * yb / max(h, 1)]],
+                    device=x.device,
+                    dtype=torch.float32,
+                )
+                with torch.autocast("cuda" if is_cuda else "cpu", dtype=amp_dtype or torch.float32,
+                                    enabled=amp_dtype is not None and is_cuda):
+                    o = net.forward_all(tx, full_thumb=full_thumb, crop_box=tbox)[-1].float()
+            else:
+                o = _run_padded(net, x[:, :, ya:yb, xa:xb], amp_dtype, channels_last)
             if out is None:
                 out = torch.empty((1, o.shape[1], h, w), device=x.device, dtype=torch.float32)
             out[:, :, y0:y1, x0:x1] = o[:, :, y0 - ya:y0 - ya + (y1 - y0), x0 - xa:x0 - xa + (x1 - x0)]
@@ -234,20 +255,25 @@ class PreviewWorker:
             with (torch.cuda.stream(self._stream) if self._stream is not None else _Null()):
                 self._write_contact_sheet(step, crops)
 
-    def _pad_crops_to_three(self, x, y, step, scale):
+    def _pad_crops_to_three(self, x, y, step, scale, thumb=None, box=None):
         """Ensure at least 3 crop pairs for a complete 3x3 Nuke-style Contact Sheet without touching global RNG."""
         if x.shape[0] >= 3 or not self.t.src_full:
+            if thumb is not None and box is not None:
+                return x[:3], y[:3], thumb[:3], box[:3]
             return x[:3], y[:3]
         rng = np.random.RandomState((int(step) * 2654435761 + 17) & 0xFFFFFFFF)
         ch, cw = int(x.shape[-2]), int(x.shape[-1])
         xs, ys = [x], [y]
+        ths = [thumb] if thumb is not None else None
+        bxs = [box] if box is not None else None
         need = 3 - int(x.shape[0])
         n_frames = len(self.t.src_full)
         sc = max(1, int(scale))
         for _ in range(need):
             fi = int(rng.randint(0, n_frames))
-            sf = torch.from_numpy(np.asarray(self.t.src_full[fi], dtype=np.float32)).to(self.device).permute(2, 0, 1)[None]
+            sf_full = torch.from_numpy(np.asarray(self.t.src_full[fi], dtype=np.float32)).to(self.device).permute(2, 0, 1)[None]
             tf = torch.from_numpy(np.asarray(self.t.tgt_full[fi], dtype=np.float32)).to(self.device).permute(2, 0, 1)[None]
+            sf = sf_full
             if sc > 1:
                 sh = max(1, sf.shape[-2] // sc)
                 sw = max(1, sf.shape[-1] // sc)
@@ -262,26 +288,50 @@ class PreviewWorker:
             x0 = int(rng.randint(0, max(1, sf.shape[-1] - cw + 1)))
             xs.append(sf[:, :, y0 : y0 + ch, x0 : x0 + cw])
             ys.append(tf[:, :, y0 : y0 + ch, x0 : x0 + cw])
+            if ths is not None and bxs is not None:
+                ths.append(F.interpolate(sf_full, size=(128, 128), mode="bilinear", align_corners=False))
+                sh_eff = max(1, int(sf.shape[-2]))
+                sw_eff = max(1, int(sf.shape[-1]))
+                bxs.append(
+                    torch.tensor(
+                        [[-1.0 + 2.0 * x0 / sw_eff, -1.0 + 2.0 * y0 / sh_eff, -1.0 + 2.0 * (x0 + cw) / sw_eff, -1.0 + 2.0 * (y0 + ch) / sh_eff]],
+                        device=self.device,
+                        dtype=torch.float32,
+                    )
+                )
+        if ths is not None and bxs is not None:
+            return torch.cat(xs, dim=0)[:3], torch.cat(ys, dim=0)[:3], torch.cat(ths, dim=0)[:3], torch.cat(bxs, dim=0)[:3]
         return torch.cat(xs, dim=0)[:3], torch.cat(ys, dim=0)[:3]
 
     def _write_contact_sheet(self, step, crops):
         """CopyCat-style 3x3 contact sheet of training crops: 3 rows = crops, 3 columns =
         input | ground truth | output. Writes both Nuke's raw Training_*.<step>.png and an
-        OCIO display-referred sheet under contact_sup/ for accurate HDR Web UI viewing."""
-        if len(crops) == 3:
+        OCIO display-managed sheet under contact_sup/ for accurate HDR Web UI viewing."""
+        thumb_raw = box_raw = None
+        if len(crops) == 5:
+            x_raw, y_raw, scale, thumb_raw, box_raw = crops
+        elif len(crops) == 3:
             x_raw, y_raw, scale = crops
         else:
             x_raw, y_raw, scale = crops[0], crops[1], 1
         x = x_raw.to(self.device).float()
         y = y_raw.to(self.device).float()
-        x, y = self._pad_crops_to_three(x, y, step, scale)
         ch, cw = int(x.shape[-2]), int(x.shape[-1])
-        ph, pw = (16 - ch % 16) % 16, (16 - cw % 16) % 16
-        x_in = F.pad(x, (0, pw, 0, ph), mode="replicate") if (ph or pw) else x
         is_cuda = self.device.type == "cuda"
-        with torch.no_grad(), torch.autocast("cuda" if is_cuda else "cpu", dtype=self.amp_dtype or torch.float32,
-                                             enabled=self.amp_dtype is not None and is_cuda):
-            o = self.net(x_in)[:, :, :ch, :cw].float()
+        if thumb_raw is not None and box_raw is not None and getattr(self.net, "uses_global_thumb", False):
+            th = thumb_raw.to(self.device).float()
+            bx = box_raw.to(self.device).float()
+            x, y, th, bx = self._pad_crops_to_three(x, y, step, scale, thumb=th, box=bx)
+            with torch.no_grad(), torch.autocast("cuda" if is_cuda else "cpu", dtype=self.amp_dtype or torch.float32,
+                                                 enabled=self.amp_dtype is not None and is_cuda):
+                o = self.net.forward_all(x, full_thumb=th, crop_box=bx)[-1][:, :, :ch, :cw].float()
+        else:
+            x, y = self._pad_crops_to_three(x, y, step, scale)
+            ph, pw = (16 - ch % 16) % 16, (16 - cw % 16) % 16
+            x_in = F.pad(x, (0, pw, 0, ph), mode="replicate") if (ph or pw) else x
+            with torch.no_grad(), torch.autocast("cuda" if is_cuda else "cpu", dtype=self.amp_dtype or torch.float32,
+                                                 enabled=self.amp_dtype is not None and is_cuda):
+                o = self.net(x_in)[:, :, :ch, :cw].float()
 
         side = int(self.t.crop_size)
         rows_raw = []

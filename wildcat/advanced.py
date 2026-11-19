@@ -288,7 +288,13 @@ class BatchAugmenter:
         self.gen.manual_seed(int(seed) + 7919)
 
     @torch.no_grad()
-    def apply_(self, x: torch.Tensor, y: torch.Tensor):
+    def apply_(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        thumb: torch.Tensor | None = None,
+        box: torch.Tensor | None = None,
+    ):
         bs = x.shape[0]
         if self.hflip_prob > 0.0:
             m = torch.rand((bs,), generator=self.gen, device=x.device) < self.hflip_prob
@@ -296,6 +302,13 @@ class BatchAugmenter:
                 idx = torch.nonzero(m, as_tuple=False).squeeze(1)
                 x[idx] = torch.flip(x[idx], dims=[-1])
                 y[idx] = torch.flip(y[idx], dims=[-1])
+                if thumb is not None:
+                    thumb[idx] = torch.flip(thumb[idx], dims=[-1])
+                if box is not None:
+                    bx0 = -box[idx, 2].clone()
+                    bx2 = -box[idx, 0].clone()
+                    box[idx, 0] = bx0
+                    box[idx, 2] = bx2
         if self.exposure_ev > 0.0 and (x.shape[1] >= 3 or y.shape[1] >= 3):
             ev = (torch.rand((bs, 1, 1, 1), generator=self.gen, device=x.device) * 2.0 - 1.0) * self.exposure_ev
             gain = torch.pow(2.0, ev)
@@ -303,3 +316,5 @@ class BatchAugmenter:
                 x[:, :3].mul_(gain.to(dtype=x.dtype))
             if y.shape[1] >= 3:
                 y[:, :3].mul_(gain.to(dtype=y.dtype))
+            if thumb is not None and thumb.shape[1] >= 3:
+                thumb[:, :3].mul_(gain.to(dtype=thumb.dtype))

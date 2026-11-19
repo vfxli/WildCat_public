@@ -584,10 +584,11 @@ def list_all_checkpoints(user_id: int = None, all_users: bool = True) -> list:
             lat = os.path.join(rdir, "ckpt", "latest.pt")
             if os.path.isfile(lat):
                 sp = inspect_ckpt_cached(lat)
+                ms_disp = f"{sp['model_size']}+GlobalAttn" if sp.get("global_attention") else sp["model_size"]
                 out.append(
                     {
                         "path": f"run/{d}/ckpt/latest.pt",
-                        "label": f"{d} / latest.pt [{sp['model_size']} · {sp['in_channels']}ch→{sp['out_channels']}ch · Step {sp['step']}]",
+                        "label": f"{d} / latest.pt [{ms_disp} · {sp['in_channels']}ch→{sp['out_channels']}ch · Step {sp['step']}]",
                         "run_name": d,
                         **sp,
                     }
@@ -599,11 +600,12 @@ def list_all_checkpoints(user_id: int = None, all_users: bool = True) -> list:
                     ckpts.append((int(m.group(1)), p))
             for st, p in sorted(ckpts):
                 sp = inspect_ckpt_cached(p)
+                ms_disp = f"{sp['model_size']}+GlobalAttn" if sp.get("global_attention") else sp["model_size"]
                 fn = os.path.basename(p)
                 out.append(
                     {
                         "path": f"run/{d}/ckpt/{fn}",
-                        "label": f"{d} / {fn} [{sp['model_size']} · {sp['in_channels']}ch→{sp['out_channels']}ch]",
+                        "label": f"{d} / {fn} [{ms_disp} · {sp['in_channels']}ch→{sp['out_channels']}ch]",
                         "run_name": d,
                         **sp,
                     }

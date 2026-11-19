@@ -123,7 +123,9 @@ def export_torchscript(state_dict, out_pt, mo=None):
     import torch
     from .models import build_generator
 
-    mo_cfg = mo or {}
+    mo_cfg = dict(mo or {})
+    if mo_cfg.get("model_size") == "WildCatLargeV1" and "global_block.q_proj.weight" in state_dict:
+        mo_cfg["global_attention"] = True
 
     net, _ = build_generator(mo_cfg)
     net.load_state_dict({k: (v.detach().cpu() if hasattr(v, "detach") else torch.from_numpy(v)) for k, v in state_dict.items()})

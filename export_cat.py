@@ -75,6 +75,7 @@ def main():
             fallback_out=int(mo.get("out_channels", mo.get("in_channels", 3))),
         )
         mo["model_size"] = w_spec.get("model_size") or mo.get("model_size", "Medium")
+        mo["global_attention"] = bool(w_spec.get("global_attention", mo.get("global_attention", False)))
         mo["in_channels"] = int(w_spec.get("in_channels") or mo.get("in_channels", 3))
         mo["out_channels"] = int(w_spec.get("out_channels") or mo.get("out_channels", mo["in_channels"]))
         model_size = mo["model_size"]
