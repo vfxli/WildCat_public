@@ -9,7 +9,7 @@
   "header": {
     "versionTip": "服务器版本",
     "navStudio": "训练",
-    "navLab": "实验",
+    "navLab": "对比",
     "navDatasets": "数据集 ({count})",
     "navTools": "工具",
     "navHelp": "帮助",
@@ -21,6 +21,7 @@
     "gpuDisabled": "已停用",
     "gpuRolePrimaryShort": "主",
     "gpuRoleSecondaryShort": "副",
+    "gpuInferTag": "推理",
     "allGpusDisabledBadge": "全部显卡已停用",
     "machineLabel": "🖥️ 机器名:",
     "machinePlaceholder": "自动识别机器名",
@@ -159,7 +160,11 @@
     "modelWildCatLargeV1Opt": "WildCatLargeV1",
     "globalAttnToggle": "全局光照感知",
     "globalAttnOnBadge": "已开启",
-    "globalAttnOffBadge": "默认关闭"
+    "globalAttnOffBadge": "默认关闭",
+    "inferOnFinishTitle": "训练结束后自动推理验证序列",
+    "inferOnFinishDesc": "使用最后一个检查点输出无损 EXR 序列，并生成对比指标与帧间变化热力图，完成后再开始队列中的下一个任务",
+    "inferOnFinishOnBadge": "默认开启",
+    "inferOnFinishOffBadge": "已关闭"
   },
   "adv": {
     "headerTitle": "高级参数",
@@ -375,6 +380,10 @@
     "openInferSeqBtn": "▶ 推理验证序列",
     "openInferSeqTip": "使用本任务已保存的模型推理验证集序列",
     "openInferSeqUntrainedTip": "该任务尚未保存任何检查点，无法用于推理",
+    "boundInferWaiting": "已绑定训练后自动推理（高优队列：训练完成后立即优先执行）",
+    "boundInferQueued": "训练后自动推理高优排队中（第 {pos} 位 · 优先于待运行训练 · 约等 {eta}）",
+    "boundInferRunning": "正在自动推理验证序列：{done} / {total} 帧（{pct}%）· {device}",
+    "cancelBoundInferBtn": "取消自动推理",
     "liveLogTitle": "训练日志（train.log）",
     "liveLogSub": "出错时包含完整的 Python Traceback",
     "autoScrollLabel": "自动滚动",
@@ -492,7 +501,7 @@
   },
   "datasets": {
     "title": "数据集",
-    "subtitleHtml": "数据集由关键帧（<strong class=\"text-indigo-300\">Input</strong> 输入 + <strong class=\"text-emerald-300\">Ground Truth</strong> 目标）组成，可附带<strong class=\"text-amber-300\">验证序列</strong>（镜头的完整原始素材）。拖动滑条可逐帧查看。",
+    "subtitleHtml": "数据集由关键帧（<strong class=\"text-indigo-300\">Input</strong> 输入 + <strong class=\"text-emerald-300\">Ground Truth</strong> 目标）和镜头的完整<strong class=\"text-amber-300\">验证序列</strong>组成。拖动滑条可逐帧查看。",
     "restoreDemosBtn": "恢复示例数据集",
     "newDatasetBtn": "+ 新建数据集",
     "evalSeqBadge": "评测序列（仅输入）",
@@ -514,7 +523,7 @@
     "pickerAutoFollowDesc": "使用所选任务各自的数据集与验证序列（默认）",
     "pickerEmptyMatch": "没有符合筛选条件的数据集",
     "useForTrainBtn": "用于训练",
-    "useForEvalBtn": "在实验中评测",
+    "useForEvalBtn": "去对比页查看",
     "attachEvalSeqBtn": "+ 添加验证序列",
     "replaceEvalSeqBtn": "更换验证序列",
     "removeEvalSeqBtn": "移除验证序列",
@@ -553,8 +562,8 @@
     "sourceHintHtml": "支持选择图像文件、整个文件夹或 <code class=\"text-indigo-300\">.zip</code>，自动保留原文件帧编号并按数字顺序排列。",
     "targetTitle": "关键帧目标 · EXR / PNG / TIFF / JPG",
     "targetHintHtml": "选择与输入一一对应的目标图像、文件夹或 <code class=\"text-emerald-300\">.zip</code>，按帧编号顺序配对。",
-    "optSeqTitle": "验证序列（可选）· EXR / PNG / TIFF / JPG / ZIP",
-    "optSeqHintHtml": "镜头的完整原始素材，与关键帧分辨率相同，至少 2 帧。可现在上传，也可之后再添加。",
+    "optSeqTitle": "验证序列（必填，至少 2 帧）· EXR / PNG / TIFF / JPG / ZIP",
+    "optSeqHintHtml": "镜头的完整原始素材，与关键帧分辨率相同，至少 2 帧。支持选择图像文件、整个文件夹或 <code class=\"text-amber-300\">.zip</code>。",
     "pickFilesBtn": "选择文件",
     "pickFolderBtn": "选择文件夹",
     "dropFolderHint": "可直接将文件夹或图像拖入此处",
@@ -633,11 +642,28 @@
     "fmtShortHalf": "16 位半精度 EXR",
     "runBtn": "▶ 开始序列推理",
     "runSingleBtn": "⚡ 推理当前帧",
+    "queueRunBtn": "▶ 加入高优推理队列",
+    "queueSingleBtn": "⚡ 单帧加入高优推理队列",
+    "submittingBtn": "正在加入队列…",
     "runningBtn": "推理中…",
-    "cancelBtn": "取消推理",
+    "cancelBtn": "取消",
     "progQueued": "准备启动推理进程…",
     "progRunning": "正在推理：{done} / {total} 帧（{pct}%）· {fps} fps · {device}",
-    "cancelledNote": "已取消推理，临时文件已清理。",
+    "gpuStatusIdleHint": "当前空闲显卡：{idle} / {enabled} 张 · 点击后立即独占空闲显卡开始推理",
+    "gpuStatusBusyHint": "当前显卡繁忙 · 点击后将进入高优推理队列，优先于所有待运行训练任务执行（预计等待 {eta}）",
+    "gpuStatusDisabledHint": "当前全部显卡已停用 · 点击后进入高优推理队列等待显卡启用",
+    "queuedToast": "已加入高优推理队列（第 {pos} 位，优先于所有待运行训练任务）",
+    "startedToast": "已分配空闲显卡 {device} 开始推理",
+    "queuePanelTitle": "推理队列与实时进度（{count}）",
+    "queuePriorityNote": "推理任务优先级始终高于待运行训练任务；多个推理任务按先后顺序依次执行",
+    "stateRunningBadge": "推理中 · {device}",
+    "stateQueuedBadge": "高优排队 #{pos}",
+    "stateWaitingTrainBadge": "等待训练完成",
+    "autoOnFinishTag": "训练后自动",
+    "jobMetaTarget": "{model} (Step {step}) → {dataset}",
+    "jobQueuedWait": "优先于排队训练任务 · 预计等待 {eta}",
+    "jobWaitingTrainDesc": "绑定训练任务完成后自动最高优启动（共 {total} 帧）",
+    "cancelledNote": "已取消推理任务，临时文件已清理。",
     "doneToast": "序列推理完成：共输出 {frames} 帧（{sec} 秒）",
     "doneSingleToast": "单帧推理完成（{sec} 秒）",
     "viewerTitle": "推理结果预览",
@@ -705,7 +731,7 @@
     "docGroup_train": "训练基础参数",
     "docGroup_adv": "高级参数",
     "docGroup_presets": "场景预设",
-    "docGroup_lab": "实验",
+    "docGroup_lab": "多任务对比",
     "docGroup_datasets": "数据集",
     "docGroup_monitor": "任务监控指标",
     "docGroup_tools": "工具",
@@ -815,7 +841,7 @@
     "exportAllJsonBtn": "⬇ 导出 JSON",
     "backToStudioBtn": "← 返回训练",
     "tempControlTitle": "临时用户与默认配额",
-    "tempControlDesc": "开启限制时，未获授权的账号作为临时用户使用：受任务数、Epochs 及上传限制（单次 512 MB、单文件 128 MB、每组 300 帧、总空间 2 GB），不能使用实验和 API。关闭限制后，所有用户可使用全部功能，且解除上传大小、帧数与配额限制（团队内部大素材建议关闭）。",
+    "tempControlDesc": "开启限制时，未获授权的账号作为临时用户使用：受任务数、Epochs 及上传限制（单次 512 MB、单文件 128 MB、每组 300 帧、总空间 2 GB），不能使用对比和 API。关闭限制后，所有用户可使用全部功能，且解除上传大小、帧数与配额限制（团队内部大素材建议关闭）。",
     "modeRestrictedBadge": "● 限制已开启",
     "modeUnrestrictedBadge": "✓ 限制已关闭",
     "oneClickDisableRestrictBtn": "关闭临时用户限制",
@@ -834,7 +860,7 @@
     "colTaskQuota": "进行中任务（当前 / 上限）",
     "colMaxEpochs": "Epochs 上限",
     "colPerms": "功能权限",
-    "permLabLabel": "实验",
+    "permLabLabel": "对比",
     "permApiLabel": "API",
     "copyRoamTip": "复制漫游找回码",
     "regenRoamTip": "重新生成漫游找回码",
@@ -844,7 +870,12 @@
     "unrestrictedOverrideHint": "限制已关闭"
   },
   "lab": {
-    "tempUserLockedBanner": "🔒 临时用户不能使用实验功能。",
+    "tempUserLockedBanner": "🔒 临时用户不能使用多任务对比功能。",
+    "workbenchTitle": "多任务对比",
+    "cardNotEvalHint": "尚未生成序列画面与帧间变化热力图",
+    "firstFrameNoDiffBadge": "第 1 帧无前一帧 · 从第 2 帧起显示帧间变化",
+    "bgFullFrameTip": "全画幅修改镜头（无未修改背景区域）",
+    "staticFullMotionTip": "全画面运动或颗粒（无静止像素）",
     "subPlan": "① 实验计划与提交",
     "subAnalyze": "② 结果对比与分析",
     "notePlaceholder": "备注（可选），例如：对照、1px 裁剪网格 + 梯度项",
@@ -1027,6 +1058,7 @@
     "noLogsToCopyToast": "暂无日志可复制。",
     "copiedLogsToast": "已复制完整日志。",
     "errSelectBothSeq": "请同时选择关键帧的输入图像和目标图像。",
+    "errSelectAllThreeSeq": "请同时选择关键帧输入、关键帧目标和验证序列（至少 2 帧）。",
     "errSelectSourceSeq": "请选择验证序列的图像文件或 .zip 文件。",
     "datasetCreatedToast": "已创建数据集 [{name}]：{frames} 张关键帧，输入与目标平均差异 {mae}%。",
     "datasetCreatedWithSeqToast": "已创建数据集 [{name}]：{frames} 张关键帧，验证序列 {seqFrames} 帧，输入与目标平均差异 {mae}%。",
@@ -1166,7 +1198,7 @@
     "invalidApiKey": "API Key 无效或已失效",
     "cannotDisableAdmin": "不能禁用管理员账号",
     "cannotDeleteAdmin": "不能删除管理员账号",
-    "tempUserLabLocked": "临时用户不能使用实验功能。",
+    "tempUserLabLocked": "临时用户不能使用多任务对比功能。",
     "tempUserApiLocked": "临时用户不能使用 API Key。",
     "tempUserConverterLocked": "临时用户不能使用模型格式转换。",
     "convertInvalidPath": "模型文件路径无效（只能是当前工作空间内的模型文件）",
@@ -1190,8 +1222,8 @@
     },
     "dataset": {
       "title": "Dataset（数据集）",
-      "summary": "训练使用的数据集：成对的关键帧（输入 Input 与目标 Ground Truth），可以附带镜头的验证序列。",
-      "body": "## Nuke CopyCat 中的对应\n相当于接到 CopyCat 节点 Input 与 Ground Truth 两个输入上的成对图像。\n\n## 作用\n点击选择框打开数据集列表。选中后，下方显示关键帧预览：左侧为输入，右侧为目标；数据集带验证序列时，可以切换查看整条序列。数据集的通道数决定 [[doc:channels]] 的可选项，关键帧数量参与计算总步数（见 [[doc:epochs]]）。\n\n## 要求\n数据集在「数据集」页创建，见 [[doc:dataset_keyframes]]。验证序列可选（见 [[doc:dataset_validation_sequence]]）；关键帧共性和训练质量指标需要验证序列。"
+      "summary": "训练使用的数据集：由成对关键帧（输入 Input 与目标 Ground Truth）和镜头的完整验证序列组成。",
+      "body": "## Nuke CopyCat 中的对应\n相当于接到 CopyCat 节点 Input 与 Ground Truth 两个输入上的成对图像。\n\n## 作用\n点击选择框打开数据集列表。选中后，下方显示关键帧预览：左侧为输入，右侧为目标，并可切换查看整条验证序列。数据集的通道数决定 [[doc:channels]] 的可选项，关键帧数量参与计算总步数（见 [[doc:epochs]]）。\n\n## 要求\n数据集在「数据集」页创建，新建数据集必须同时提供关键帧输入、关键帧目标和至少 2 帧的验证序列（见 [[doc:dataset_keyframes]] 与 [[doc:dataset_validation_sequence]]）。"
     },
     "device": {
       "title": "Use Device（训练显卡）",
@@ -1312,6 +1344,11 @@
       "title": "预览 / 验证显卡（preview_gpu）",
       "summary": "整帧预览和关键帧验证在哪张显卡上计算：auto 使用第二张显卡，same 使用训练显卡，off 关闭预览。",
       "body": "## 作用\n- **auto**（默认）：有第二张显卡时，预览和验证在第二张显卡上异步计算，训练显卡只负责训练；只有一张显卡时与 same 相同。\n- **same**：在训练显卡上异步计算。\n- **off**：不生成整帧预览和对比图；关键帧验证不受影响。\n\n预览和验证使用 FP32 计算，与 Nuke Inference 的默认设置相同。"
+    },
+    "infer_on_finish": {
+      "title": "训练结束后自动推理验证序列",
+      "summary": "点击开始训练时同步生成一条绑定的高优推理任务：训练完成瞬间立即接管空闲显卡输出无损 EXR 与对比热力图，排在所有待运行训练任务之前。默认开启。",
+      "body": "## 作用\n开启后（默认），提交训练任务时会同步在统一 GPU 队列中生成一条绑定该训练任务的高优推理任务（初始状态为「等待训练完成」，不抢占任何空闲显卡）：\n- **训练完成瞬间最高优启动**：一旦训练保存最后一个检查点（开启 [[doc:adv_ema]] 时自动使用平均权重）并结束，绑定的推理任务立即转为就绪状态。由于推理任务优先级始终高于所有待运行训练任务，刚释放的显卡会第一时间无缝执行该序列的 FP32 全精度推理，同时写出 `infer/<任务名>/` 下的 32 位浮点无损 EXR 序列（保留原帧号）以及「对比」页所需的序列指标与 ×12 帧间变化热力图，完成后再轮到下一个排队的训练任务。\n- **异常与取消联动**：若训练任务被取消、手动停止或报错退出，绑定的未执行自动推理任务会自动一并取消；训练期间也可随时在任务页或推理队列中单独取消。\n\n## 何时关闭\n验证序列非常长、希望训练结束后立刻释放显卡开始下一个排队训练任务时可关闭；之后仍可在「工具 → 模型推理」中随时提交排队推理。"
     },
     "eta_estimate": {
       "title": "预计训练耗时",
@@ -1464,34 +1501,14 @@
       "body": "## 何时使用\n\n面部镜头只手工修了其中几帧，而修过的关键帧彼此难以完全一致：局部画得更弱或更强、偏了几个像素、纹理被重画。\n\n## 作用\n\n- **Model Size 为 WildCatLargeV1**（见 [[doc:arch_wildcat_large_v1]]）：单遍 4 尺度 `64` 通道细节架构 + `1×1` FFN + 原图残差跳跃，在一致关键帧与手工不一致关键帧上均显著优于 Medium 与原版 Large，未修改背景区域改动减少 `50%–84%`；若需更快预览可改选 Medium（训练时间约为其 55%）。\n- [[doc:adv_kf_common|关键帧共性]]：训练前把个别关键帧中与其他关键帧不一致的局部改成一致的样子，中间帧不再在几个版本之间游移。\n- [[doc:adv_crop_grid|裁剪网格]] 1 px。\n- [[doc:adv_loss_charbonnier|Charbonnier]] 0.25（不加梯度项和高光衰减）：未见帧和修改区域更准，未修改区域的改动明显减少。\n- [[doc:adv_ema|平均权重]]：中途停止或选用中途检查点时结果更稳定。\n- 通道为 RGB → RGB。\n\n## 要求\n\n数据集带有[[doc:dataset_validation_sequence|验证序列]]，并且至少有 3 张关键帧。条件不满足时任务仍可提交，关键帧共性不生效，任务页会注明原因。\n\n## 限制\n\n每一张关键帧都重画过、彼此各不相同的细节无法修正。效果本应随镜头变化时（例如伤口逐渐加深），在关键帧共性中关闭[[doc:adv_kf_common_overall|整体观感取共识]]。\n\n测试依据：[[ev:arch_wildcat_large_v1]] · [[ev:preset_face_edit]] · [[ev:adv_kf_common]] · [[ev:adv_crop_grid]] · [[ev:adv_ema]]"
     },
     "lab_overview": {
-      "title": "实验",
-      "summary": "在同一数据集上批量训练多组设置，并对比它们的曲线、评测指标和画面。",
-      "body": "## 作用\n**① 实验计划与提交**：在训练参数表单中手动配置任务后加入左侧实验分组，可整组统一调整 Epochs 并批量提交到训练队列。\n**② 结果对比与分析**：勾选已有的训练任务，叠加 Loss 与 Val MSE 曲线，在关键帧和验证序列上测量评测指标，并同步播放各任务的结果。\n\n## 何时使用\n需要为一个镜头确定合适的设置时使用，例如比较场景预设与 Nuke CopyCat 默认设置、比较两种 Model Size，或确认某个高级参数在这个镜头上的作用。\n\n## 限制\n互相比较的任务应使用相同的数据集和相同的 Epochs，否则差异不只来自被比较的设置。临时用户不能使用实验功能。"
-    },
-    "lab_group_name": {
-      "title": "实验分组名称",
-      "summary": "待启动实验分组的名称，提交后在结果对比中以同名分组显示。",
-      "body": "提交后，这一组任务在「结果对比与分析」中显示为同名分组，可以整组勾选对比。提交前可以在左侧的待启动列表中修改名称，提交后可以重命名。"
-    },
-    "lab_native_baseline": {
-      "title": "Nuke 默认设置对照",
-      "summary": "向当前实验分组加入一个完全使用 Nuke CopyCat 默认设置的训练任务，作为对比的基准。",
-      "body": "加入的任务使用当前数据集，Model Size 为 Medium，Multi-Resolution 开启，Batch Size 为 8，Crop Size 为 256，Mixed Precision 为 Adaptive，不加载初始权重，不开启任何高级参数；Epochs、通道、Learning Rate 和 Seed 与表单当前值相同。"
-    },
-    "lab_note": {
-      "title": "实验备注",
-      "summary": "加入实验分组时附在任务上的说明，显示在待启动列表和结果对比的任务列表中。",
-      "body": "用于记录这个任务与其他任务的区别，例如「对照」或「1px 裁剪网格 + 梯度项 0.05」。"
-    },
-    "lab_staged_groups": {
-      "title": "待启动的实验分组",
-      "summary": "尚未提交的训练任务，按实验分组排列；每一组可以单独提交，也可以全部一起提交。",
-      "body": "## 作用\n- 「将当前设置加入列表」把训练参数表单中的当前设置加入当前分组；「加入 Nuke 默认设置对照」加入一个使用 Nuke CopyCat 默认设置的任务。\n- 每个任务可以改名、调整顺序、移到其他分组，或用「载入表单」载入后修改。\n- 「提交到」决定提交后的任务组成新的实验分组，还是追加到已有的分组。\n- 提交后任务进入训练队列，显卡空闲时依次开始；进度显示在列表下方。\n\n## 限制\n待启动列表只保存在当前浏览器中，换用其他浏览器或清除浏览器数据后不保留。"
+      "title": "多任务对比",
+      "summary": "勾选多个已有的训练任务，在同一界面叠加对比训练与逐帧曲线、关键帧与验证序列指标，并同步检视序列输出与帧间变化热力图。",
+      "body": "## 作用\n在左侧勾选任意多个训练任务后，右侧同时展示：\n- **曲线对比**：叠加各任务的 Loss、Val MSE 以及验证序列上的逐帧 HFI、逐帧修改层变化（ΔR）。\n- **评测指标**：并排对比关键帧拟合指标与验证序列稳定性指标，自动计算相对基准任务的差值（Δ）。\n- **序列同步检视器**：同步缩放、平移和逐帧播放各任务的推理结果与帧间变化热力图（×12）。\n\n开启「训练结束后自动推理验证序列」（见 [[doc:infer_on_finish]]）的任务在训练完成时已生成评测数据，勾选后即可直接查看；也可点击「开始评测」或「重新测量」计算指定检查点或数据集的结果。\n\n## 何时使用\n比较不同模型架构、场景预设、高级参数或不同训练步数在同一镜头上的表现。\n\n## 限制\n互相比较的任务建议使用相同的数据集和相同的 Epochs，否则差异不只来自被比较的设置。临时用户不能使用对比功能。"
     },
     "lab_compare_tasks": {
       "title": "对比的任务",
-      "summary": "勾选要对比的训练任务；任务按实验分组列出，可以跨组勾选，也可以整组勾选。",
-      "body": "## 作用\n- 勾选的任务显示在右侧的曲线、指标表和序列检视器中，每个任务以一种颜色标识。\n- 「单看本组」只勾选这一组，并以组内使用 Nuke CopyCat 默认设置的任务为对比基准（没有时用第一个任务）。\n- 「实验」页提交的任务按实验分组排列；单独创建的训练任务列在「未分组」中，同样可以勾选。\n- 任务可以移到其他分组或在组内调整顺序；分组可以新建、重命名、调整顺序或解散，解散后任务归入「未分组」。\n- 列表可以按手动顺序、关键帧 PSNR、HFI 或 Val MSE 排序。"
+      "summary": "勾选要对比的训练任务；任务可按分组整理，支持跨组勾选或整组一键对比。",
+      "body": "## 作用\n- 勾选的任务显示在右侧的曲线、指标表和序列检视器中，每个任务以一种颜色标识。\n- 「单看本组」只勾选这一组，并以组内使用 Nuke CopyCat 默认设置的任务为对比基准（没有时用第一个任务）。\n- 新创建的训练任务默认列在「未分组」中，可随时移入自定义分组便于整理；分组可以新建、重命名、调整顺序或解散（解散后任务保留并归入「未分组」）。\n- 列表可以按手动顺序、关键帧 PSNR、HFI 或 Val MSE 排序。"
     },
     "lab_compare_baseline": {
       "title": "对比基准（Δ）",
@@ -1505,18 +1522,18 @@
     },
     "lab_eval": {
       "title": "关键帧与验证序列评测",
-      "summary": "用每个勾选任务的检查点重新推理关键帧和验证序列，测量指标表中的数值，并生成序列检视器的画面。",
-      "body": "## 作用\n- **关键帧指标**：推理每个任务训练用的关键帧，与目标（Ground Truth）比较，得到关键帧 PSNR、边缘梯度误差、未修改区域偏移和 P99 误差。\n- **验证序列指标**：有验证序列时逐帧推理整条序列，得到修改层帧间变化、HFI 和静止区域闪动，并保存每一帧的结果和热力图。验证序列没有真值，这些指标描述结果在时间上的稳定性，而不是准确度。\n\n已经测量过的任务直接显示已有结果；「重新测量」会重新计算。\n\n## 要求\n任务需要至少一个已保存的检查点。没有验证序列时只测量关键帧指标，逐帧曲线、验证序列指标和检视器不可用；可以为数据集补充验证序列，或在「评测数据集与验证序列」中选择其他带验证序列的数据集。\n\n## 限制\n关键帧是训练用的帧，关键帧指标反映拟合程度，不代表中间帧的效果。启用关键帧共性的任务以原始关键帧为目标测量，训练前被改写的局部会计为误差。"
+      "summary": "用每个勾选任务的检查点推理关键帧和验证序列，计算指标表中的数值，并生成序列检视器的结果图与帧间变化热力图。",
+      "body": "## 作用\n- **关键帧指标**：推理每个任务训练用的关键帧，与目标（Ground Truth）比较，得到关键帧 PSNR、边缘梯度误差、未修改区域偏移和 P99 误差。\n- **验证序列指标**：逐帧推理整条验证序列，得到修改层帧间变化、HFI 和静止区域闪动，并保存每一帧的结果图和帧间变化热力图（×12）。验证序列没有真值，这些指标描述结果在时间上的稳定性。\n\n已经生成过评测结果的任务（包括开启 [[doc:infer_on_finish]] 自动完成的任务）直接显示已有数据；点击「重新测量」可强制重新计算。\n\n## 要求\n任务需要至少一个已保存的检查点。\n\n## 限制\n关键帧是训练用的帧，关键帧指标反映拟合程度，不代表中间帧的效果。启用关键帧共性的任务以原始关键帧为目标测量，训练前被改写的局部会计为误差。"
     },
     "lab_eval_dataset": {
       "title": "评测数据集与验证序列",
-      "summary": "选择在哪一条验证序列上评测勾选的任务，默认跟随所选任务的训练数据集。关键帧指标始终在每个任务自己的关键帧上测量。",
-      "body": "- **跟随所选任务的数据集**（推荐）：使用勾选任务的训练数据集所带的验证序列；勾选的任务来自不同数据集时，使用其中第一个能识别的数据集。\n- **指定数据集**：所有勾选的任务都在这个数据集的验证序列上推理。可以选择带验证序列的数据集，也可以选择单独上传的评测序列（只有原始素材，没有关键帧）。\n\n这里的选择不影响关键帧指标。"
+      "summary": "选择在哪一条验证序列上评测勾选的任务，默认跟随每个任务各自的训练数据集。关键帧指标始终在每个任务自己的关键帧上测量。",
+      "body": "- **跟随所选任务的数据集**（推荐）：每个勾选任务使用各自训练数据集所带的验证序列，不同数据集的任务也能各自显示完整的序列指标。\n- **指定数据集**：所有勾选的任务统一在指定数据集的验证序列上推理。\n\n这里的选择不影响关键帧指标。"
     },
     "lab_eval_weights": {
       "title": "评测检查点",
-      "summary": "评测每个任务时使用哪一个检查点：Val MSE 最低的检查点，或最新保存的检查点。",
-      "body": "- **Val MSE 最低**：训练过程中 [[doc:metric_val_mse]] 最低的那一步（默认）。\n- **最新**：最后保存的检查点；任务完整训练结束时就是最后一步。\n\n完整训练结束的任务，最后一步通常就是效果最好的检查点；比较最终交付的模型时选「最新」。指标表的「检查点步数」列显示实际使用的步数。"
+      "summary": "评测每个任务时使用哪一个检查点：最新保存的检查点（默认），或训练期间 Val MSE 最低的检查点。",
+      "body": "- **最新**（默认）：最后保存的检查点；任务完整训练结束时就是最后一步，与 [[doc:infer_on_finish]] 自动推理使用的检查点一致。\n- **Val MSE 最低**：训练过程中 [[doc:metric_val_mse]] 最低的那一步。\n\n完整训练结束的任务，最后一步通常就是最终交付的模型。指标表的「检查点步数」列显示实际使用的步数。"
     },
     "lab_chart": {
       "title": "曲线对比",
@@ -1585,8 +1602,8 @@
     },
     "dataset_overview": {
       "title": "数据集",
-      "summary": "训练所用的关键帧集合：每张关键帧由输入图（Input）和美术制作的目标图（Ground Truth）组成，可附带镜头的验证序列。",
-      "body": "## Nuke CopyCat 中的对应\n相当于接到 CopyCat 节点 **Input** 与 **Ground Truth** 两个输入端的成对图像。\n\n## 作用\n数据集包含：\n- **关键帧输入（Input）**：从镜头中选出的原始帧。\n- **关键帧目标（Ground Truth）**：同一帧的制作结果，与输入一一对应、分辨率相同。见 [[doc:dataset_keyframes]]。\n- **验证序列（可选）**：镜头的完整原始素材，不参与训练。见 [[doc:dataset_validation_sequence]]。\n\n上传的图像按手动指定的输入色彩空间统一转换并保存为 ACEScg 线性、16 位半浮点 EXR，保留原始文件帧编号。数据集页可逐帧查看关键帧和验证序列。\n\n## 何时使用\n每个训练任务使用一个数据集；同一数据集可以反复用于训练和实验对比。"
+      "summary": "训练所用的关键帧与验证序列集合：包含成对的关键帧（输入 Input 与目标 Ground Truth）以及镜头的完整验证序列。",
+      "body": "## Nuke CopyCat 中的对应\n关键帧对应接到 CopyCat 节点 **Input** 与 **Ground Truth** 两个输入端的成对图像；验证序列对应接在 Inference 节点上的整段镜头原片。\n\n## 作用\n新建数据集时必须同时提供三部分素材：\n- **关键帧输入（Input）**：从镜头中选出的原始帧。\n- **关键帧目标（Ground Truth）**：同一帧的制作结果，与输入一一对应、分辨率相同。见 [[doc:dataset_keyframes]]。\n- **验证序列（必填，至少 2 帧）**：镜头的完整原始素材，不参与训练，用于训练质量监测、训练结束自动推理与对比页序列评测。见 [[doc:dataset_validation_sequence]]。\n\n上传的图像按手动指定的输入色彩空间统一转换并保存为 ACEScg 线性、16 位半浮点 EXR，保留原始文件帧编号。数据集页可逐帧查看关键帧和验证序列。\n\n## 何时使用\n每个训练任务使用一个数据集；同一数据集可以反复用于训练和多任务对比。"
     },
     "dataset_keyframes": {
       "title": "关键帧（Input / Ground Truth）",
@@ -1595,8 +1612,8 @@
     },
     "dataset_validation_sequence": {
       "title": "验证序列",
-      "summary": "随数据集保存的镜头完整原始素材。不参与训练，用于中间帧的训练质量监测、关键帧共性和实验页的序列评测。",
-      "body": "## 作用\n带验证序列的数据集可以使用：\n- 任务页的「训练质量（中间帧）」；\n- 高级参数「关键帧共性」；\n- 实验页的整条序列推理与序列指标。\n\n## 要求\n- 分辨率与关键帧相同，至少 2 帧，按文件名顺序排列。\n- 关键帧共性还要求每张关键帧的输入图就是验证序列中的某一帧，且模型为 RGB → RGB。\n\n## 何时使用\n有完整镜头素材时建议上传。可在新建数据集时一起上传，也可以之后在数据集页添加、更换或移除；关键帧不受影响。\n\n## 限制\n验证序列不参与训练，不影响训练出的模型。"
+      "summary": "随数据集保存的镜头完整原始素材，新建数据集时为必填项（至少 2 帧）。不参与训练，用于中间帧质量监测、关键帧共性、训练结束自动推理与对比评测。",
+      "body": "## 作用\n验证序列用于：\n- 训练结束时自动用最后一个检查点推理无损 EXR 序列并生成对比指标与帧间变化热力图（见 [[doc:infer_on_finish]]）；\n- 任务页的「训练质量（中间帧）」监测；\n- 高级参数「关键帧共性」与工具页「关键帧检测」；\n- 对比页的逐帧曲线与序列同步检视器。\n\n## 要求\n- 新建数据集时必须上传验证序列，分辨率与关键帧相同，至少 2 帧，保留原文件帧编号。\n- 之后可在数据集页随时更换验证序列；关键帧不受影响。\n- 关键帧共性与关键帧检测还要求每张关键帧的输入图是验证序列中的某一帧，且模型为 RGB → RGB。\n\n## 限制\n验证序列不参与训练梯度更新，不改变训练过程。"
     },
     "dataset_input_colorspace": {
       "title": "输入色彩空间",
@@ -1645,8 +1662,8 @@
     },
     "admin_temp_restrictions": {
       "title": "临时用户限制",
-      "summary": "开启时，未获授权的账号作为临时用户使用，受任务数、Epochs 和上传大小/数量限制，不能使用实验和 API；关闭时所有用户不受限制。",
-      "body": "## 作用\n访问者无需注册，首次打开页面时自动获得一个工作空间。开启限制后，除管理员和同时拥有「实验」与「API」权限的用户外，其他用户均为临时用户：\n- 同时进行的任务数（排队中 + 训练中）和每个任务的 Epochs 受限，见 [[doc:admin_default_quotas]]；\n- 上传与存储受限：单次上传不超过 512 MB、单文件不超过 128 MB、每组最多 300 帧，自定义数据集数量（进行中任务上限的 2 倍，至少 4 个）和总容量（2 GB）受限，见 [[doc:dataset_files]]；\n- 不能使用实验和 API Key，除非在用户列表中单独开通。\n\n开启限制时，除管理员外每个用户同时训练的任务数也有上限，见 [[doc:admin_max_running_per_user]]。\n\n点击「关闭临时用户限制」后，所有用户可以使用全部功能，并同时解除 512 MB 单次上传上限、单文件大小、帧数、任务配额及并发训练数上限。\n\n## 何时使用\n对外开放服务时开启；团队内部生产环境建议一键关闭。"
+      "summary": "开启时，未获授权的账号作为临时用户使用，受任务数、Epochs 和上传大小/数量限制，不能使用对比和 API；关闭时所有用户不受限制。",
+      "body": "## 作用\n访问者无需注册，首次打开页面时自动获得一个工作空间。开启限制后，除管理员和同时拥有「对比」与「API」权限的用户外，其他用户均为临时用户：\n- 同时进行的任务数（排队中 + 训练中）和每个任务的 Epochs 受限，见 [[doc:admin_default_quotas]]；\n- 上传与存储受限：单次上传不超过 512 MB、单文件不超过 128 MB、每组最多 300 帧，自定义数据集数量（进行中任务上限的 2 倍，至少 4 个）和总容量（2 GB）受限，见 [[doc:dataset_files]]；\n- 不能使用对比页和 API Key，除非在用户列表中单独开通。\n\n开启限制时，除管理员外每个用户同时训练的任务数也有上限，见 [[doc:admin_max_running_per_user]]。\n\n点击「关闭临时用户限制」后，所有用户可以使用全部功能，并同时解除 512 MB 单次上传上限、单文件大小、帧数、任务配额及并发训练数上限。\n\n## 何时使用\n对外开放服务时开启；团队内部生产环境建议一键关闭。"
     },
     "admin_default_quotas": {
       "title": "临时用户默认配额",
@@ -1680,13 +1697,13 @@
     },
     "admin_user_permissions": {
       "title": "功能权限",
-      "summary": "为单个用户开通实验与 API 功能。同时拥有两项权限的用户不受临时用户限制。",
-      "body": "## 作用\n- **实验**：使用实验页，包括对照组合、批量训练和结果对比。\n- **API**：使用 API Key 调用 /api/v1 接口，见 [[doc:api_key]]。\n\n关闭临时用户限制时，所有用户均可使用全部功能，列表中显示「限制已关闭」。"
+      "summary": "为单个用户开通多任务对比与 API 功能。同时拥有两项权限的用户不受临时用户限制。",
+      "body": "## 作用\n- **对比**：使用对比页，勾选多个训练任务对比曲线、评测指标和序列画面。\n- **API**：使用 API Key 调用 /api/v1 接口，见 [[doc:api_key]]。\n\n关闭临时用户限制时，所有用户均可使用全部功能，列表中显示「限制已关闭」。"
     },
     "tool_infer_seq": {
       "title": "单帧与序列推理",
-      "summary": "使用已训练保存检查点的任务模型，支持单帧快速推理查看效果，或对整段验证序列逐帧推理并存盘到缓存目录下的 infer/ 文件夹。",
-      "body": "## 作用\n选择一个已训练保存检查点的模型，可在「推理单帧」模式下快速测试单帧效果，或在「推理整条序列」模式下逐帧渲染整段验证序列。输出结果自动存盘在数据缓存目录的 `infer/<任务名>/` 下，支持并排对比预览、单帧下载与 ZIP 打包下载。\n\n## 要求\n- **模型必须已训练**：尚未保存任何检查点的任务不可选，后端接口同样拒绝调用。\n- **输入要求**：整条序列推理需要带验证序列的数据集；单帧推理可使用带验证序列的数据集，也可直接使用配对数据集的关键帧输入。\n\n## 关联设置\n- [[doc:tool_infer_dataset]]、[[doc:tool_infer_model]]、[[doc:tool_infer_step]]、[[doc:tool_infer_format]]。"
+      "summary": "使用已训练保存检查点的任务模型，支持单帧或整段验证序列无损 EXR 推理；共享统一 GPU 队列，推理优先级始终高于待运行训练任务。",
+      "body": "## 作用\n选择一个已训练保存检查点的模型，可在「单帧推理」模式下测试单帧效果，或在「序列推理」模式下逐帧渲染整段验证序列（同时自动更新「对比」页所需的序列指标与帧间变化热力图）。输出结果存盘在数据缓存目录的 `infer/<任务名>/` 下，支持并排对比预览、单帧下载与 ZIP 打包下载。\n\n## 显卡与队列优先级\n- **独占空闲显卡，避免显存冲突**：点击推理时自动检测空闲显卡；若当前显卡正在训练或推理，任务会自动进入队列等待，不会强行挤入忙碌显卡导致显存不足。\n- **高于训练优先级**：所有就绪推理任务的调度优先级始终高于排队中的训练任务；同时提交多个推理任务时，按提交先后顺序依次执行。\n\n## 要求\n- **模型必须已训练**：尚未保存任何检查点的任务不可选，后端接口同样拒绝调用。\n- **输入要求**：序列推理需要带验证序列的数据集；单帧推理可使用验证序列或关键帧输入。\n\n## 关联设置\n- [[doc:tool_infer_dataset]]、[[doc:tool_infer_model]]、[[doc:tool_infer_step]]、[[doc:tool_infer_format]]、[[doc:infer_on_finish]]。"
     },
     "tool_infer_dataset": {
       "title": "推理数据集（验证序列）",

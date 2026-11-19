@@ -184,6 +184,7 @@ def run_spec(spec_path: str) -> int:
         device = "cuda:0"
     else:
         device = "cpu"
+    gpu_label = str(spec.get("gpu_label") or device)
 
     # Production delivery sequence inference: strict IEEE 754 FP32 (no TF32 rounding, no AMP quantization)
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -191,11 +192,15 @@ def run_spec(spec_path: str) -> int:
 
     net, mo, ck_step, ck_cfg = _load_model_for_infer(ckpt_path, task_cfg, device, opt_nhwc=False)
     c_in = int(mo.get("in_channels", 3))
+    c_out = int(mo.get("out_channels", c_in))
     col = (task_cfg.get("color") or ck_cfg.get("color") or {})
     working_cs = col.get("working_colorspace", "ACEScg")
-    source_cs = col.get("source_colorspace") or working_cs
+    source_cs = spec.get("input_colorspace") or col.get("source_colorspace") or working_cs
     if source_cs == "auto":
         source_cs = working_cs
+    target_cs = col.get("target_colorspace") or working_cs
+    if target_cs == "auto":
+        target_cs = working_cs
     ocio_cfg = col.get("ocio_config", "")
     view_mode = col.get("view_transform", "ACES 1.0 - SDR Video")
 
@@ -208,9 +213,30 @@ def run_spec(spec_path: str) -> int:
         fidx = max(0, min(len(files) - 1, int(raw_fidx)))
         files = [files[fidx]]
 
+    resolved_step = int(spec.get("ckpt_step") or ck_step)
     total = len(files)
     t0 = time.time()
-    _atomic_json(prog_path, {"done": 0, "total": total, "fps": 0.0, "device": device, "step": int(spec.get("ckpt_step") or ck_step)})
+    _atomic_json(prog_path, {"done": 0, "total": total, "fps": 0.0, "device": gpu_label, "step": resolved_step})
+
+    eval_collector = None
+    eval_spec = spec.get("eval_spec") if isinstance(spec.get("eval_spec"), dict) else None
+    if eval_spec and eval_spec.get("eval_out_dir") and raw_fidx is None and total >= 2:
+        from wildcat import evaluator as _evaluator
+
+        eval_collector = _evaluator.SequenceEvalCollector(
+            eval_out_dir=str(eval_spec["eval_out_dir"]),
+            eval_key=str(eval_spec.get("eval_key") or f"step{resolved_step}"),
+            ckpt_step=resolved_step,
+            ckpt_file=os.path.basename(ckpt_path),
+            c_in=c_in,
+            c_out=c_out,
+            working_cs=working_cs,
+            ocio_cfg=ocio_cfg,
+            eval_asset_id=eval_spec.get("eval_asset_id"),
+            eval_asset_name=str(eval_spec.get("eval_asset_name") or ""),
+            ckpt_mode=str(eval_spec.get("ckpt_mode") or "latest"),
+            device_label=gpu_label,
+        )
 
     write_exr = out_fmt in ("exr", "exr_half", "exr_float")
     exr_depth = "float" if out_fmt == "exr_float" else "half"
@@ -222,8 +248,12 @@ def run_spec(spec_path: str) -> int:
         im = _read(path, input_colorspace=source_cs, working_colorspace=working_cs, ocio_config_path=ocio_cfg, is_data_pass=(c_in == 1))
         im = _match_channels(im, c_in)
         x = torch.from_numpy(im).permute(2, 0, 1)[None].to(device)
-        y = infer_image(net, x, amp_dtype=None, channels_last=False)[0].permute(1, 2, 0).cpu().numpy()
+        y_raw = infer_image(net, x, amp_dtype=None, channels_last=False)[0].permute(1, 2, 0).cpu().numpy()
 
+        if eval_collector is not None:
+            eval_collector.add_frame(idx - 1, path, im, y_raw)
+
+        y = y_raw
         if not write_exr and y.shape[2] >= 3 and working_cs != "Raw":
             rgb_disp = color.acescg_to_display_srgb(y[..., :3], src_space=working_cs, view_mode=view_mode, ocio_config_path=ocio_cfg)
             if y.shape[2] >= 4:
@@ -243,11 +273,27 @@ def run_spec(spec_path: str) -> int:
                 "total": total,
                 "fps": round(idx / dt, 2),
                 "seconds": round(dt, 2),
-                "device": device,
+                "device": gpu_label,
                 "width": int(y.shape[1]),
                 "height": int(y.shape[0]),
                 "out_channels": int(y.shape[2]),
             },
+        )
+
+    if eval_collector is not None:
+        if stop["flag"] or (cancel_path and os.path.exists(cancel_path)):
+            return 130
+        eval_collector.finalize(
+            sup_source_dir=str(eval_spec.get("sup_source_dir") or ""),
+            sup_target_dir=str(eval_spec.get("sup_target_dir") or ""),
+            source_cs=str(col.get("source_colorspace") or working_cs),
+            target_cs=target_cs,
+            infer_fn=lambda arr: infer_image(
+                net,
+                torch.from_numpy(np.ascontiguousarray(arr, dtype=np.float32)).permute(2, 0, 1)[None].to(device),
+                amp_dtype=None,
+                channels_last=False,
+            )[0].permute(1, 2, 0).cpu().numpy(),
         )
     return 0
 

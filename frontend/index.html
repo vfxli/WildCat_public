@@ -10,7 +10,7 @@
   </style>
   <script src="/static/vendor/tailwind.min.js"></script>
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css?v=20261113_noclk1" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261119_v310" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261119_v311" />
 </head>
 <body class="bg-[#0b1120] text-slate-100 min-h-screen select-none">
   <div id="app" v-cloak>
@@ -65,10 +65,6 @@
                     :class="topNav === 'lab' ? 'bg-violet-600 text-white shadow' : 'text-violet-300/90 hover:text-violet-200'">
               <span>{{ t('header.navLab') }}</span>
               <span v-if="user && !canUseLab" class="text-[10px] opacity-80">🔒</span>
-              <span v-if="labStaged.length"
-                    class="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px] wc-mono leading-tight">
-                {{ labStaged.length }}
-              </span>
             </button>
             <button @click="topNav = 'assets'"
                     class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap shrink-0"
@@ -131,7 +127,8 @@
                       class="px-1 py-0.2 rounded bg-sky-500/20 border border-sky-500/40 text-[10px] font-bold text-sky-300 leading-tight">{{ t('header.gpuRoleSecondaryShort') }}</span>
                 <span class="text-slate-500">:</span>
                 <span v-if="g.busy && g.task" class="flex items-center gap-1 min-w-0 text-emerald-300 wc-mono"
-                      :title="g.task.node_name + ' ' + t('header.gpuRemain', { pct: g.task.progress_pct, eta: formatEta(g.task.estimated_remaining_sec) })">
+                      :title="(g.task.job_type === 'infer' ? '[' + t('header.gpuInferTag') + '] ' : '') + g.task.node_name + ' ' + t('header.gpuRemain', { pct: g.task.progress_pct, eta: formatEta(g.task.estimated_remaining_sec) })">
+                  <span v-if="g.task.job_type === 'infer'" class="px-1 py-0.2 rounded bg-cyan-500/20 border border-cyan-500/40 text-[10px] font-bold text-cyan-300 leading-tight shrink-0">{{ t('header.gpuInferTag') }}</span>
                   <span class="truncate max-w-[10rem]">{{ g.task.node_name }}</span>
                   <span class="text-slate-400 text-[11px] shrink-0">{{ t('header.gpuRemain', { pct: g.task.progress_pct, eta: formatEta(g.task.estimated_remaining_sec) }) }}</span>
                 </span>
@@ -187,37 +184,19 @@
       <!-- ═════════════════════ MODULE 1 & 1B: STUDIO + EXPERIMENT LAB (SHARED ZERO-REDUNDANCY WORKSPACE) ═════════════════════ -->
       <div v-if="topNav === 'studio' || topNav === 'lab'" class="flex-1 flex flex-col overflow-hidden">
 
-        <!-- Experiment Lab Sub-Navigation Bar (Two Dedicated Sub-Pages: ① Plan & Batch Queue | ② Results & Sequence Flicker) -->
+        <!-- Multi-Task Comparison Workbench Header Bar -->
         <div v-if="topNav === 'lab'"
-             class="bg-slate-900/95 border-b border-slate-800 px-5 py-2 flex flex-wrap items-center justify-between gap-3 shrink-0">
+             class="bg-slate-900/95 border-b border-slate-800 px-5 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div class="flex items-center gap-2">
-            <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-              <button @click="labMode = 'plan'"
-                      class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
-                      :class="labMode === 'plan' ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
-                <span>{{ t('lab.subPlan') }}</span>
-                <span v-if="labStaged.length"
-                      class="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] wc-mono">
-                  {{ labStaged.length }}
-                </span>
-              </button>
-              <button @click="labMode = 'analyze'"
-                      class="px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
-                      :class="labMode === 'analyze' ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
-                <span>{{ t('lab.subAnalyze') }}</span>
-                <span v-if="labSelectedTaskIds.length"
-                      class="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] wc-mono">
-                  {{ labSelectedTaskIds.length }}
-                </span>
-              </button>
-            </div>
+            <h2 class="text-sm font-bold text-white">{{ t('lab.workbenchTitle') }}</h2>
+            <span v-if="labSelectedTaskIds.length"
+                  class="px-2 py-0.5 rounded-full bg-violet-500/20 border border-violet-500/40 text-[11px] font-bold text-violet-200 wc-mono">
+              {{ labSelectedTaskIds.length }}
+            </span>
             <help-tip doc="lab_overview"></help-tip>
           </div>
 
           <div class="flex items-center gap-3 text-[11px] text-slate-400 wc-mono">
-            <span v-if="labBatchStats.total > 0" class="text-violet-300">
-              {{ t('lab.batchMonitorTitle', { done: labBatchStats.done, total: labBatchStats.total }) }}
-            </span>
             <span v-if="labCompare.eval_runner.busy" class="text-emerald-300 animate-pulse">
               ● {{ t('lab.evalProgressFmt', {
                 node: labCompare.eval_runner.current_node || '...',
@@ -320,319 +299,8 @@
             </div>
           </aside>
 
-          <!-- ── Left Sidebar B: Lab Plan — Grouped Staged Parameter Lists & Live Batch Progress ── -->
-          <aside v-else-if="topNav === 'lab' && labMode === 'plan'" class="w-96 bg-slate-900/90 border-r border-slate-800 flex flex-col shrink-0">
-            <div class="p-3.5 border-b border-slate-800 space-y-2.5">
-              <div class="flex items-center justify-between gap-2">
-                <h3 class="text-xs font-bold text-white">
-                  {{ t('lab.stagedGroupsTitle', { groups: labStagedGroups.length, count: labTotalStagedCount }) }}<help-tip doc="lab_staged_groups"></help-tip>
-                </h3>
-                <div class="flex items-center gap-2 text-[11px] shrink-0">
-                  <button @click="addNewLabStagedGroup()"
-                          type="button"
-                          class="text-violet-300 hover:text-white font-semibold transition-colors">
-                    {{ t('lab.newStagedGroupBtn') }}
-                  </button>
-                  <button v-if="labTotalStagedCount > 0"
-                          @click="clearLabStaged"
-                          type="button"
-                          class="text-slate-400 hover:text-rose-300 transition-colors">
-                    {{ t('lab.clearListBtn') }}
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="labStagedGroups.length > 1" class="flex items-center gap-2 text-[11px]">
-                <span class="text-slate-400 shrink-0">{{ t('lab.activeStagedGroupLabel') }}:</span>
-                <select v-model="labActiveStagedGroupId" class="wc-select !py-1 !px-2 text-xs flex-1 wc-mono">
-                  <option v-for="(sg, sgIdx) in labStagedGroups" :key="'sel-sg-' + sg.gid" :value="sg.gid">
-                    {{ sg.name || t('lab.defaultStagedGroupFmt', { idx: sgIdx + 1 }) }} ({{ sg.items.length }})
-                  </option>
-                </select>
-              </div>
-
-              <div class="grid grid-cols-2 gap-2">
-                <button @click="addNukeBaselineToLabList"
-                        :disabled="!canUseLab"
-                        type="button"
-                        class="py-2 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed border border-slate-700 text-[11px] font-semibold text-emerald-300 transition-all">
-                  {{ t('lab.addBaselineBtn') }}
-                </button>
-                <button @click="addCurrentToLabList"
-                        :disabled="!canUseLab"
-                        type="button"
-                        class="py-2 px-2.5 rounded-xl bg-violet-600/25 hover:bg-violet-600 disabled:opacity-45 disabled:cursor-not-allowed border border-violet-500/40 text-[11px] font-bold text-violet-200 hover:text-white transition-all">
-                  {{ t('lab.addToListBtn') }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Staged Group Cards (One Group = One List) + Submitted Group Monitor -->
-            <div class="flex-1 overflow-y-auto p-3 space-y-3">
-              <div v-for="(sgrp, sgIdx) in labStagedGroups" :key="sgrp.gid"
-                   @click="labActiveStagedGroupId = sgrp.gid"
-                   class="rounded-xl border overflow-hidden transition-all"
-                   :class="labActiveStagedGroupId === sgrp.gid
-                     ? 'bg-slate-950/80 border-violet-500/55 shadow-md shadow-violet-950/30'
-                     : 'bg-slate-950/45 border-slate-800 hover:border-slate-700'">
-
-                <!-- Staged Group Header -->
-                <div class="px-2.5 py-2 bg-slate-950/95 border-b border-slate-800/80 flex items-center justify-between gap-1.5" @click.stop>
-                  <div class="flex items-center gap-1.5 flex-1 min-w-0">
-                    <button @click="sgrp.collapsed = !sgrp.collapsed"
-                            type="button"
-                            class="text-slate-400 hover:text-white text-xs w-4 text-center shrink-0">
-                      {{ sgrp.collapsed ? '▸' : '▾' }}
-                    </button>
-                    <input v-model="sgrp.name"
-                           @focus="labActiveStagedGroupId = sgrp.gid"
-                           type="text"
-                           class="wc-input wc-input-xs !px-2 !py-1 text-xs wc-mono font-bold text-white flex-1 min-w-0"
-                           :placeholder="t('lab.batchNamePlaceholder')" />
-                    <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 wc-mono shrink-0">
-                      {{ sgrp.items.length }}
-                    </span>
-                    <help-tip doc="lab_group_name"></help-tip>
-                  </div>
-
-                  <div class="flex items-center gap-1 shrink-0">
-                    <template v-if="labStagedGroups.length > 1">
-                      <span v-if="labActiveStagedGroupId === sgrp.gid"
-                            class="px-1.5 py-0.5 rounded bg-violet-500/20 border border-violet-500/40 text-[10px] font-bold text-violet-200">
-                        {{ t('lab.activeStagedBadge') }}
-                      </span>
-                      <button v-else
-                              @click="labActiveStagedGroupId = sgrp.gid"
-                              type="button"
-                              class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-400 hover:text-white">
-                        {{ t('lab.setStagedActiveBtn') }}
-                      </button>
-                      <button @click="moveLabStagedGroupOrder(sgIdx, -1)"
-                              :disabled="sgIdx === 0"
-                              :title="t('lab.moveGroupUpTip')"
-                              type="button"
-                              class="px-1 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-400 hover:text-white disabled:opacity-30">
-                        ↑
-                      </button>
-                      <button @click="moveLabStagedGroupOrder(sgIdx, 1)"
-                              :disabled="sgIdx === labStagedGroups.length - 1"
-                              :title="t('lab.moveGroupDownTip')"
-                              type="button"
-                              class="px-1 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-400 hover:text-white disabled:opacity-30">
-                        ↓
-                      </button>
-                    </template>
-                    <button v-if="labStagedGroups.length > 1 || sgrp.items.length > 0"
-                            @click="removeLabStagedGroup(sgrp.gid)"
-                            :title="t('lab.deleteStagedGroupTip')"
-                            type="button"
-                            class="text-slate-500 hover:text-rose-400 text-xs px-1">
-                      ✕
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Staged Group List Body -->
-                <div v-show="!sgrp.collapsed" class="p-2.5 space-y-2">
-                  <div v-if="!sgrp.items.length"
-                       class="text-center py-5 px-3 rounded-lg border border-dashed border-slate-800 text-[11px] text-slate-500 leading-relaxed">
-                    {{ t('lab.emptyStagedGroupHint') }}
-                  </div>
-
-                  <div v-for="(item, idx) in sgrp.items" :key="item.uid"
-                       class="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-violet-500/40 space-y-2 transition-all">
-                    <div class="flex items-center justify-between gap-1.5">
-                      <div class="flex items-center gap-1.5 flex-1 min-w-0">
-                        <span class="px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300 text-[10px] font-bold wc-mono shrink-0">#{{ idx + 1 }}</span>
-                        <input v-model="item.node_name"
-                               type="text"
-                               class="wc-input wc-input-xs !px-2 text-xs wc-mono font-bold text-white flex-1 min-w-0" />
-                      </div>
-                      <div class="flex items-center gap-0.5 shrink-0" @click.stop>
-                        <button @click="moveLabStagedItemOrder(sgrp.gid, idx, -1)"
-                                :disabled="idx === 0"
-                                :title="t('lab.moveTaskUpTip')"
-                                type="button"
-                                class="px-1 py-0.5 rounded bg-slate-950 hover:bg-slate-800 text-[10px] text-slate-400 hover:text-white disabled:opacity-30">
-                          ↑
-                        </button>
-                        <button @click="moveLabStagedItemOrder(sgrp.gid, idx, 1)"
-                                :disabled="idx === sgrp.items.length - 1"
-                                :title="t('lab.moveTaskDownTip')"
-                                type="button"
-                                class="px-1 py-0.5 rounded bg-slate-950 hover:bg-slate-800 text-[10px] text-slate-400 hover:text-white disabled:opacity-30">
-                          ↓
-                        </button>
-                        <button @click="removeLabStaged(item.uid)"
-                                :title="t('lab.removeItemTip')"
-                                type="button"
-                                class="text-slate-500 hover:text-rose-400 text-xs px-1">
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- Auto-extracted parameter diff tags -->
-                    <div class="flex flex-wrap items-center gap-1">
-                      <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-indigo-300 wc-mono">
-                        {{ (item.diff && item.diff.model_size) || 'Medium' }}
-                      </span>
-                      <span v-if="item.diff && item.diff.is_nuke_native"
-                            class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-semibold text-emerald-300 wc-mono">
-                        {{ t('lab.nukeNativeTag') }}
-                      </span>
-                      <template v-else-if="item.diff && item.diff.tags">
-                        <span v-for="tg in item.diff.tags" :key="tg"
-                              class="px-1.5 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-[10px] text-violet-200 wc-mono">
-                          {{ tg }}
-                        </span>
-                      </template>
-                    </div>
-
-                    <div class="flex items-center justify-between text-[10px] text-slate-400 wc-mono gap-1.5">
-                      <span class="truncate">{{ item.dataset_name }} · {{ item.config.train.total_steps }} st</span>
-                      <div class="flex items-center gap-1 shrink-0" @click.stop>
-                        <select v-if="labStagedGroups.length > 1"
-                                @change="moveLabStagedItemToGroup(sgrp.gid, item.uid, $event.target.value, $event.target)"
-                                class="bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-[10px] text-slate-300 max-w-[96px]">
-                          <option value="">{{ t('lab.moveStagedToGroupOpt') }}</option>
-                          <option v-for="(og, ogIdx) in labStagedGroups"
-                                  :key="'mv-sg-' + og.gid"
-                                  v-show="og.gid !== sgrp.gid"
-                                  :value="og.gid">
-                            → {{ og.name || t('lab.defaultStagedGroupFmt', { idx: ogIdx + 1 }) }}
-                          </option>
-                          <option value="__new__">{{ t('lab.newStagedGroupBtn') }}</option>
-                        </select>
-                        <button @click="loadStagedToForm(item)"
-                                type="button"
-                                class="px-2 py-0.5 rounded border shrink-0 transition-all"
-                                :class="editingStagedUid === item.uid
-                                  ? 'bg-amber-600/30 border-amber-400/60 text-amber-200 font-bold'
-                                  : 'bg-slate-800 hover:bg-slate-700 text-indigo-300 border-slate-700'">
-                          {{ editingStagedUid === item.uid ? t('lab.editingItemBadge') : t('lab.loadToFormBtn') }}
-                        </button>
-                      </div>
-                    </div>
-                    <div v-if="item.note" class="text-[11px] text-amber-300/90 truncate">
-                      📝 {{ item.note }}
-                    </div>
-                  </div>
-
-                  <!-- Per-Group Unified Epochs Adjuster, Target Selector & Launch Button -->
-                  <div class="pt-1 space-y-2" @click.stop>
-                    <div v-if="sgrp.items.length" class="flex items-center gap-1.5 text-[11px]">
-                      <label class="text-slate-400 shrink-0 inline-flex items-center">
-                        <span>{{ t('lab.groupEpochsQuickLabel') }}</span><help-tip doc="epochs"></help-tip>
-                      </label>
-                      <input v-model.number="sgrp.batchEpochs"
-                             type="number"
-                             min="1"
-                             step="10000"
-                             @keyup.enter="applyBatchEpochsToStagedGroup(sgrp.gid)"
-                             class="wc-input wc-input-xs wc-mono !py-1 !px-2 text-[11px] flex-1 min-w-0" />
-                      <button @click="applyBatchEpochsToStagedGroup(sgrp.gid)"
-                              type="button"
-                              class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-slate-700 text-[10px] font-bold shrink-0 transition-all">
-                        {{ t('lab.applyGroupEpochsBtn') }}
-                      </button>
-                    </div>
-                    <div v-if="sgrp.items.length && labNamedGroups.length" class="flex items-center gap-1.5 text-[11px]">
-                      <span class="text-slate-400 shrink-0 inline-flex items-center">{{ t('lab.submitTargetGroupLabel') }}<help-tip doc="lab_staged_groups"></help-tip></span>
-                      <select v-model="sgrp.targetBatchId" class="wc-select !py-1 !px-2 text-[11px] flex-1">
-                        <option value="">{{ t('lab.submitAsNewGroupOpt') }}</option>
-                        <option v-for="ng in labNamedGroups" :key="'sub-ng-' + ng.batch_id" :value="ng.batch_id">
-                          {{ t('lab.submitIntoExistingFmt', { name: ng.batch_name }) }}
-                        </option>
-                      </select>
-                    </div>
-                    <button @click="submitLabStagedGroup(sgrp.gid)"
-                            :disabled="!sgrp.items.length || labSubmitting || !canUseLab"
-                            type="button"
-                            class="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs shadow-lg shadow-violet-600/25 transition-all">
-                      {{ labSubmitting ? t('lab.submittingBatchBtn') : (sgrp.items.length ? t('lab.runGroupBtn', { count: sgrp.items.length }) : t('lab.runGroupEmptyBtn')) }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Launch All Staged Groups Button (shown when 2+ staged groups have items) -->
-              <button v-if="labNonEmptyStagedGroupsCount > 1"
-                      @click="submitAllLabStagedGroups"
-                      :disabled="labSubmitting || !canUseLab"
-                      type="button"
-                      class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 disabled:opacity-45 disabled:cursor-not-allowed text-white font-bold text-xs shadow-xl shadow-emerald-600/20 transition-all">
-                {{ labSubmitting ? t('lab.submittingBatchBtn') : t('lab.runAllStagedGroupsBtn', { count: labTotalStagedCount }) }}
-              </button>
-
-              <!-- Live Submitted Group Progress Monitor right inside Plan View -->
-              <div v-if="labBatchGroups.length" class="pt-3 border-t border-slate-800 space-y-2.5">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-[11px] font-bold text-violet-300">
-                    {{ t('lab.batchMonitorTitle', { done: labBatchStats.done, total: labBatchStats.total }) }}
-                  </span>
-                  <button @click="openBatchInAnalyze"
-                          type="button"
-                          class="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white text-[11px] font-bold border border-emerald-500/40 transition-all shrink-0">
-                    {{ t('lab.goAnalyzeBatchBtn') }}
-                  </button>
-                </div>
-
-                <!-- Switch between any submitted Experiment Group List -->
-                <div class="flex items-center gap-1.5 text-[11px]">
-                  <span class="text-slate-400 shrink-0">{{ t('lab.batchGroupSelectLabel') }}:</span>
-                  <select v-model="labActiveBatchId" class="wc-select !py-1 !px-2 text-xs flex-1">
-                    <option v-for="bg in labBatchGroups" :key="'mon-bg-' + bg.batch_id" :value="bg.batch_id">
-                      {{ bg.name }} ({{ bg.doneCount }}/{{ bg.allItems.length }})
-                    </option>
-                  </select>
-                </div>
-
-                <!-- Overall Batch Progress Bar -->
-                <div class="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                  <div class="h-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all duration-300"
-                       :style="{ width: (labBatchStats.total ? (labBatchStats.done / labBatchStats.total * 100) : 0) + '%' }"></div>
-                </div>
-
-                <div class="space-y-1.5">
-                  <div v-for="bt in labBatchTasks" :key="bt.id"
-                       class="p-2.5 rounded-xl bg-slate-950/75 border border-slate-800 space-y-1.5">
-                    <div class="flex items-center justify-between gap-2 text-xs">
-                      <span class="font-bold text-white wc-mono truncate">{{ bt.node_name }}</span>
-                      <div class="flex items-center gap-1.5 shrink-0">
-                        <span class="text-[10px] wc-mono px-1.5 py-0.5 rounded"
-                              :class="{
-                                'bg-emerald-500/20 text-emerald-300': bt.status === 'running',
-                                'bg-amber-500/20 text-amber-300': bt.status === 'queued',
-                                'bg-indigo-500/20 text-indigo-300': bt.status === 'completed',
-                                'bg-rose-500/20 text-rose-300': bt.status === 'failed',
-                                'bg-slate-800 text-slate-400': !['running','queued','completed','failed'].includes(bt.status)
-                              }">
-                          {{ statusBadgeText(bt) }}
-                        </span>
-                        <button @click="topNav = 'studio'; selectTaskForMonitor(bt)"
-                                class="text-[10px] text-indigo-300 hover:underline">
-                          {{ t('lab.inspectInStudioBtn') }}
-                        </button>
-                      </div>
-                    </div>
-                    <div class="flex items-center justify-between text-[10px] text-slate-400 wc-mono">
-                      <span>Step {{ bt.last_step || 0 }} / {{ bt.total_steps || 0 }} ({{ progressPct(bt) }}%)</span>
-                      <span v-if="bt.last_loss != null" class="text-amber-300">Loss: {{ bt.last_loss.toFixed(5) }}</span>
-                    </div>
-                    <div class="w-full h-1 bg-slate-900 rounded-full overflow-hidden">
-                      <div class="h-full transition-all duration-300"
-                           :class="bt.status === 'running' ? 'bg-emerald-400' : (bt.status === 'completed' ? 'bg-indigo-500' : 'bg-amber-400')"
-                           :style="{ width: progressPct(bt) + '%' }"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </aside>
-
-          <!-- ── Left Sidebar C: Lab Analyze — Grouped Experiment Lists & Manual Group Adjustment ── -->
-          <aside v-else-if="topNav === 'lab' && labMode === 'analyze'" class="w-96 bg-slate-900/90 border-r border-slate-800 flex flex-col shrink-0">
+          <!-- ── Left Sidebar B: Multi-Task Comparison — Grouped Task Lists & Manual Group Organization ── -->
+          <aside v-else-if="topNav === 'lab'" class="w-96 bg-slate-900/90 border-r border-slate-800 flex flex-col shrink-0">
             <div class="p-3.5 border-b border-slate-800 space-y-2">
               <div class="flex items-center justify-between gap-2">
                 <h3 class="text-xs font-bold text-white">
@@ -977,12 +645,12 @@
           <!-- ── Right Main Stage: [Shared Configurator] OR [Studio Monitor] OR [Lab Multi-Run Analyzer] ── -->
           <main class="flex-1 overflow-y-auto p-6 bg-[#0b1120]">
 
-            <!-- ══════════ SHARED STAGE A: ZERO-REDUNDANCY PARAMETER CONFIGURATOR (STUDIO CREATE + LAB PLAN) ══════════ -->
-            <div v-if="(topNav === 'studio' && workspaceReady && studioMode === 'create') || (topNav === 'lab' && labMode === 'plan')"
+            <!-- ══════════ STUDIO STAGE A: PARAMETER CONFIGURATOR (CREATE TRAINING TASK) ══════════ -->
+            <div v-if="topNav === 'studio' && workspaceReady && studioMode === 'create'"
                  class="max-w-5xl mx-auto space-y-6">
 
-              <!-- Contextual Header (Studio Wizard Only) -->
-              <div v-if="topNav === 'studio'" class="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <!-- Contextual Header -->
+              <div class="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl p-5">
                 <div>
                   <h2 class="text-base font-bold text-white">{{ t('wizard.title') }}</h2>
                 </div>
@@ -991,27 +659,6 @@
                   {{ t('wizard.backToMonitor') }}
                 </button>
               </div>
-
-                <!-- Active Staged-Item Edit Banner (when user clicked Edit on a staged item in Left Sidebar) -->
-                <div v-if="topNav === 'lab' && editingStagedItem"
-                     class="bg-amber-950/35 border border-amber-500/50 rounded-2xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
-                  <div class="text-xs text-amber-100">
-                    <span class="font-bold">{{ t('lab.editingBannerTitle', { name: editingStagedItem.node_name }) }}</span>
-                    <span class="text-amber-200/85 ml-2">{{ t('lab.editingBannerDesc') }}</span>
-                  </div>
-                  <div class="flex items-center gap-2 shrink-0">
-                    <button type="button"
-                            @click="cancelEditStagedItem"
-                            class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold">
-                      {{ t('lab.cancelBtn') }}
-                    </button>
-                    <button type="button"
-                            @click="saveEditedStagedItem"
-                            class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow">
-                      {{ t('lab.saveEditedStagedBtn') }}
-                    </button>
-                  </div>
-                </div>
 
               <!-- STEP 1: Task Name & Single Paired Dataset Selection -->
               <section class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5">
@@ -1122,10 +769,6 @@
                       <span v-if="selectedDataset.has_eval_sequence"
                             class="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/35 text-[11px] font-semibold text-emerald-300 wc-mono">
                         ✓ {{ t('wizard.datasetHasSeqBadge', { frames: selectedDataset.seq_frame_count }) }}
-                      </span>
-                      <span v-else
-                            class="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-400 wc-mono">
-                        {{ t('wizard.datasetNoSeqBadge') }}
                       </span>
                       <help-tip doc="dataset_validation_sequence"></help-tip>
                       <button type="button"
@@ -1553,6 +1196,27 @@
                     </label>
                   </div>
                 </div>
+
+                <!-- Post-Training Validation Sequence Inference (Default On · Final Checkpoint · Before Releasing GPU to Next Queued Task) -->
+                <label class="flex items-center justify-between gap-4 p-4 rounded-xl border transition select-none cursor-pointer"
+                       :class="form.infer_on_finish
+                         ? 'bg-indigo-950/25 border-indigo-500/35 hover:border-indigo-500/55'
+                         : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'">
+                  <div class="space-y-0.5 min-w-0">
+                    <div class="flex flex-wrap items-center gap-2 text-xs font-bold"
+                         :class="form.infer_on_finish ? 'text-indigo-200' : 'text-slate-300'">
+                      <span>{{ t('wizard.inferOnFinishTitle') }}<help-tip doc="infer_on_finish"></help-tip></span>
+                      <span class="px-2 py-0.5 rounded text-[10px] font-semibold wc-mono"
+                            :class="form.infer_on_finish ? 'bg-indigo-500/20 border border-indigo-500/40 text-indigo-300' : 'bg-slate-800 text-slate-400'">
+                        {{ form.infer_on_finish ? t('wizard.inferOnFinishOnBadge') : t('wizard.inferOnFinishOffBadge') }}
+                      </span>
+                    </div>
+                    <div class="text-[11px] text-slate-400 leading-relaxed">
+                      {{ t('wizard.inferOnFinishDesc') }}
+                    </div>
+                  </div>
+                  <input type="checkbox" v-model="form.infer_on_finish" class="wc-switch shrink-0" />
+                </label>
 
                 <!-- ═══════════════ ADVANCED HYPERPARAMETERS LAB (DEFAULT COLLAPSED · ALL OFF = 100% NUKE NATIVE) ═══════════════ -->
                 <div class="rounded-xl border transition-all overflow-hidden"
@@ -2114,7 +1778,7 @@
                   </div>
                 </div>
 
-                <!-- Contextual Primary Footer Bar (Studio Direct Launch vs Lab Add-to-List) -->
+                <!-- Primary Footer Bar (Studio Direct Launch) -->
                 <div class="pt-3 flex flex-wrap items-center justify-between gap-4 border-t border-slate-800">
                   <div class="space-y-1">
                     <div class="text-xs text-slate-400 wc-mono">
@@ -2129,70 +1793,23 @@
                         {{ activeEtaGpuProfile.is_tested ? t('wizard.etaBasisTested', { gpu: activeEtaGpuProfile.matched_name }) : t('wizard.etaBasisEstimated', { gpu: activeEtaGpuProfile.matched_name }) }}
                       </span>
                     </div>
-                    <template v-if="topNav === 'studio'">
-                      <div v-if="user && userTaskQuotaReached" class="text-[11px] text-rose-300 font-semibold">
-                        {{ t('wizard.quotaExhaustedBanner', { used: user.tasks_used || 0, max: user.max_tasks ?? 2 }) }}
-                      </div>
-                      <div v-else-if="wizardQueuePreview.willQueue" class="text-[11px] text-amber-300 wc-mono">
-                        {{ t('wizard.queueBusyHint', { ahead: wizardQueuePreview.aheadCount, pos: wizardQueuePreview.nextQueuePos, eta: formatEta(wizardQueuePreview.waitSec) }) }}
-                      </div>
-                      <div v-else class="text-[11px] text-emerald-400 wc-mono">
-                        {{ t('wizard.queueIdleHint') }}
-                      </div>
-                    </template>
+                    <div v-if="user && userTaskQuotaReached" class="text-[11px] text-rose-300 font-semibold">
+                      {{ t('wizard.quotaExhaustedBanner', { used: user.tasks_used || 0, max: user.max_tasks ?? 2 }) }}
+                    </div>
+                    <div v-else-if="wizardQueuePreview.willQueue" class="text-[11px] text-amber-300 wc-mono">
+                      {{ t('wizard.queueBusyHint', { ahead: wizardQueuePreview.aheadCount, pos: wizardQueuePreview.nextQueuePos, eta: formatEta(wizardQueuePreview.waitSec) }) }}
+                    </div>
+                    <div v-else class="text-[11px] text-emerald-400 wc-mono">
+                      {{ t('wizard.queueIdleHint') }}
+                    </div>
                   </div>
 
-                  <button v-if="topNav === 'studio'"
-                          @click="submitNewTrainingTask"
+                  <button @click="submitNewTrainingTask"
                           :disabled="userTaskQuotaReached"
                           type="button"
                           class="px-8 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-45 disabled:cursor-not-allowed text-white text-sm font-bold shadow-xl shadow-indigo-600/30 transition-all">
                     {{ wizardQueuePreview.willQueue ? t('wizard.submitQueueBtn') : t('wizard.startTrainBtn') }}
                   </button>
-
-                  <div v-else class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
-                    <input v-model="labNote"
-                           :disabled="!canUseLab"
-                           @keyup.enter="editingStagedItem ? saveEditedStagedItem() : addCurrentToLabList()"
-                           type="text"
-                           class="wc-input !w-64 text-xs disabled:opacity-45"
-                           :placeholder="t('lab.notePlaceholder')" />
-                    <help-tip doc="lab_note"></help-tip>
-                    <template v-if="editingStagedItem">
-                      <button @click="cancelEditStagedItem"
-                              type="button"
-                              class="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold transition-all">
-                        {{ t('lab.cancelBtn') }}
-                      </button>
-                      <button @click="saveEditedStagedItem"
-                              :disabled="!canUseLab"
-                              type="button"
-                              class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-45 text-white text-xs font-bold shadow-lg shadow-emerald-600/25 transition-all">
-                        {{ t('lab.saveEditedStagedBtn') }}
-                      </button>
-                    </template>
-                    <template v-else>
-                      <button @click="addNukeBaselineToLabList"
-                              :disabled="!canUseLab"
-                              type="button"
-                              class="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed border border-slate-700 text-emerald-300 text-xs font-bold transition-all">
-                        {{ t('lab.addBaselineBtn') }}
-                      </button>
-                      <help-tip doc="lab_native_baseline"></help-tip>
-                      <button @click="addCurrentToLabList"
-                              :disabled="!canUseLab"
-                              type="button"
-                              class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed border border-violet-500/50 text-violet-200 hover:text-white text-xs font-bold transition-all">
-                        {{ t('lab.addToListBtn') }}
-                      </button>
-                      <button @click="submitLabSingleCustomNow"
-                              :disabled="!canUseLab || labSubmitting || userTaskQuotaReached"
-                              type="button"
-                              class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-45 disabled:cursor-not-allowed text-white text-xs font-bold shadow-xl shadow-indigo-600/30 transition-all">
-                        {{ labSubmitting ? t('lab.submittingBatchBtn') : t('lab.startSingleCustomNowBtn') }}
-                      </button>
-                    </template>
-                  </div>
                 </div>
               </section>
             </div>
@@ -2337,6 +1954,43 @@
                   </div>
                 </div>
 
+                <!-- Bound Post-Training Auto-Inference High-Priority Queue Status -->
+                <div v-if="activeTaskBoundInfer"
+                     class="mt-2 px-3.5 py-2.5 rounded-xl bg-cyan-950/30 border border-cyan-500/35 text-xs space-y-2">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 text-cyan-200 wc-mono">
+                      <span class="w-2 h-2 rounded-full"
+                            :class="activeTaskBoundInfer.state === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'"></span>
+                      <span>
+                        {{ activeTaskBoundInfer.state === 'running'
+                          ? t('monitor.boundInferRunning', {
+                              done: activeTaskBoundInfer.done || 0,
+                              total: activeTaskBoundInfer.total || 0,
+                              pct: Math.round((activeTaskBoundInfer.progress || 0) * 100),
+                              device: activeTaskBoundInfer.device || 'GPU'
+                            })
+                          : (activeTaskBoundInfer.state === 'queued'
+                              ? t('monitor.boundInferQueued', {
+                                  pos: activeTaskBoundInfer.queue_position || 1,
+                                  eta: formatEta(activeTaskBoundInfer.estimated_wait_sec || 0)
+                                })
+                              : t('monitor.boundInferWaiting'))
+                        }}
+                      </span>
+                    </div>
+                    <button type="button"
+                            @click="cancelInferSeqJob(activeTaskBoundInfer.job_id)"
+                            class="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] font-semibold border border-slate-700 transition-all">
+                      {{ t('monitor.cancelBoundInferBtn') }}
+                    </button>
+                  </div>
+                  <div v-if="activeTaskBoundInfer.state === 'running'"
+                       class="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                    <div class="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-200"
+                         :style="{ width: Math.min(100, Math.round((activeTaskBoundInfer.progress || 0) * 100)) + '%' }"></div>
+                  </div>
+                </div>
+
                 <!-- Queue Waiting & Live GPU ETA Panel -->
                 <div v-if="activeTask.status === 'queued'"
                      class="mt-2 p-4 rounded-xl bg-amber-950/35 border border-amber-500/45 text-xs space-y-3">
@@ -2369,8 +2023,9 @@
                     <div v-for="rt in queue.running" :key="rt.id"
                          class="bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 space-y-1">
                       <div class="flex items-center justify-between text-[11px] wc-mono gap-2">
-                        <span class="text-emerald-300 font-semibold truncate">
-                          {{ t('monitor.gpuRunningItem', { gpu: rt.assigned_gpu, node: rt.node_name }) }}
+                        <span class="text-emerald-300 font-semibold truncate flex items-center gap-1.5">
+                          <span v-if="rt.job_type === 'infer'" class="px-1.5 py-0.2 rounded bg-cyan-500/20 border border-cyan-500/40 text-[10px] font-bold text-cyan-300 shrink-0">{{ t('header.gpuInferTag') }}</span>
+                          <span>{{ t('monitor.gpuRunningItem', { gpu: rt.assigned_gpu, node: rt.node_name }) }}</span>
                           <span class="text-slate-500 font-normal">({{ rt.username }})</span>
                         </span>
                         <span class="text-slate-300 shrink-0">
@@ -3050,8 +2705,8 @@
 
             </div>
 
-            <!-- ══════════ LAB STAGE C: MULTI-RUN CURVE OVERLAY, FULL-SEQUENCE FLICKER & QUANTITATIVE STATS ══════════ -->
-            <div v-else-if="topNav === 'lab' && labMode === 'analyze'" class="w-full space-y-6">
+            <!-- ══════════ COMPARE STAGE: MULTI-RUN CURVE OVERLAY, FULL-SEQUENCE FLICKER & QUANTITATIVE STATS ══════════ -->
+            <div v-else-if="topNav === 'lab'" class="w-full space-y-6">
 
               <div v-if="!labSelectedTaskIds.length"
                    class="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center space-y-3">
@@ -3070,12 +2725,6 @@
                       <p class="text-xs text-slate-400 leading-relaxed">{{ docSummary('lab_eval') }}</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2 shrink-0">
-                      <button v-if="activeLabDataset && activeLabDataset.kind !== 'eval_sequence'"
-                              @click="openAttachSeqModal(activeLabDataset)"
-                              type="button"
-                              class="px-3.5 py-2 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-xs font-bold border border-amber-500/40 transition-all">
-                        {{ activeLabDataset.has_eval_sequence ? t('wizard.replaceSeqQuickBtn') : t('wizard.attachSeqQuickBtn') }}
-                      </button>
                       <button @click="openDatasetModal()"
                               type="button"
                               class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-all">
@@ -3118,8 +2767,8 @@
                     <div class="lg:col-span-3">
                       <label class="block text-xs font-semibold text-slate-300 mb-1">{{ t('lab.ckptModeLabel') }}<help-tip doc="lab_eval_weights"></help-tip></label>
                       <select v-model="labCkptMode" class="wc-select text-xs">
-                        <option value="best">{{ t('lab.ckptBestOpt') }}</option>
                         <option value="latest">{{ t('lab.ckptLatestOpt') }}</option>
+                        <option value="best">{{ t('lab.ckptBestOpt') }}</option>
                       </select>
                     </div>
 
@@ -3129,7 +2778,7 @@
                                 :disabled="!canUseLab"
                                 type="button"
                                 class="flex-1 h-[38px] px-4 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-45 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg shadow-violet-600/25 transition-all">
-                          {{ hasLabEvalSequence ? t('lab.runEvalBtn') : t('lab.runEvalSupOnlyBtn') }}
+                          {{ t('lab.runEvalBtn') }}
                         </button>
                         <button @click="triggerLabEvaluation(true)"
                                 :disabled="!canUseLab"
@@ -3145,19 +2794,6 @@
                         {{ t('lab.cancelEvalBtn') }}
                       </button>
                     </div>
-                  </div>
-
-                  <!-- Notice when active dataset has NO validation sequence -->
-                  <div v-if="!hasLabEvalSequence && activeLabDataset"
-                       class="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
-                    <div class="leading-relaxed flex-1 min-w-[240px]"
-                         v-html="tHtml('lab.noSeqBannerHtml', { name: activeLabDataset.name })"></div>
-                    <button v-if="activeLabDataset.kind !== 'eval_sequence'"
-                            @click="openAttachSeqModal(activeLabDataset)"
-                            type="button"
-                            class="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shrink-0 transition-all">
-                      {{ t('wizard.attachSeqQuickBtn') }}
-                    </button>
                   </div>
 
                   <!-- Live Subprocess Streaming Evaluation Progress -->
@@ -3197,20 +2833,16 @@
                       <h3 class="text-sm font-bold text-white">{{ t('lab.chartSectionTitle') }}<help-tip doc="lab_chart"></help-tip></h3>
                       <div class="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
                         <button v-for="ct in [
-                                  { id: 'train_loss', lbl: t('lab.chartTabTrainLoss'), seq: false },
-                                  { id: 'val_mse', lbl: t('lab.chartTabValMse'), seq: false },
-                                  { id: 'seq_hfi', lbl: t('lab.chartTabSeqHfi'), seq: true },
-                                  { id: 'seq_delta', lbl: t('lab.chartTabSeqDelta'), seq: true },
-                                  { id: 'seq_psnr', lbl: t('lab.chartTabSeqPsnr'), seq: true }
+                                  { id: 'train_loss', lbl: t('lab.chartTabTrainLoss') },
+                                  { id: 'val_mse', lbl: t('lab.chartTabValMse') },
+                                  { id: 'seq_hfi', lbl: t('lab.chartTabSeqHfi') },
+                                  { id: 'seq_delta', lbl: t('lab.chartTabSeqDelta') },
+                                  { id: 'seq_psnr', lbl: t('lab.chartTabSeqPsnr') }
                                 ].filter((c) => c.id !== 'seq_psnr' || labSeqHasPairedErr)"
                                 :key="ct.id"
-                                :disabled="ct.seq && !hasLabEvalSequence"
-                                :title="ct.seq && !hasLabEvalSequence ? t('lab.seqDisabledTip') : ''"
-                                @click="(!ct.seq || hasLabEvalSequence) && (labChartTab = ct.id)"
+                                @click="labChartTab = ct.id"
                                 class="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
-                                :class="ct.seq && !hasLabEvalSequence
-                                  ? 'text-slate-600 opacity-45 cursor-not-allowed'
-                                  : (labChartTab === ct.id ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200')">
+                                :class="labChartTab === ct.id ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
                           {{ ct.lbl }}
                         </button>
                       </div>
@@ -3386,7 +3018,7 @@
                                 {{ formatLabDelta(r, 'sup_bg', false, 3).text }}
                               </div>
                             </template>
-                            <span v-else class="text-slate-600">—</span>
+                            <span v-else class="text-slate-600 cursor-help" :title="r.eval ? t('lab.bgFullFrameTip') : ''">—</span>
                           </td>
 
                           <!-- P99 Tail Error -->
@@ -3404,7 +3036,7 @@
 
                           <!-- 1st-Order Unsupervised Edit Flicker ΔR -->
                           <td class="py-3 px-3 wc-mono">
-                            <template v-if="hasLabEvalSequence && getRunMetric(r, 'seq_delta') != null">
+                            <template v-if="getRunMetric(r, 'seq_delta') != null">
                               <div :class="isBestLabMetric(r, 'seq_delta', false) ? 'text-emerald-300 font-bold' : 'text-amber-200'">
                                 {{ getRunMetric(r, 'seq_delta').toFixed(3) }}‰
                               </div>
@@ -3412,13 +3044,12 @@
                                 {{ formatLabDelta(r, 'seq_delta', false, 3).text }}‰
                               </div>
                             </template>
-                            <span v-else-if="!hasLabEvalSequence" class="text-[11px] text-slate-600" :title="t('lab.seqDisabledTip')">{{ t('lab.noSeqShort') }}</span>
                             <span v-else class="text-slate-600">—</span>
                           </td>
 
                           <!-- HF change index (HFI): not a flicker measure, lower is not "better" -> neutral colours, no best highlight -->
                           <td class="py-3 px-3 wc-mono">
-                            <template v-if="hasLabEvalSequence && getRunMetric(r, 'seq_hfi') != null">
+                            <template v-if="getRunMetric(r, 'seq_hfi') != null">
                               <div class="text-slate-200">
                                 {{ getRunMetric(r, 'seq_hfi').toFixed(3) }}‰
                               </div>
@@ -3426,13 +3057,12 @@
                                 {{ formatLabDelta(r, 'seq_hfi', false, 3).text }}‰
                               </div>
                             </template>
-                            <span v-else-if="!hasLabEvalSequence" class="text-[11px] text-slate-600" :title="t('lab.seqDisabledTip')">{{ t('lab.noSeqShort') }}</span>
                             <span v-else class="text-slate-600">—</span>
                           </td>
 
                           <!-- Static Region Boiling -->
                           <td class="py-3 px-3 wc-mono">
-                            <template v-if="hasLabEvalSequence && getRunMetric(r, 'seq_static') != null">
+                            <template v-if="getRunMetric(r, 'seq_static') != null">
                               <div :class="isBestLabMetric(r, 'seq_static', false) ? 'text-emerald-300 font-bold' : 'text-slate-200'">
                                 {{ getRunMetric(r, 'seq_static').toFixed(3) }}‰
                               </div>
@@ -3440,18 +3070,16 @@
                                 {{ formatLabDelta(r, 'seq_static', false, 3).text }}‰
                               </div>
                             </template>
-                            <span v-else-if="!hasLabEvalSequence" class="text-[11px] text-slate-600" :title="t('lab.seqDisabledTip')">{{ t('lab.noSeqShort') }}</span>
-                            <span v-else class="text-slate-600">—</span>
+                            <span v-else class="text-slate-600 cursor-help" :title="(r.eval && r.eval.sequence) ? t('lab.staticFullMotionTip') : ''">—</span>
                           </td>
 
                           <!-- Peak Flicker Frame Jump -->
                           <td class="py-3 px-4 text-right wc-mono">
-                            <button v-if="hasLabEvalSequence && r.eval && r.eval.sequence && r.eval.sequence.peak_flicker_idx != null"
+                            <button v-if="r.eval && r.eval.sequence && r.eval.sequence.peak_flicker_idx != null"
                                     @click="jumpLabToFrame(r.eval.sequence.peak_flicker_idx)"
                                     class="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-[11px] font-semibold transition-all">
                               {{ t('lab.jumpPeakBtn', { idx: r.eval.sequence.peak_flicker_idx + 1 }) }}
                             </button>
-                            <span v-else-if="!hasLabEvalSequence" class="text-[11px] text-slate-600" :title="t('lab.seqDisabledTip')">{{ t('lab.noSeqShort') }}</span>
                             <span v-else class="text-slate-600">—</span>
                           </td>
                         </tr>
@@ -3461,24 +3089,24 @@
                 </section>
 
                 <!-- 4. Synchronized Multi-Model Sequence & Unsupervised Flicker Heatmap Viewer -->
-                <section v-if="hasLabEvalSequence && labSeqFrameCount > 0"
+                <section v-if="labCompare.runs.length > 0"
                          class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
                   <div class="flex flex-wrap items-center justify-between gap-3">
                     <div class="flex flex-wrap items-center gap-2.5">
                       <h3 class="text-sm font-bold text-white">{{ t('lab.viewerSectionTitle') }}<help-tip doc="lab_viewer"></help-tip></h3>
                       <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                        <button @click="labViewer.mode = 'out'"
+                        <button @click="setLabViewerMode('out')"
                                 class="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
                                 :class="labViewer.mode === 'out' ? 'bg-violet-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
                           {{ t('lab.viewModeOut') }}
                         </button>
-                        <button @click="labViewer.mode = 'flicker'"
+                        <button @click="setLabViewerMode('flicker')"
                                 class="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
                                 :class="labViewer.mode === 'flicker' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
                           {{ t('lab.viewModeFlicker') }}
                         </button>
                         <button v-if="labSeqHasPairedErr"
-                                @click="labViewer.mode = 'err'"
+                                @click="setLabViewerMode('err')"
                                 class="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
                                 :class="labViewer.mode === 'err' ? 'bg-rose-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
                           {{ t('lab.viewModeErr') }}
@@ -3519,7 +3147,7 @@
                          class="bg-slate-950 rounded-xl border border-indigo-500/35 overflow-hidden flex flex-col">
                       <div class="px-3 py-2 border-b border-slate-800 flex items-center justify-between text-xs wc-mono">
                         <span class="font-bold text-indigo-300">{{ t('lab.sourceCardTitle') }}</span>
-                        <span class="text-slate-400">{{ labCurrentSourceFrame.label }}</span>
+                        <span class="text-slate-400">{{ labCurrentSourceFrame.name || labCurrentSourceFrame.label }}</span>
                       </div>
                       <div class="relative h-64 overflow-hidden flex items-center justify-center bg-black/50">
                         <img :src="labCurrentSourceFrame.url"
@@ -3528,8 +3156,8 @@
                       </div>
                     </div>
 
-                    <!-- One Synchronized Card per Evaluated Run -->
-                    <div v-for="r in labEvaluatedSeqRuns" :key="'vw-' + r.task_id"
+                    <!-- One Synchronized Card per Selected Run -->
+                    <div v-for="r in labCompare.runs" :key="'vw-' + r.task_id"
                          class="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex flex-col">
                       <div class="px-3 py-2 border-b border-slate-800 flex items-center justify-between gap-2 text-xs wc-mono">
                         <div class="flex items-center gap-1.5 min-w-0">
@@ -3538,25 +3166,42 @@
                         </div>
                         <span v-if="getLabRunFrame(r)" class="text-[11px] text-amber-300 shrink-0">
                           {{ t('lab.frameMetricFmt', {
-                            delta: getLabRunFrame(r).flicker_delta != null ? (getLabRunFrame(r).flicker_delta * 1000).toFixed(2) : '0.00',
-                            hfi: getLabRunFrame(r).flicker_hf != null ? (getLabRunFrame(r).flicker_hf * 1000).toFixed(2) : '0.00'
+                            delta: getLabRunFrame(r).flicker_delta != null ? (getLabRunFrame(r).flicker_delta * 1000).toFixed(2) : '—',
+                            hfi: getLabRunFrame(r).flicker_hf != null ? (getLabRunFrame(r).flicker_hf * 1000).toFixed(2) : '—'
                           }) }}
                         </span>
+                        <span v-else class="text-[11px] text-slate-500 shrink-0">{{ t('lab.notEvaluatedYet') }}</span>
                       </div>
                       <div class="relative h-64 overflow-hidden flex items-center justify-center bg-black/50">
-                        <img v-if="getLabRunFrame(r) && getLabRunFrame(r).active_url"
-                             :src="getLabRunFrame(r).active_url"
-                             class="max-h-full max-w-full object-contain transition-transform duration-75 pointer-events-none"
-                             :style="{ transform: `translate(${labViewer.panX}px, ${labViewer.panY}px) scale(${labViewer.zoom})` }" />
-                        <div v-else class="px-4 text-center text-xs text-slate-400 leading-relaxed">
+                        <template v-if="getLabRunFrame(r) && getLabRunFrame(r).active_url">
+                          <img :src="getLabRunFrame(r).active_url"
+                               class="max-h-full max-w-full object-contain transition-transform duration-75 pointer-events-none"
+                               :style="{ transform: `translate(${labViewer.panX}px, ${labViewer.panY}px) scale(${labViewer.zoom})` }" />
+                          <span v-if="labViewer.mode === 'flicker' && labViewer.index === 0"
+                                class="absolute bottom-2 inset-x-3 text-center px-2.5 py-1 rounded-lg bg-slate-950/90 border border-amber-500/40 text-[11px] text-amber-200 pointer-events-none">
+                            {{ t('lab.firstFrameNoDiffBadge') }}
+                          </span>
+                        </template>
+                        <div v-else-if="r.files_pruned" class="px-4 text-center text-xs text-slate-400 leading-relaxed">
                           {{ t('lab.viewerFramesArchivedHint') }}
+                        </div>
+                        <div v-else class="px-4 text-center space-y-2.5">
+                          <div class="text-xs text-slate-400 leading-relaxed">{{ t('lab.cardNotEvalHint') }}</div>
+                          <button v-if="!labCompare.eval_runner.busy && r.has_ckpt"
+                                  type="button"
+                                  @mousedown.stop
+                                  @click.stop="triggerLabEvaluation(false)"
+                                  class="px-3.5 py-1.5 rounded-lg bg-violet-600/25 hover:bg-violet-600 text-violet-200 hover:text-white border border-violet-500/40 text-xs font-bold transition-all cursor-pointer">
+                            {{ t('lab.runEvalBtn') }}
+                          </button>
                         </div>
                       </div>
                     </div>
                   </div>
 
                   <!-- Synchronized Sequence Scrubber -->
-                  <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center gap-3">
+                  <div v-if="labSeqFrameCount > 0"
+                       class="bg-slate-950 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center gap-3">
                     <button @click="stepLabFrame(-1)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs">⏮</button>
                     <button @click="labViewer.playing = !labViewer.playing"
                             class="px-3.5 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold">
@@ -3575,7 +3220,7 @@
                       {{ t('lab.frameReadoutFmt', {
                         cur: labViewer.index + 1,
                         total: labSeqFrameCount,
-                        name: (labCurrentSourceFrame && labCurrentSourceFrame.label) || ('#' + (labViewer.index + 1))
+                        name: (labCurrentSourceFrame && (labCurrentSourceFrame.name || labCurrentSourceFrame.label)) || ('#' + (labViewer.index + 1))
                       }) }}
                     </span>
 
@@ -3583,20 +3228,6 @@
                       <span class="inline-flex items-center">FPS<help-tip doc="lab_viewer"></help-tip></span>
                       <input v-model.number="labViewer.fps" type="number" min="1" max="60" class="wc-input wc-input-xs !w-14 text-xs wc-mono text-center" />
                     </div>
-                  </div>
-                </section>
-
-                <!-- Disabled Sequence Viewer State when dataset has NO validation sequence -->
-                <section v-else-if="!hasLabEvalSequence"
-                         class="bg-slate-900/65 border border-dashed border-slate-800 rounded-2xl p-8 text-center space-y-2.5">
-                  <div class="text-sm font-bold text-slate-400">{{ t('lab.viewerDisabledTitle') }}</div>
-                  <p class="text-xs text-slate-500 max-w-2xl mx-auto leading-relaxed">{{ t('lab.viewerDisabledHint') }}</p>
-                  <div v-if="activeLabDataset && activeLabDataset.kind !== 'eval_sequence'" class="pt-1">
-                    <button @click="openAttachSeqModal(activeLabDataset)"
-                            type="button"
-                            class="px-4 py-2 rounded-xl bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-xs font-bold border border-amber-500/40 transition-all">
-                      {{ t('wizard.attachSeqQuickBtn') }}
-                    </button>
                   </div>
                 </section>
 
@@ -3664,10 +3295,6 @@
                     <span v-if="a.kind !== 'eval_sequence' && a.has_eval_sequence"
                           class="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-semibold text-emerald-300 wc-mono">
                       ✓ {{ t('datasets.hasEvalSeqBadge', { frames: a.seq_frame_count }) }}
-                    </span>
-                    <span v-else-if="a.kind !== 'eval_sequence'"
-                          class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] text-slate-400 wc-mono">
-                      {{ t('datasets.noEvalSeqBadge') }}
                     </span>
                     <help-tip v-if="a.kind !== 'eval_sequence'" doc="dataset_validation_sequence"></help-tip>
                   </div>
@@ -3797,11 +3424,6 @@
                           class="px-3 py-1.5 rounded-xl bg-amber-600/15 hover:bg-amber-600 text-amber-300 hover:text-white text-xs font-semibold border border-amber-500/35 transition-all">
                     {{ a.has_eval_sequence ? t('datasets.replaceEvalSeqBtn') : t('datasets.attachEvalSeqBtn') }}
                   </button>
-                  <button v-if="a.has_custom_eval_sequence || (!a.is_builtin_demo && a.can_remove_eval_sequence)"
-                          @click="detachEvalSequence(a)"
-                          class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700">
-                    {{ t('datasets.removeEvalSeqBtn') }}
-                  </button>
                 </div>
                 <button @click="deleteAsset(a)"
                         class="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white text-xs font-medium">
@@ -3857,14 +3479,14 @@
                 <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
                   <button type="button"
                           @click="setInferMode('single')"
-                          :disabled="inferUi.busy"
+                          :disabled="inferUi.submitting"
                           class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
                           :class="inferUi.mode === 'single' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
                     {{ t('inferSeq.modeTabSingle') }}
                   </button>
                   <button type="button"
                           @click="setInferMode('sequence')"
-                          :disabled="inferUi.busy"
+                          :disabled="inferUi.submitting"
                           class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
                           :class="inferUi.mode === 'sequence' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
                     {{ t('inferSeq.modeTabSequence') }}
@@ -3888,7 +3510,7 @@
                   <button v-else
                           type="button"
                           @click="openDatasetPicker('infer')"
-                          :disabled="inferUi.busy"
+                          :disabled="inferUi.submitting"
                           class="w-full text-left px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-950/80 border border-slate-700 hover:border-indigo-500/60 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between gap-3 transition-all">
                     <div class="flex items-center gap-3 min-w-0">
                       <img v-if="inferPickedDataset && (inferPickedDataset.seq_thumb_url || inferPickedDataset.source_thumb_url)"
@@ -3923,7 +3545,7 @@
                     </span>
                   </label>
                   <select v-model="inferUi.taskId"
-                          :disabled="inferUi.busy || !tasks.length"
+                          :disabled="inferUi.submitting || !tasks.length"
                           class="wc-select wc-mono text-xs disabled:opacity-50">
                     <option :value="null" disabled>{{ t('inferSeq.modelPlaceholder') }}</option>
                     <option v-for="tk in tasks"
@@ -3953,7 +3575,7 @@
                     </span>
                   </label>
                   <select v-model.number="inferUi.step"
-                          :disabled="inferUi.busy || !inferPickedTask || !inferPickedTask.has_ckpt"
+                          :disabled="inferUi.submitting || !inferPickedTask || !inferPickedTask.has_ckpt"
                           class="wc-select wc-mono text-xs disabled:opacity-50">
                     <option :value="0">
                       {{ inferUi.latestStep > 0 ? t('inferSeq.stepLatestOpt', { step: inferUi.latestStep }) : t('inferSeq.stepLatestFallback') }}
@@ -3975,7 +3597,7 @@
                     </span>
                   </label>
                   <select v-model="inferUi.outputFormat"
-                          :disabled="inferUi.busy"
+                          :disabled="inferUi.submitting"
                           class="wc-select text-xs disabled:opacity-50">
                     <option value="exr_float">{{ t('inferSeq.formatExrFloat') }}</option>
                     <option value="exr_half">{{ t('inferSeq.formatExrHalf') }}</option>
@@ -4005,12 +3627,12 @@
                     <div class="flex items-center gap-2">
                       <button type="button"
                               @click="stepInferSingleInput(-1)"
-                              :disabled="inferUi.busy || inferSingleFrameList.length <= 1"
+                              :disabled="inferUi.submitting || inferSingleFrameList.length <= 1"
                               class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs text-slate-200 font-bold">
                         ◀
                       </button>
                       <select v-model.number="inferUi.singleFrameIdx"
-                              :disabled="inferUi.busy || !inferSingleFrameList.length"
+                              :disabled="inferUi.submitting || !inferSingleFrameList.length"
                               class="wc-select wc-mono text-xs flex-1 disabled:opacity-50">
                         <option v-for="fr in inferSingleFrameList"
                                 :key="'inf-sf-' + fr.idx"
@@ -4020,7 +3642,7 @@
                       </select>
                       <button type="button"
                               @click="stepInferSingleInput(1)"
-                              :disabled="inferUi.busy || inferSingleFrameList.length <= 1"
+                              :disabled="inferUi.submitting || inferSingleFrameList.length <= 1"
                               class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs text-slate-200 font-bold">
                         ▶
                       </button>
@@ -4029,7 +3651,7 @@
                       <input type="range"
                              min="0"
                              :max="Math.max(0, inferSingleFrameList.length - 1)"
-                             :disabled="inferUi.busy || inferSingleFrameList.length <= 1"
+                             :disabled="inferUi.submitting || inferSingleFrameList.length <= 1"
                              v-model.number="inferUi.singleFrameIdx"
                              class="flex-1 accent-indigo-500 singleFrameIndex" />
                       <span class="text-xs text-slate-400 wc-mono shrink-0">
@@ -4059,36 +3681,114 @@
                 {{ t('inferSeq.channelMismatchBanner', inferChannelMismatch) }}
               </div>
 
-              <!-- Action Row & Live Progress -->
+              <!-- Live GPU Availability & High-Priority Queue Hint -->
+              <div class="px-3.5 py-2 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2"
+                   :class="queue.all_gpus_disabled
+                     ? 'bg-rose-950/35 border-rose-500/35 text-rose-200'
+                     : (inferWillQueue ? 'bg-amber-950/35 border-amber-500/35 text-amber-200' : 'bg-emerald-950/25 border-emerald-500/30 text-emerald-200')">
+                <div class="flex items-center gap-2 wc-mono">
+                  <span class="w-2 h-2 rounded-full shrink-0"
+                        :class="queue.all_gpus_disabled ? 'bg-rose-400' : (inferWillQueue ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400')"></span>
+                  <span>
+                    {{ queue.all_gpus_disabled
+                      ? t('inferSeq.gpuStatusDisabledHint')
+                      : (inferWillQueue
+                          ? t('inferSeq.gpuStatusBusyHint', { eta: formatEta(queue.next_infer_wait_sec || 0) })
+                          : t('inferSeq.gpuStatusIdleHint', { idle: queue.idle_gpu_count || 0, enabled: queue.enabled_gpu_count || 1 }))
+                    }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Action Row -->
               <div class="flex flex-wrap items-center gap-3 pt-1">
                 <button type="button"
                         @click="startInferSeqJob"
                         :disabled="!inferCanRun"
-                        class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">
-                  {{ inferUi.busy ? t('inferSeq.runningBtn') : (inferUi.mode === 'single' ? t('inferSeq.runSingleBtn') : t('inferSeq.runBtn')) }}
-                </button>
-                <button v-if="inferUi.busy && inferUi.jobId"
-                        type="button"
-                        @click="cancelInferSeqJob"
-                        class="px-4 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white text-xs font-semibold border border-rose-500/35 transition-all">
-                  {{ t('inferSeq.cancelBtn') }}
+                        class="px-5 py-2.5 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg transition-all"
+                        :class="inferWillQueue
+                          ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/20'
+                          : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/20'">
+                  {{ inferUi.submitting
+                    ? t('inferSeq.submittingBtn')
+                    : (inferWillQueue
+                        ? (inferUi.mode === 'single' ? t('inferSeq.queueSingleBtn') : t('inferSeq.queueRunBtn'))
+                        : (inferUi.mode === 'single' ? t('inferSeq.runSingleBtn') : t('inferSeq.runBtn')))
+                  }}
                 </button>
                 <span v-if="inferUi.note" class="text-xs text-amber-300">{{ inferUi.note }}</span>
               </div>
 
-              <div v-if="inferUi.busy" class="space-y-2 bg-slate-950 border border-slate-800 rounded-xl p-3.5">
-                <div class="flex items-center justify-between text-xs wc-mono text-slate-300">
-                  <span>
-                    {{ inferUi.done > 0
-                      ? t('inferSeq.progRunning', { done: inferUi.done, total: inferUi.total, pct: Math.round(inferUi.progress * 100), fps: inferUi.fps.toFixed(2), device: inferUi.device || 'GPU' })
-                      : t('inferSeq.progQueued')
-                    }}
-                  </span>
-                  <span class="text-indigo-300 font-bold">{{ Math.round(inferUi.progress * 100) }}%</span>
+              <!-- Live High-Priority Inference Queue & Running Progress List -->
+              <div v-if="inferQueueJobs.length"
+                   class="space-y-2.5 bg-slate-950 border border-slate-800 rounded-xl p-4">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="text-xs font-bold text-white">
+                    {{ t('inferSeq.queuePanelTitle', { count: inferQueueJobs.length }) }}
+                  </div>
+                  <div class="text-[11px] text-slate-400">
+                    {{ t('inferSeq.queuePriorityNote') }}
+                  </div>
                 </div>
-                <div class="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
-                  <div class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-200"
-                       :style="{ width: Math.min(100, Math.round(inferUi.progress * 100)) + '%' }"></div>
+
+                <div class="space-y-2">
+                  <div v-for="jb in inferQueueJobs"
+                       :key="'inf-q-' + jb.job_id"
+                       class="rounded-xl border px-3.5 py-2.5 space-y-2"
+                       :class="jb.state === 'running'
+                         ? 'bg-indigo-950/25 border-indigo-500/40'
+                         : (jb.state === 'queued' ? 'bg-amber-950/20 border-amber-500/35' : 'bg-slate-900/70 border-slate-800')">
+                    <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div class="flex flex-wrap items-center gap-2 min-w-0">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold wc-mono border shrink-0"
+                              :class="jb.state === 'running'
+                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                : (jb.state === 'queued'
+                                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                    : 'bg-slate-800 border-slate-700 text-slate-300')">
+                          {{ jb.state === 'running'
+                            ? t('inferSeq.stateRunningBadge', { device: jb.device || 'GPU' })
+                            : (jb.state === 'queued'
+                                ? t('inferSeq.stateQueuedBadge', { pos: jb.queue_position || 1 })
+                                : t('inferSeq.stateWaitingTrainBadge'))
+                          }}
+                        </span>
+                        <span v-if="jb.auto_on_finish"
+                              class="px-1.5 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/35 text-[10px] font-semibold text-cyan-300 shrink-0">
+                          {{ t('inferSeq.autoOnFinishTag') }}
+                        </span>
+                        <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-semibold text-slate-300 shrink-0">
+                          {{ jb.infer_mode === 'single' ? t('inferSeq.badgeSingle') : t('inferSeq.badgeSequence') }}
+                        </span>
+                        <span class="wc-mono font-semibold text-slate-200 truncate">
+                          {{ t('inferSeq.jobMetaTarget', { model: jb.node_name, step: jb.step || 0, dataset: jb.asset_name || '—' }) }}
+                        </span>
+                      </div>
+
+                      <div class="flex items-center gap-3 shrink-0 wc-mono">
+                        <span v-if="jb.state === 'running'" class="text-indigo-300 font-bold">
+                          {{ jb.done || 0 }} / {{ jb.total || 0 }} ({{ Math.round((jb.progress || 0) * 100) }}%<template v-if="jb.fps > 0"> · {{ Number(jb.fps).toFixed(2) }} fps</template>)
+                        </span>
+                        <span v-else-if="jb.state === 'queued'" class="text-[11px] text-amber-300">
+                          {{ t('inferSeq.jobQueuedWait', { eta: formatEta(jb.estimated_wait_sec || 0) }) }}
+                        </span>
+                        <span v-else class="text-[11px] text-slate-400">
+                          {{ t('inferSeq.jobWaitingTrainDesc', { total: jb.total || 0 }) }}
+                        </span>
+                        <button type="button"
+                                @click="cancelInferSeqJob(jb.job_id)"
+                                class="px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white text-[11px] font-semibold border border-rose-500/35 transition-all">
+                          {{ t('inferSeq.cancelBtn') }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div v-if="jb.state === 'running'"
+                         class="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                      <div class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-200"
+                           :style="{ width: Math.min(100, Math.round((jb.progress || 0) * 100)) + '%' }"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -5507,7 +5207,8 @@
 
         <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
           <button @click="uploadModal.open = false" :disabled="uploadModal.uploading" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs disabled:opacity-40">{{ t('upload.cancelBtn') }}</button>
-          <button @click="doUploadPairedDataset" :disabled="uploadModal.uploading || !uploadModal.inputColorspace"
+          <button @click="doUploadPairedDataset"
+                  :disabled="uploadModal.uploading || !uploadModal.inputColorspace || (uploadModal.mode === 'attach_seq' ? !uploadModal.seqFiles.length : (!uploadModal.sourceFiles.length || !uploadModal.targetFiles.length || !uploadModal.seqFiles.length))"
                   class="px-5 py-2 rounded-xl text-white text-xs font-bold shadow-lg transition-all disabled:opacity-45 disabled:cursor-not-allowed"
                   :class="uploadModal.mode === 'attach_seq' ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/25' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/25'">
             {{ uploadModal.mode === 'attach_seq'
@@ -5630,21 +5331,6 @@
                    type="text"
                    class="wc-input wc-input-sm !w-64 text-xs"
                    :placeholder="t('datasets.pickerSearchPlaceholder')" />
-            <div class="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
-              <button type="button"
-                      @click="datasetPickerModal.seqFilter = 'all'"
-                      class="px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all"
-                      :class="datasetPickerModal.seqFilter === 'all' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
-                {{ t('datasets.pickerFilterAll', { count: pickerBaseDatasets.length }) }}
-              </button>
-              <button type="button"
-                      @click="datasetPickerModal.seqFilter = 'with_seq'"
-                      class="px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all"
-                      :class="datasetPickerModal.seqFilter === 'with_seq' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'">
-                {{ t('datasets.pickerFilterWithSeq', { count: pickerWithSeqCount }) }}
-              </button>
-            </div>
-            <help-tip doc="dataset_validation_sequence"></help-tip>
           </div>
         </div>
 
@@ -5778,10 +5464,6 @@
                         class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 font-semibold">
                     ✓ {{ t('datasets.hasEvalSeqBadge', { frames: a.seq_frame_count }) }}
                   </span>
-                  <span v-else
-                        class="px-1.5 py-0.5 rounded bg-slate-900/70 border border-slate-800 text-slate-500">
-                    {{ t('datasets.noEvalSeqBadge') }}
-                  </span>
                 </div>
               </div>
             </div>
@@ -5792,6 +5474,6 @@
 
   </div>
 
-  <script type="module" src="/static/app.js?v=20261119_v310"></script>
+  <script type="module" src="/static/app.js?v=20261119_v311"></script>
 </body>
 </html>

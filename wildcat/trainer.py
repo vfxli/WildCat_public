@@ -1016,6 +1016,7 @@ class Trainer:
 
             if self.quality.due(step, total, time.time() - t_start, final=True):  # the run ended before its last planned step
                 self._preview(step, False, False, quality=True)
+
             log("done. (%.1fs)" % (time.time() - t_start))
         except KeyboardInterrupt:
             self.quality.cancel()

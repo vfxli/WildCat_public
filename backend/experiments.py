@@ -720,18 +720,26 @@ def resolve_eval_asset(
                     return row
         src_p = str((cfg.get("paths") or {}).get("source") or "").strip()
         if src_p:
-            if is_admin:
-                row = db.query_one(
-                    "SELECT * FROM assets WHERE source_path = ? ORDER BY user_id = ? DESC, id ASC LIMIT 1",
-                    (src_p, user_id),
-                )
-            else:
-                row = db.query_one(
-                    "SELECT * FROM assets WHERE user_id = ? AND source_path = ? ORDER BY id ASC LIMIT 1",
-                    (user_id, src_p),
-                )
-            if row:
-                return row
+            cand_paths = [src_p]
+            try:
+                rel_p = storage.rel_to_root(src_p)
+                if rel_p and rel_p not in cand_paths:
+                    cand_paths.append(rel_p)
+            except Exception:
+                pass
+            for cp_src in cand_paths:
+                if is_admin:
+                    row = db.query_one(
+                        "SELECT * FROM assets WHERE source_path = ? ORDER BY user_id = ? DESC, id ASC LIMIT 1",
+                        (cp_src, user_id),
+                    )
+                else:
+                    row = db.query_one(
+                        "SELECT * FROM assets WHERE user_id = ? AND source_path = ? ORDER BY id ASC LIMIT 1",
+                        (user_id, cp_src),
+                    )
+                if row:
+                    return row
     return None
 
 
@@ -847,16 +855,67 @@ def load_cached_eval(
         base_url = f"/f/run/{quote(node_name)}/eval/{quote(eval_key)}"
         has_err = bool(seq.get("is_paired"))
         out_dir_abs = os.path.join(eval_dir, "out")
-        frames_on_disk = os.path.isdir(out_dir_abs)
-        seq["frames_on_disk"] = frames_on_disk
-        if frames_on_disk:
-            for row in seq["per_frame"]:
-                fn = row.get("file") or f"frame_{int(row.get('idx', 0)):04d}.jpg"
+        flk_dir_abs = os.path.join(eval_dir, "flicker")
+        err_dir_abs = os.path.join(eval_dir, "err")
+        has_out = os.path.isdir(out_dir_abs) and bool(os.listdir(out_dir_abs))
+        has_flk = os.path.isdir(flk_dir_abs) and bool(os.listdir(flk_dir_abs))
+        has_err_disk = has_err and os.path.isdir(err_dir_abs) and bool(os.listdir(err_dir_abs))
+        seq["frames_on_disk"] = has_out
+        for row in seq["per_frame"]:
+            fn = row.get("file") or f"frame_{int(row.get('idx', 0)):04d}.jpg"
+            if has_out:
                 row["out_url"] = f"{base_url}/out/{quote(fn)}"
+            if has_flk:
                 row["flicker_url"] = f"{base_url}/flicker/{quote(fn)}"
-                if has_err:
-                    row["err_url"] = f"{base_url}/err/{quote(fn)}"
+            if has_err_disk:
+                row["err_url"] = f"{base_url}/err/{quote(fn)}"
     return data
+
+
+def _find_cached_eval_by_sig(
+    run_dir_rel: str,
+    node_name: str,
+    eval_key: str,
+    task_id: int | None = None,
+    user_id: int | None = None,
+) -> tuple[dict | None, str]:
+    """Load exact `eval_key`, or match same `(ckpt_step, seq_sig)` if an asset row ID was re-created."""
+    if not eval_key:
+        return None, ""
+    exact = load_cached_eval(run_dir_rel, node_name, eval_key, task_id=task_id, user_id=user_id)
+    if exact is not None:
+        return exact, eval_key
+    if "_seq" not in eval_key:
+        return None, eval_key
+
+    step_pfx = eval_key.split("_seq", 1)[0] + "_seq"
+    sig_sfx = "_" + eval_key.rsplit("_", 1)[-1]
+    rdir_abs = storage.abs_from_root(run_dir_rel)
+    eval_root = os.path.join(rdir_abs, "eval")
+    if os.path.isdir(eval_root):
+        try:
+            for cand in sorted(os.listdir(eval_root)):
+                if cand != eval_key and cand.startswith(step_pfx) and cand.endswith(sig_sfx):
+                    hit = load_cached_eval(run_dir_rel, node_name, cand, task_id=task_id, user_id=user_id)
+                    if hit is not None:
+                        return hit, cand
+        except OSError:
+            pass
+    if task_id is not None:
+        row = db.query_one(
+            """
+            SELECT eval_key FROM experiment_evals
+            WHERE task_id = ? AND eval_key LIKE ?
+            ORDER BY (seq_frames > 0) DESC, updated_at DESC
+            LIMIT 1
+            """,
+            (int(task_id), f"{step_pfx}%{sig_sfx}"),
+        )
+        if row:
+            hit = analytics_db.load_eval_from_db(int(task_id), node_name, run_dir_rel, row["eval_key"])
+            if hit is not None:
+                return hit, row["eval_key"]
+    return None, eval_key
 
 
 def batch_submit_experiments(
@@ -1032,7 +1091,18 @@ def compare_tasks(
         if t:
             loaded_tasks.append(t)
 
-    asset_row = resolve_eval_asset(user_id, is_admin, eval_asset_id, tasks_for_fallback=loaded_tasks)
+    explicit_asset_row = resolve_eval_asset(user_id, is_admin, eval_asset_id) if eval_asset_id else None
+    per_task_assets = [
+        explicit_asset_row or resolve_eval_asset(user_id, is_admin, None, tasks_for_fallback=[t])
+        for t in loaded_tasks
+    ]
+    if explicit_asset_row is not None:
+        asset_row = explicit_asset_row
+    else:
+        asset_row = next(
+            (a for a in per_task_assets if a and len(_get_asset_seq_files(a)) >= 2),
+            next((a for a in per_task_assets if a is not None), None),
+        )
 
     asset_info = None
     if asset_row:
@@ -1059,7 +1129,7 @@ def compare_tasks(
             "out_channels": asset_row.get("out_channels") or 3,
             "is_paired": False,
             "source_frames": [
-                {"idx": i, "name": os.path.basename(fp), "url": u}
+                {"idx": i, "name": os.path.basename(fp), "label": os.path.basename(fp), "url": u}
                 for i, (fp, u) in enumerate(zip(seq_files, seq_urls))
             ],
             "target_frames": [],
@@ -1067,7 +1137,7 @@ def compare_tasks(
 
     qstat = scheduler.SCHEDULER.queue_status()
     runs_out = []
-    for t in loaded_tasks:
+    for t, task_asset in zip(loaded_tasks, per_task_assets):
         scheduler.SCHEDULER.enrich_task_with_queue(t, qstat=qstat)
         cfg = t.get("config") or {}
         tid = int(t["id"])
@@ -1081,12 +1151,16 @@ def compare_tasks(
                 analytics_db.sync_task_log_to_db(t)
             db_curves = analytics_db.load_task_curves_from_db(tid)
 
-        if db_curves is not None:
+        if db_curves is not None and (db_curves["steps"] or not os.path.isfile(log_abs)):
             steps = db_curves["steps"]
             vals = db_curves["vals"]
             sm = db_curves["summary"]
             best_val = sm.get("best_val_mse")
+            if best_val is None and vals:
+                best_val = min((v["mse"] for v in vals if v.get("mse") is not None), default=None)
             last_val = sm.get("last_val_mse")
+            if last_val is None and vals:
+                last_val = vals[-1]["mse"]
             last_loss = sm.get("final_loss") if sm.get("final_loss") is not None else t.get("last_loss")
         else:
             parsed = telemetry.parse_train_log_full_cached(log_abs, max_chart_points=1800)
@@ -1099,36 +1173,65 @@ def compare_tasks(
         ckpt_abs, ckpt_step = resolve_eval_checkpoint(t["run_dir"], cfg, ckpt_mode=mode)
         eval_key = ""
         cached_eval = None
+        wanted_sig = ""
         if ckpt_abs:
-            eval_key = compute_eval_key(ckpt_step, asset_row)
-            cached_eval = load_cached_eval(
+            eval_key = compute_eval_key(ckpt_step, task_asset)
+            if "_seq" in eval_key:
+                wanted_sig = eval_key.rsplit("_", 1)[-1]
+            cached_eval, eval_key = _find_cached_eval_by_sig(
                 t["run_dir"], t["node_name"], eval_key, task_id=tid, user_id=t_uid
             )
+        elif task_asset:
+            probe_key = compute_eval_key(0, task_asset)
+            if "_seq" in probe_key:
+                wanted_sig = probe_key.rsplit("_", 1)[-1]
+
+        if cached_eval is None and not t.get("files_pruned") and os.path.isdir(os.path.join(rdir_abs, "eval")):
+            analytics_db.sync_task_evals_from_disk(t)
+
         if cached_eval is None:
-            # Fallback to SQLite evaluation record (e.g., when heavy .pt checkpoints were archived to free disk space!)
-            if asset_row:
-                fb_ev = db.query_one(
-                    """
-                    SELECT eval_key, ckpt_step FROM experiment_evals
-                    WHERE task_id = ? AND (eval_asset_id = ? OR eval_asset_id IS NULL)
-                    ORDER BY (eval_asset_id = ?) DESC, (ckpt_mode = ?) DESC, updated_at DESC
-                    LIMIT 1
-                    """,
-                    (tid, int(asset_row["id"]), int(asset_row["id"]), mode),
-                )
+            # Fallback to SQLite evaluation record (preferring sequence evals over sup_only, matching sequence sig/asset & step)
+            ta_id = int(task_asset["id"]) if task_asset else -1
+            sig_like = f"%_seq%_{wanted_sig}" if wanted_sig else ""
+            if eval_asset_id and task_asset:
+                if sig_like:
+                    fb_ev = db.query_one(
+                        """
+                        SELECT eval_key, ckpt_step FROM experiment_evals
+                        WHERE task_id = ? AND (eval_asset_id = ? OR eval_key LIKE ?)
+                        ORDER BY (seq_frames > 0) DESC, (ckpt_step = ?) DESC, (ckpt_mode = ?) DESC, updated_at DESC
+                        LIMIT 1
+                        """,
+                        (tid, ta_id, sig_like, int(ckpt_step or 0), mode),
+                    )
+                else:
+                    fb_ev = db.query_one(
+                        """
+                        SELECT eval_key, ckpt_step FROM experiment_evals
+                        WHERE task_id = ? AND (eval_asset_id = ? OR eval_asset_id IS NULL)
+                        ORDER BY (eval_asset_id = ?) DESC, (ckpt_step = ?) DESC, (ckpt_mode = ?) DESC, updated_at DESC
+                        LIMIT 1
+                        """,
+                        (tid, ta_id, ta_id, int(ckpt_step or 0), mode),
+                    )
             else:
                 fb_ev = db.query_one(
                     """
                     SELECT eval_key, ckpt_step FROM experiment_evals
                     WHERE task_id = ?
-                    ORDER BY (ckpt_mode = ?) DESC, updated_at DESC
+                    ORDER BY
+                        (seq_frames > 0) DESC,
+                        (CASE WHEN ? != '' AND eval_key LIKE ? THEN 1 WHEN eval_asset_id = ? THEN 1 ELSE 0 END) DESC,
+                        (ckpt_step = ?) DESC,
+                        (ckpt_mode = ?) DESC,
+                        updated_at DESC
                     LIMIT 1
                     """,
-                    (tid, mode),
+                    (tid, sig_like, sig_like, ta_id, int(ckpt_step or 0), mode),
                 )
             if fb_ev:
                 eval_key = fb_ev["eval_key"]
-                ckpt_step = ckpt_step or int(fb_ev["ckpt_step"] or 0)
+                ckpt_step = int(fb_ev["ckpt_step"] or ckpt_step or 0)
                 cached_eval = analytics_db.load_eval_from_db(tid, t["node_name"], t["run_dir"], eval_key)
 
         dur_sec = t.get("duration_sec")
@@ -1241,9 +1344,7 @@ class SequenceEvalRunner:
             if t:
                 loaded_tasks.append(t)
 
-        asset_row = resolve_eval_asset(user_id, is_admin, eval_asset_id, tasks_for_fallback=loaded_tasks)
-        seq_files = _get_asset_seq_files(asset_row)
-        has_seq = len(seq_files) >= 2
+        explicit_asset_row = resolve_eval_asset(user_id, is_admin, eval_asset_id) if eval_asset_id else None
 
         jobs = []
         skipped_cached = 0
@@ -1252,21 +1353,28 @@ class SequenceEvalRunner:
             ckpt_abs, ckpt_step = resolve_eval_checkpoint(t["run_dir"], cfg, ckpt_mode=mode)
             if not ckpt_abs:
                 continue
-            eval_key = compute_eval_key(ckpt_step, asset_row)
-            if not force and load_cached_eval(
-                t["run_dir"], t["node_name"], eval_key, task_id=int(t["id"]), user_id=int(t["user_id"])
-            ) is not None:
-                skipped_cached += 1
-                continue
+            task_asset = explicit_asset_row or resolve_eval_asset(user_id, is_admin, None, tasks_for_fallback=[t])
+            seq_files = _get_asset_seq_files(task_asset)
+            has_seq = len(seq_files) >= 2
+            eval_key = compute_eval_key(ckpt_step, task_asset)
+            if not force:
+                hit_eval, _ = _find_cached_eval_by_sig(
+                    t["run_dir"], t["node_name"], eval_key, task_id=int(t["id"]), user_id=int(t["user_id"])
+                )
+                if hit_eval is not None:
+                    seq_blk = hit_eval.get("sequence") or {}
+                    if not has_seq or bool(seq_blk.get("frames_on_disk")):
+                        skipped_cached += 1
+                        continue
 
             eval_src = ""
             eval_tgt = ""
-            asset_name = asset_row["name"] if asset_row else ""
-            if asset_row and has_seq:
+            asset_name = task_asset["name"] if task_asset else ""
+            if task_asset and has_seq:
                 seq_rel = (
-                    asset_row.get("source_path")
-                    if asset_row.get("kind") == "eval_sequence"
-                    else asset_row.get("seq_path")
+                    task_asset.get("source_path")
+                    if task_asset.get("kind") == "eval_sequence"
+                    else task_asset.get("seq_path")
                 ) or ""
                 if seq_rel:
                     eval_src = storage.abs_from_root(seq_rel)
@@ -1283,7 +1391,7 @@ class SequenceEvalRunner:
                     "ckpt_mode": mode,
                     "task_config": cfg,
                     "eval_key": eval_key,
-                    "eval_asset_id": asset_row["id"] if asset_row else None,
+                    "eval_asset_id": task_asset["id"] if task_asset else None,
                     "eval_asset_name": asset_name,
                     "eval_source_dir": eval_src,
                     "eval_target_dir": eval_tgt,
@@ -1322,7 +1430,10 @@ class SequenceEvalRunner:
     def cancel(self) -> dict:
         with self._cond:
             self._queue.clear()
+            if self._active is not None:
+                self._active["cancelled"] = True
             proc = self._proc
+            self._cond.notify_all()
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
@@ -1376,14 +1487,33 @@ class SequenceEvalRunner:
                 self._active = job
 
             try:
+                # Wait until at least one enabled GPU is idle so evaluation never collides with active training/inference VRAM
+                while True:
+                    if job.get("cancelled"):
+                        break
+                    q_now = scheduler.SCHEDULER.queue_status()
+                    if int(q_now.get("enabled_gpu_count") or 0) <= 0 or int(q_now.get("idle_gpu_count") or 0) > 0:
+                        break
+                    time.sleep(0.6)
+                if job.get("cancelled"):
+                    continue
+
                 os.makedirs(job["eval_out_dir"], exist_ok=True)
                 spec = dict(job)
-                spec["device"] = self._pick_eval_device()
+                picked_dev = self._pick_eval_device()
+                eval_env = storage.apply_subprocess_storage_env(os.environ.copy())
+                if picked_dev.startswith("cuda:"):
+                    gid_str = picked_dev.split(":", 1)[1]
+                    scheduler.SCHEDULER._reclaim_preview_gpu(gid_str)
+                    eval_env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+                    eval_env["CUDA_VISIBLE_DEVICES"] = gid_str
+                    spec["device"] = "cuda:0"
+                else:
+                    spec["device"] = picked_dev
                 spec_path = os.path.join(job["eval_out_dir"], "spec.json")
                 with open(spec_path, "w", encoding="utf-8") as fh:
                     json.dump(spec, fh, ensure_ascii=False, indent=2)
 
-                eval_env = storage.apply_subprocess_storage_env(os.environ.copy())
                 proc = subprocess.Popen(
                     [scheduler.PYTHON_BIN, "-m", "wildcat.evaluator", spec_path],
                     cwd=db.ROOT,

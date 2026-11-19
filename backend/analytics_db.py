@@ -1111,10 +1111,32 @@ def load_eval_from_db(task_id: int, node_name: str, run_dir_rel: str, eval_key: 
             (int(ev["id"]),),
         )
         rdir_abs = storage.abs_from_root(run_dir_rel or "")
-        out_dir_abs = os.path.join(rdir_abs, "eval", eval_key, "out") if rdir_abs else ""
-        frames_on_disk = bool(out_dir_abs and os.path.isdir(out_dir_abs))
-        base_url = f"/f/run/{quote(node_name)}/eval/{quote(eval_key)}"
+        disk_key = eval_key
+        out_dir_abs = os.path.join(rdir_abs, "eval", disk_key, "out") if rdir_abs else ""
+        has_out = bool(out_dir_abs and os.path.isdir(out_dir_abs) and os.listdir(out_dir_abs))
+        if not has_out and rdir_abs and "_seq" in eval_key:
+            eval_root = os.path.join(rdir_abs, "eval")
+            if os.path.isdir(eval_root):
+                step_pfx = eval_key.split("_seq", 1)[0] + "_seq"
+                sig_sfx = "_" + eval_key.rsplit("_", 1)[-1]
+                try:
+                    for cand in sorted(os.listdir(eval_root)):
+                        if cand.startswith(step_pfx) and cand.endswith(sig_sfx):
+                            cand_out = os.path.join(eval_root, cand, "out")
+                            if os.path.isdir(cand_out) and os.listdir(cand_out):
+                                disk_key = cand
+                                out_dir_abs = cand_out
+                                has_out = True
+                                break
+                except OSError:
+                    pass
+        flk_dir_abs = os.path.join(rdir_abs, "eval", disk_key, "flicker") if rdir_abs else ""
+        err_dir_abs = os.path.join(rdir_abs, "eval", disk_key, "err") if rdir_abs else ""
+        has_flk = bool(flk_dir_abs and os.path.isdir(flk_dir_abs) and os.listdir(flk_dir_abs))
         is_paired = bool(ev.get("is_paired_seq"))
+        has_err = bool(is_paired and err_dir_abs and os.path.isdir(err_dir_abs) and os.listdir(err_dir_abs))
+        frames_on_disk = has_out
+        base_url = f"/f/run/{quote(node_name)}/eval/{quote(disk_key)}"
 
         per_frame = []
         for fr in f_rows:
@@ -1133,11 +1155,12 @@ def load_eval_from_db(task_id: int, node_name: str, run_dir_rel: str, eval_key: 
                 item["mse"] = fr["mse"]
                 item["psnr_srgb"] = fr["psnr_srgb"]
                 item["psnr_aces"] = fr["psnr_aces"]
-            if frames_on_disk:
+            if has_out:
                 item["out_url"] = f"{base_url}/out/{quote(fn)}"
+            if has_flk:
                 item["flicker_url"] = f"{base_url}/flicker/{quote(fn)}"
-                if is_paired:
-                    item["err_url"] = f"{base_url}/err/{quote(fn)}"
+            if has_err:
+                item["err_url"] = f"{base_url}/err/{quote(fn)}"
             per_frame.append(item)
 
         seq_out = {

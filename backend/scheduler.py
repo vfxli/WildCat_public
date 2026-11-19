@@ -513,6 +513,7 @@ class TaskQueueScheduler:
     def __init__(self):
         self._lock = threading.RLock()
         self._active: dict[int, _ActiveJob] = {}  # task_id -> _ActiveJob
+        self._active_infer: dict[str, object] = {}  # job_id -> infer_runner.ActiveInferSubproc
         self._running = False
         self._thread = None
 
@@ -618,9 +619,16 @@ class TaskQueueScheduler:
                     (new_st, now, err_msg, m.get("last_step"), m.get("total_steps"), m.get("last_loss"), r["id"]),
                 )
                 try:
-                    analytics_db.sync_task_log_to_db(db.query_one("SELECT * FROM tasks WHERE id = ?", (r["id"],)), force=True)
+                    t_rec = db.query_one("SELECT * FROM tasks WHERE id = ?", (r["id"],))
+                    if t_rec:
+                        analytics_db.sync_task_log_to_db(t_rec, force=True)
+                        analytics_db.sync_task_evals_from_disk(t_rec)
                 except Exception:
                     pass
+
+        from . import infer_runner as _infer_runner
+
+        _infer_runner.reconcile_infer_jobs_on_startup(now=now)
 
     def _loop(self):
         while self._running:
@@ -696,12 +704,16 @@ class TaskQueueScheduler:
                     )
                     finished_ids.append(tid)
 
+            from . import infer_runner as _infer_runner
+
             for tid in finished_ids:
                 self._active.pop(tid, None)
                 try:
                     t_done = db.query_one("SELECT * FROM tasks WHERE id = ?", (tid,))
                     if t_done:
                         analytics_db.sync_task_log_to_db(t_done, force=True)
+                        analytics_db.sync_task_evals_from_disk(t_done)
+                        _infer_runner.on_train_task_terminal(tid, str(t_done["status"]), now=now)
                 except Exception:
                     pass
 
@@ -745,9 +757,44 @@ class TaskQueueScheduler:
                         (new_st, now, err_msg, m.get("last_step"), m.get("total_steps"), m.get("last_loss"), rid),
                     )
                     try:
-                        analytics_db.sync_task_log_to_db(db.query_one("SELECT * FROM tasks WHERE id = ?", (rid,)), force=True)
+                        t_surv = db.query_one("SELECT * FROM tasks WHERE id = ?", (rid,))
+                        if t_surv:
+                            analytics_db.sync_task_log_to_db(t_surv, force=True)
+                            analytics_db.sync_task_evals_from_disk(t_surv)
+                            _infer_runner.on_train_task_terminal(rid, str(t_surv["status"]), now=now)
                     except Exception:
                         pass
+
+            # 1c. Poll / finalize active inference subprocesses and reconcile any orphaned DB running infer_jobs
+            for jid, act_inf in list(self._active_infer.items()):
+                try:
+                    if _infer_runner.poll_or_finalize_active_infer(act_inf, now=now):
+                        self._active_infer.pop(jid, None)
+                except Exception:
+                    sys.stderr.write(f"[WildCat ERROR] Infer job poll failed ({jid}):\n{traceback.format_exc()}\n")
+                    sys.stderr.flush()
+                    self._active_infer.pop(jid, None)
+
+            surviving_infer = []
+            for ir in db.query_all("SELECT job_id, task_id, assigned_gpu, pid FROM infer_jobs WHERE status = 'running'"):
+                if ir["job_id"] in self._active_infer:
+                    continue
+                if _is_pid_alive(ir.get("pid")):
+                    surviving_infer.append(ir)
+                else:
+                    _infer_runner.reconcile_infer_jobs_on_startup(now=now)
+                    break
+
+            # Safety sweep: ensure no waiting_train infer_job stays stuck if its parent task already exited
+            for wr in db.query_all(
+                "SELECT DISTINCT ij.depends_on_task_id AS dep_id, t.status AS dep_status "
+                "FROM infer_jobs ij LEFT JOIN tasks t ON t.id = ij.depends_on_task_id "
+                "WHERE ij.status = 'waiting_train' AND ij.depends_on_task_id IS NOT NULL"
+            ):
+                dep_id = wr.get("dep_id")
+                dep_st = wr.get("dep_status")
+                if dep_id is not None and dep_st not in ("queued", "running"):
+                    _infer_runner.on_train_task_terminal(int(dep_id), str(dep_st or "cancelled"), now=now)
 
             # 2. Determine strict GPU occupancy & apply dynamic Admin GPU pool policy (enabled / Primary / Secondary)
             max_per_gpu = max(1, int(db.get_setting("max_jobs_per_gpu", "1") or 1))
@@ -779,14 +826,72 @@ class TaskQueueScheduler:
                 raw_gid = str(r.get("assigned_gpu") if r.get("assigned_gpu") is not None else "")
                 gid = raw_gid if raw_gid in gpu_counts else gpu_Ids[0]
                 gpu_counts[gid] = gpu_counts.get(gid, 0) + 1
+            for act_inf in self._active_infer.values():
+                if act_inf.alive:
+                    gid = str(act_inf.gpu) if str(act_inf.gpu) in gpu_counts else gpu_Ids[0]
+                    gpu_counts[gid] = gpu_counts.get(gid, 0) + 1
+            for ir in surviving_infer:
+                raw_gid = str(ir.get("assigned_gpu") if ir.get("assigned_gpu") is not None else "")
+                gid = raw_gid if raw_gid in gpu_counts else gpu_Ids[0]
+                gpu_counts[gid] = gpu_counts.get(gid, 0) + 1
 
             max_enabled_jobs = len(enabled_gpu_ids) * max_per_gpu
             surviving_gpus = {
                 (str(r.get("assigned_gpu")) if str(r.get("assigned_gpu") or "") in gpu_counts else gpu_Ids[0])
                 for r in surviving_running
+            } | {
+                (str(ir.get("assigned_gpu")) if str(ir.get("assigned_gpu") or "") in gpu_counts else gpu_Ids[0])
+                for ir in surviving_infer
             }
 
-            # 3. Dispatch queued tasks onto enabled GPUs in priority + FIFO order (Primary GPU first, then Secondary, then workers)
+            # 3a. STRICT HIGH PRIORITY: Dispatch ready ('queued') inference jobs FIRST in FIFO order before any training task
+            if enabled_gpu_ids:
+                queued_inf = db.query_all(
+                    "SELECT * FROM infer_jobs WHERE status = 'queued' ORDER BY COALESCE(ready_at, created_at) ASC, created_at ASC"
+                )
+                for qi in queued_inf:
+                    if sum(gpu_counts.get(g, 0) for g in enabled_gpu_ids) >= max_enabled_jobs:
+                        break
+                    pref = str(qi.get("preferred_gpu") or "auto")
+                    if pref != "auto" and pref not in enabled_gpu_ids:
+                        pref = "auto"
+
+                    chosen_gpu = None
+                    if pref == "auto":
+                        ordered_candidates = sorted(
+                            enabled_gpu_ids,
+                            key=lambda g: (
+                                gpu_counts.get(g, 0),
+                                0 if g == primary_gpu else (1 if g == secondary_gpu else 2),
+                                -_GPU_VRAM_MB.get(g, 0),
+                                int(g) if str(g).isdigit() else 0,
+                            ),
+                        )
+                        for gid in ordered_candidates:
+                            if gpu_counts.get(gid, 0) < max_per_gpu:
+                                chosen_gpu = gid
+                                break
+                    elif gpu_counts.get(pref, 0) < max_per_gpu:
+                        chosen_gpu = pref
+
+                    if chosen_gpu is not None:
+                        try:
+                            self._reclaim_preview_gpu(chosen_gpu)
+                            act_sub = _infer_runner.spawn_queued_infer_job(qi, chosen_gpu)
+                            self._active_infer[qi["job_id"]] = act_sub
+                            gpu_counts[chosen_gpu] = gpu_counts.get(chosen_gpu, 0) + 1
+                        except Exception as exc:
+                            tb = traceback.format_exc()
+                            sys.stderr.write(
+                                f"[WildCat ERROR] Failed to launch infer job '{qi.get('job_id')}' ({qi.get('node_name')}):\n{tb}\n"
+                            )
+                            sys.stderr.flush()
+                            db.execute(
+                                "UPDATE infer_jobs SET status = 'error', assigned_gpu = NULL, pid = NULL, finished_at = ?, error_msg = ? WHERE job_id = ?",
+                                (time.time(), str(exc) or tb, qi["job_id"]),
+                            )
+
+            # 3b. Dispatch queued training tasks onto remaining enabled GPUs in priority + FIFO order
             if enabled_gpu_ids:
                 queued = db.query_all(
                     "SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority DESC, created_at ASC, id ASC"
@@ -862,6 +967,17 @@ class TaskQueueScheduler:
                                 (time.time(), tb, q["id"]),
                             )
 
+    def _reclaim_preview_gpu(self, gpu_id: str) -> None:
+        for active_job in self._active.values():
+            if active_job.alive and active_job.preview_gpu == str(gpu_id):
+                if active_job.run_dir and os.path.isdir(active_job.run_dir):
+                    try:
+                        with open(os.path.join(active_job.run_dir, ".yield_preview_gpu"), "w", encoding="utf-8") as yf:
+                            yf.write("yield\n")
+                    except OSError:
+                        pass
+                active_job.preview_gpu = None
+
     def _launch_queued_task(self, task_row: dict, gpu_id: str, surviving_gpus: set = None):
         tid = task_row["id"]
         jtype = task_row["job_type"]
@@ -873,15 +989,7 @@ class TaskQueueScheduler:
             pass
 
         # Reclaim gpu_id if any currently active training job was borrowing it as a secondary preview_gpu
-        for active_job in self._active.values():
-            if active_job.alive and active_job.preview_gpu == str(gpu_id):
-                if active_job.run_dir and os.path.isdir(active_job.run_dir):
-                    try:
-                        with open(os.path.join(active_job.run_dir, ".yield_preview_gpu"), "w", encoding="utf-8") as yf:
-                            yf.write("yield\n")
-                    except OSError:
-                        pass
-                active_job.preview_gpu = None
+        self._reclaim_preview_gpu(str(gpu_id))
 
         env = storage.apply_subprocess_storage_env(os.environ.copy())
         env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -899,10 +1007,14 @@ class TaskQueueScheduler:
         busy = (
             {str(j.gpu) for j in self._active.values() if j.alive}
             | {str(j.preview_gpu) for j in self._active.values() if j.alive and j.preview_gpu}
+            | {str(j.gpu) for j in self._active_infer.values() if j.alive}
             | {str(x) for x in (surviving_gpus or set())}
             | {str(gpu_id)}
         )
-        other_queued = db.query_one("SELECT id FROM tasks WHERE status = 'queued' AND id != ? LIMIT 1", (tid,))
+        other_queued = (
+            db.query_one("SELECT id FROM tasks WHERE status = 'queued' AND id != ? LIMIT 1", (tid,))
+            or db.query_one("SELECT job_id FROM infer_jobs WHERE status = 'queued' LIMIT 1")
+        )
         others = [str(g[0]) for g in GPUS if str(g[0]) != str(gpu_id) and str(g[0]) in enabled_set]
         if pv == "auto":
             if not other_queued:
@@ -999,6 +1111,15 @@ class TaskQueueScheduler:
             task_row["estimated_remaining_sec"] = r_item["estimated_remaining_sec"]
         else:
             task_row["estimated_remaining_sec"] = None
+        bound_inf = next(
+            (
+                ij
+                for ij in (qstat.get("infer_jobs") or [])
+                if ij.get("auto_on_finish") and ij.get("task_id") == tid and ij.get("state") in ("waiting_train", "queued", "running")
+            ),
+            None,
+        )
+        task_row["bound_infer_job"] = bound_inf
         return task_row
 
     @staticmethod
@@ -1079,11 +1200,15 @@ class TaskQueueScheduler:
                     if iv < min_v or iv > 10_000_000:
                         raise ValueError(i18n.t("server.invalidTrainParam", field=f"io.{io_k}"))
                     io_cfg[io_k] = iv
+            if "infer_on_finish" in io_cfg and io_cfg["infer_on_finish"] is not None:
+                io_cfg["infer_on_finish"] = bool(io_cfg["infer_on_finish"])
 
         else:
             mo_priv = out["model"]
             ms_priv = str(mo_priv.get("model_size") or "Medium").strip()
             mo_priv["global_attention"] = bool(mo_priv.get("global_attention", False)) if ms_priv == "WildCatLargeV1" else False
+            if "infer_on_finish" in out["io"] and out["io"]["infer_on_finish"] is not None:
+                out["io"]["infer_on_finish"] = bool(out["io"]["infer_on_finish"])
 
         return out
 
@@ -1160,38 +1285,42 @@ class TaskQueueScheduler:
             src_p = str(paths_cfg.get("source") or "").strip()
             tgt_p = str(paths_cfg.get("target") or "").strip()
             eval_seq_p = str(paths_cfg.get("eval_sequence") or "").strip()
-            if not eval_seq_p:
-                exp_meta = cfg.get("experiment") or {}
-                ds_row = None
-                for cand_aid in (exp_meta.get("eval_asset_id"), exp_meta.get("dataset_id")):
-                    if not cand_aid:
-                        continue
-                    try:
-                        row_cand = db.query_one(
-                            "SELECT user_id, kind, source_path, rel_path, seq_path FROM assets WHERE id = ?",
-                            (int(cand_aid),),
-                        )
-                        if row_cand and not is_privileged and int(row_cand.get("user_id") or 0) != int(user_id):
-                            row_cand = None
-                        if row_cand:
-                            cand_seq_probe = (
-                                str(row_cand.get("source_path") or row_cand.get("rel_path") or "").strip()
-                                if row_cand.get("kind") == "eval_sequence"
-                                else str(row_cand.get("seq_path") or "").strip()
-                            )
-                            if cand_seq_probe and len(storage.expand_sequence_files(cand_seq_probe)) >= 2:
-                                ds_row = {"seq_path": cand_seq_probe}
-                                break
-                    except Exception:
-                        pass
-                if not ds_row and src_p:
-                    ds_row = db.query_one(
-                        "SELECT seq_path FROM assets WHERE user_id = ? AND source_path = ? AND seq_path != '' LIMIT 1",
-                        (user_id, src_p),
+            exp_meta = dict(cfg.get("experiment") or {})
+            matched_ds = None
+            for cand_aid in (exp_meta.get("eval_asset_id"), exp_meta.get("dataset_id")):
+                if not cand_aid:
+                    continue
+                try:
+                    row_cand = db.query_one(
+                        "SELECT id, name, user_id, kind, source_path, rel_path, seq_path FROM assets WHERE id = ?",
+                        (int(cand_aid),),
                     )
-                if ds_row and ds_row.get("seq_path"):
-                    cand_seq = str(ds_row["seq_path"]).strip()
-                    if len(storage.expand_sequence_files(cand_seq)) >= 2:
+                    if row_cand and not is_privileged and int(row_cand.get("user_id") or 0) != int(user_id):
+                        row_cand = None
+                    if row_cand:
+                        matched_ds = row_cand
+                        break
+                except Exception:
+                    pass
+            if not matched_ds and src_p:
+                matched_ds = db.query_one(
+                    "SELECT id, name, user_id, kind, source_path, rel_path, seq_path FROM assets WHERE user_id = ? AND source_path = ? ORDER BY (seq_path != '') DESC, id ASC LIMIT 1",
+                    (user_id, src_p),
+                )
+            if matched_ds:
+                if not exp_meta.get("dataset_id"):
+                    exp_meta["dataset_id"] = int(matched_ds["id"])
+                if not exp_meta.get("dataset_name") and matched_ds.get("name"):
+                    exp_meta["dataset_name"] = str(matched_ds["name"])
+                cfg["experiment"] = exp_meta
+            if not eval_seq_p:
+                if matched_ds:
+                    cand_seq = (
+                        str(matched_ds.get("source_path") or matched_ds.get("rel_path") or "").strip()
+                        if matched_ds.get("kind") == "eval_sequence"
+                        else str(matched_ds.get("seq_path") or "").strip()
+                    )
+                    if cand_seq and len(storage.expand_sequence_files(cand_seq)) >= 2:
                         eval_seq_p = cand_seq
                         paths_cfg["eval_sequence"] = eval_seq_p
             elif len(storage.expand_sequence_files(eval_seq_p)) < 2:
@@ -1275,9 +1404,10 @@ class TaskQueueScheduler:
             if not is_resume:
                 if os.path.isfile(os.path.join(run_abs, "ckpt", "latest.pt")):
                     raise ValueError(i18n.t("server.taskNameHasHistory", node=clean_node))
-                ckpt_dir = os.path.join(run_abs, "ckpt")
-                if os.path.isdir(ckpt_dir):
-                    shutil.rmtree(ckpt_dir, ignore_errors=True)
+                for stale_dir in ("ckpt", "eval", "preview_sup", "contact_sup"):
+                    sdir = os.path.join(run_abs, stale_dir)
+                    if os.path.isdir(sdir):
+                        shutil.rmtree(sdir, ignore_errors=True)
                 # (kf_common.*: report of the optional keyframe-commonality step, quality.jsonl: what the quality monitor
                 #  measured - a fresh run must not show an older run's; a resumed run appends to quality.jsonl)
                 for stale_fn in ("train.log", "kf_common.json", "kf_common.jpg", "quality.jsonl"):
@@ -1514,12 +1644,29 @@ class TaskQueueScheduler:
 
             analytics_db.sync_task_hyperparams_to_db(tid, cfg=cfg)
 
+            from . import infer_runner as _infer_runner
+
+            _infer_runner.enqueue_auto_infer_for_task(
+                task_id=tid,
+                user_id=user_id,
+                username=username,
+                node_name=clean_node,
+                cfg=cfg,
+                matched_ds=matched_ds,
+                eval_seq_rel=eval_seq_p,
+                tot_steps=tot_steps,
+                preferred_gpu=preferred_gpu,
+                now=now,
+            )
+
             # Trigger an immediate scheduling tick so if a GPU is free (and no tasks ahead) it starts right away
             self.tick()
             return self.enrich_task_with_queue(db.query_one("SELECT * FROM tasks WHERE id = ?", (tid,)))
 
     def stop_task(self, task_id: int, wait_timeout: float = 6.0) -> dict:
         """Cancel a queued task or send SIGINT to stop a running task cleanly, then immediately dispatch next queued task."""
+        from . import infer_runner as _infer_runner
+
         wait_proc = None
         wait_pid = None
         with self._lock:
@@ -1527,10 +1674,12 @@ class TaskQueueScheduler:
             if not row:
                 raise ValueError(f"Task {task_id} not found.")
             if row["status"] == "queued":
+                ts = time.time()
                 db.execute(
                     "UPDATE tasks SET status = 'cancelled', finished_at = ? WHERE id = ?",
-                    (time.time(), task_id),
+                    (ts, task_id),
                 )
+                _infer_runner.on_train_task_terminal(task_id, "cancelled", now=ts)
                 return self.enrich_task_with_queue(db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,)))
 
             rdir_abs = storage.abs_from_root(row["run_dir"]) if row.get("run_dir") else ""
@@ -1570,19 +1719,24 @@ class TaskQueueScheduler:
 
         with self._lock:
             if wait_pid is not None and not _is_pid_alive(wait_pid):
+                ts = time.time()
                 db.execute(
                     "UPDATE tasks SET status = 'stopped', pid = NULL, assigned_gpu = NULL, finished_at = ? WHERE id = ?",
-                    (time.time(), task_id),
+                    (ts, task_id),
                 )
+                _infer_runner.on_train_task_terminal(task_id, "stopped", now=ts)
             self.tick()
             return self.enrich_task_with_queue(db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,)))
 
     def delete_task(self, task_id: int):
         """Force-stop task if running/queued, delete its disk files, and remove its DB record."""
+        from . import infer_runner as _infer_runner
+
         with self._lock:
             row = db.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
             if not row:
                 return
+            _infer_runner.cancel_infer_jobs_for_task(task_id)
             job = self._active.pop(task_id, None)
             if job and job.alive:
                 job.stop_requested = True
@@ -1606,6 +1760,8 @@ class TaskQueueScheduler:
         return list(job.tail) if job else []
 
     def queue_status(self) -> dict:
+        from . import infer_runner as _infer_runner
+
         with self._lock:
             now = time.time()
             max_per_gpu = max(1, int(db.get_setting("max_jobs_per_gpu", "1") or 1))
@@ -1635,11 +1791,95 @@ class TaskQueueScheduler:
                 ORDER BY priority DESC, created_at ASC, id ASC
                 """
             )
+            running_infer_raw = db.query_all(
+                "SELECT * FROM infer_jobs WHERE status = 'running' ORDER BY started_at ASC, created_at ASC"
+            )
+            queued_infer_raw = db.query_all(
+                "SELECT * FROM infer_jobs WHERE status = 'queued' ORDER BY COALESCE(ready_at, created_at) ASC, created_at ASC"
+            )
+            waiting_infer_raw = db.query_all(
+                "SELECT * FROM infer_jobs WHERE status = 'waiting_train' ORDER BY created_at ASC"
+            )
+            waiting_infer_by_task = {
+                int(w["depends_on_task_id"]): w
+                for w in waiting_infer_raw
+                if w.get("depends_on_task_id") is not None
+            }
 
             slots = {gid: [0.0] * max_per_gpu for gid in gpu_Ids}
             gpu_active_counts = {gid: 0 for gid in gpu_Ids}
             gpu_primary_task = {}
             running_out = []
+            infer_jobs_out = []
+
+            for ri in running_infer_raw:
+                raw_gid = str(ri.get("assigned_gpu") if ri.get("assigned_gpu") is not None else "")
+                gid = raw_gid if raw_gid in slots else gpu_Ids[0]
+                done_f = int(ri.get("done_frames") or 0)
+                tot_f = max(1, int(ri.get("total_frames") or 1))
+                fps_f = float(ri.get("fps") or 0.0)
+                mode_f = str(ri.get("infer_mode") or "sequence")
+                rem_inf_sec = _infer_runner.estimate_infer_seconds(tot_f, mode_f, done_frames=done_f, fps=fps_f)
+
+                slots[gid].sort()
+                slots[gid][0] = max(slots[gid][0], rem_inf_sec)
+                gpu_active_counts[gid] = gpu_active_counts.get(gid, 0) + 1
+
+                pct_inf = round(min(100.0, (done_f / float(tot_f)) * 100.0), 1)
+                ri_pub = {
+                    "id": f"infer:{ri['job_id']}",
+                    "infer_job_id": ri["job_id"],
+                    "task_id": ri["task_id"],
+                    "user_id": ri["user_id"],
+                    "username": ri["username"],
+                    "node_name": ri["node_name"],
+                    "asset_name": ri.get("asset_name") or "",
+                    "job_type": "infer",
+                    "infer_mode": mode_f,
+                    "auto_on_finish": bool(ri.get("auto_on_finish")),
+                    "assigned_gpu": gid,
+                    "last_step": done_f,
+                    "total_steps": tot_f,
+                    "progress_pct": pct_inf,
+                    "last_loss": None,
+                    "sps": round(fps_f, 2) if fps_f > 0 else None,
+                    "scale": None,
+                    "started_at": ri.get("started_at"),
+                    "estimated_remaining_sec": round(rem_inf_sec, 1),
+                }
+                running_out.append(ri_pub)
+                if gid not in gpu_primary_task:
+                    gpu_primary_task[gid] = ri_pub
+                infer_jobs_out.append(
+                    {
+                        "job_id": ri["job_id"],
+                        "user_id": int(ri["user_id"]),
+                        "username": str(ri.get("username") or ""),
+                        "task_id": int(ri["task_id"]),
+                        "node_name": ri["node_name"],
+                        "depends_on_task_id": ri.get("depends_on_task_id"),
+                        "auto_on_finish": bool(ri.get("auto_on_finish")),
+                        "asset_id": ri.get("asset_id"),
+                        "asset_name": str(ri.get("asset_name") or ""),
+                        "step": int(ri.get("resolved_step") or ri.get("req_step") or 0),
+                        "infer_mode": mode_f,
+                        "frame_index": ri.get("frame_index"),
+                        "output_format": str(ri.get("output_format") or "exr_float"),
+                        "state": "running",
+                        "done": done_f,
+                        "total": tot_f,
+                        "progress": round(done_f / float(tot_f), 4),
+                        "fps": round(fps_f, 2),
+                        "device": str(ri.get("device") or f"CUDA:{gid}"),
+                        "assigned_gpu": gid,
+                        "queue_position": None,
+                        "ahead_count": 0,
+                        "target_gpu": gid,
+                        "estimated_wait_sec": 0.0,
+                        "estimated_remaining_sec": round(rem_inf_sec, 1),
+                        "created_at": ri.get("created_at"),
+                    }
+                )
 
             for r in running_raw:
                 raw_gid = str(r.get("assigned_gpu") if r.get("assigned_gpu") is not None else "")
@@ -1665,9 +1905,15 @@ class TaskQueueScheduler:
                     now=now,
                     gpu_id=gid,
                 )
+                bound_w = waiting_infer_by_task.get(int(r["id"]))
+                bound_inf_sec = (
+                    _infer_runner.estimate_infer_seconds(int(bound_w.get("total_frames") or 1), str(bound_w.get("infer_mode") or "sequence"))
+                    if bound_w
+                    else 0.0
+                )
 
                 slots[gid].sort()
-                slots[gid][0] = max(slots[gid][0], rem_sec)
+                slots[gid][0] = max(slots[gid][0], rem_sec + bound_inf_sec)
                 gpu_active_counts[gid] = gpu_active_counts.get(gid, 0) + 1
 
                 pct = round(min(100.0, (cur_step / float(tot_steps)) * 100.0), 1) if tot_steps > 0 else 0.0
@@ -1693,7 +1939,104 @@ class TaskQueueScheduler:
 
             queued_out = []
             pinned_ahead_counts = {gid: gpu_active_counts.get(gid, 0) for gid in gpu_Ids}
-            for idx, q in enumerate(queued_raw, start=1):
+
+            # Simulate HIGH-PRIORITY queued inference jobs FIRST in slots
+            for idx_inf, qi in enumerate(queued_infer_raw, start=1):
+                tot_f = max(1, int(qi.get("total_frames") or 1))
+                mode_f = str(qi.get("infer_mode") or "sequence")
+                ahead_queued = idx_inf - 1
+                if enabled_gpu_ids:
+                    pref = str(qi.get("preferred_gpu") or "auto")
+                    if pref != "auto" and pref not in enabled_set:
+                        pref = "auto"
+                    cands = [pref] if pref != "auto" else enabled_gpu_ids
+                    best_gid = min(
+                        cands,
+                        key=lambda g: (
+                            min(slots[g]),
+                            0 if g == primary_gpu else (1 if g == secondary_gpu else 2),
+                            -_GPU_VRAM_MB.get(g, 0),
+                            int(g) if str(g).isdigit() else 0,
+                        ),
+                    )
+                    dur_sec = _infer_runner.estimate_infer_seconds(tot_f, mode_f)
+                    slots[best_gid].sort()
+                    wait_sec = slots[best_gid][0]
+                    slots[best_gid][0] = wait_sec + dur_sec
+                    if pref != "auto":
+                        ahead_total = pinned_ahead_counts.get(pref, 0)
+                    else:
+                        ahead_total = 0 if wait_sec <= 0 else (len(running_out) + ahead_queued)
+                    pinned_ahead_counts[best_gid] = pinned_ahead_counts.get(best_gid, 0) + 1
+                else:
+                    best_gid = None
+                    dur_sec = _infer_runner.estimate_infer_seconds(tot_f, mode_f)
+                    wait_sec = 0.0
+                    ahead_total = len(running_out) + ahead_queued
+
+                queued_out.append(
+                    {
+                        "id": f"infer:{qi['job_id']}",
+                        "infer_job_id": qi["job_id"],
+                        "task_id": qi["task_id"],
+                        "user_id": qi["user_id"],
+                        "username": qi["username"],
+                        "node_name": qi["node_name"],
+                        "asset_name": qi.get("asset_name") or "",
+                        "job_type": "infer",
+                        "infer_mode": mode_f,
+                        "auto_on_finish": bool(qi.get("auto_on_finish")),
+                        "preferred_gpu": qi.get("preferred_gpu") or "auto",
+                        "target_gpu": best_gid,
+                        "priority": 1000,
+                        "created_at": qi.get("created_at"),
+                        "last_step": 0,
+                        "total_steps": tot_f,
+                        "queue_position": idx_inf,
+                        "ahead_queued_count": ahead_queued,
+                        "running_count": len(running_out),
+                        "ahead_count": ahead_total,
+                        "estimated_wait_sec": round(wait_sec, 1),
+                        "estimated_duration_sec": round(dur_sec, 1),
+                    }
+                )
+                infer_jobs_out.append(
+                    {
+                        "job_id": qi["job_id"],
+                        "user_id": int(qi["user_id"]),
+                        "username": str(qi.get("username") or ""),
+                        "task_id": int(qi["task_id"]),
+                        "node_name": qi["node_name"],
+                        "depends_on_task_id": qi.get("depends_on_task_id"),
+                        "auto_on_finish": bool(qi.get("auto_on_finish")),
+                        "asset_id": qi.get("asset_id"),
+                        "asset_name": str(qi.get("asset_name") or ""),
+                        "step": int(qi.get("resolved_step") or qi.get("req_step") or 0),
+                        "infer_mode": mode_f,
+                        "frame_index": qi.get("frame_index"),
+                        "output_format": str(qi.get("output_format") or "exr_float"),
+                        "state": "queued",
+                        "done": 0,
+                        "total": tot_f,
+                        "progress": 0.0,
+                        "fps": 0.0,
+                        "device": "",
+                        "assigned_gpu": None,
+                        "queue_position": idx_inf,
+                        "ahead_count": ahead_total,
+                        "target_gpu": best_gid,
+                        "estimated_wait_sec": round(wait_sec, 1),
+                        "estimated_remaining_sec": None,
+                        "created_at": qi.get("created_at"),
+                    }
+                )
+
+            infer_gpu_waits = [min(slots.get(gid, [0.0])) for gid in enabled_gpu_ids]
+            next_infer_wait_sec = round(min(infer_gpu_waits), 1) if infer_gpu_waits else 0.0
+
+            infer_queued_offset = len(queued_infer_raw)
+            for idx_tr, q in enumerate(queued_raw, start=1):
+                idx = infer_queued_offset + idx_tr
                 q_cfg = {}
                 try:
                     q_cfg = json.loads(q.get("config_json") or "{}")
@@ -1701,6 +2044,12 @@ class TaskQueueScheduler:
                     pass
                 q_step = int(q.get("last_step") or 0)
                 q_tot = int(q.get("total_steps") or (q_cfg.get("train") or {}).get("total_steps") or 10000)
+                bound_w = waiting_infer_by_task.get(int(q["id"]))
+                bound_inf_sec = (
+                    _infer_runner.estimate_infer_seconds(int(bound_w.get("total_frames") or 1), str(bound_w.get("infer_mode") or "sequence"))
+                    if bound_w
+                    else 0.0
+                )
 
                 ahead_queued = idx - 1
                 if enabled_gpu_ids:
@@ -1720,7 +2069,7 @@ class TaskQueueScheduler:
                     dur_sec = estimate_task_seconds(q_cfg, start_step=q_step, total_steps=q_tot, now=now, gpu_id=best_gid)
                     slots[best_gid].sort()
                     wait_sec = slots[best_gid][0]
-                    slots[best_gid][0] = wait_sec + dur_sec
+                    slots[best_gid][0] = wait_sec + dur_sec + bound_inf_sec
 
                     if pref != "auto":
                         ahead_total = pinned_ahead_counts.get(pref, 0)
@@ -1752,6 +2101,39 @@ class TaskQueueScheduler:
                         "ahead_count": ahead_total,
                         "estimated_wait_sec": round(wait_sec, 1),
                         "estimated_duration_sec": round(dur_sec, 1),
+                    }
+                )
+
+            for wi in waiting_infer_raw:
+                tot_f = max(1, int(wi.get("total_frames") or 1))
+                infer_jobs_out.append(
+                    {
+                        "job_id": wi["job_id"],
+                        "user_id": int(wi["user_id"]),
+                        "username": str(wi.get("username") or ""),
+                        "task_id": int(wi["task_id"]),
+                        "node_name": wi["node_name"],
+                        "depends_on_task_id": wi.get("depends_on_task_id"),
+                        "auto_on_finish": bool(wi.get("auto_on_finish")),
+                        "asset_id": wi.get("asset_id"),
+                        "asset_name": str(wi.get("asset_name") or ""),
+                        "step": int(wi.get("resolved_step") or wi.get("req_step") or 0),
+                        "infer_mode": str(wi.get("infer_mode") or "sequence"),
+                        "frame_index": wi.get("frame_index"),
+                        "output_format": str(wi.get("output_format") or "exr_float"),
+                        "state": "waiting_train",
+                        "done": 0,
+                        "total": tot_f,
+                        "progress": 0.0,
+                        "fps": 0.0,
+                        "device": "",
+                        "assigned_gpu": None,
+                        "queue_position": None,
+                        "ahead_count": 0,
+                        "target_gpu": None,
+                        "estimated_wait_sec": 0.0,
+                        "estimated_remaining_sec": None,
+                        "created_at": wi.get("created_at"),
                     }
                 )
 
@@ -1792,6 +2174,10 @@ class TaskQueueScheduler:
                 "gpus": gpus_info,
                 "running": running_out,
                 "queued": queued_out,
+                "infer_jobs": infer_jobs_out,
+                "infer_running_count": len(running_infer_raw),
+                "infer_queued_count": len(queued_infer_raw),
+                "infer_waiting_count": len(waiting_infer_raw),
                 "queued_count": len(queued_out),
                 "running_count": len(running_out),
                 "total_gpu_count": len(GPUS),
@@ -1801,6 +2187,7 @@ class TaskQueueScheduler:
                 "secondary_gpu": secondary_gpu,
                 "idle_gpu_count": idle_gpu_count,
                 "max_jobs_per_gpu": max_per_gpu,
+                "next_infer_wait_sec": next_infer_wait_sec,
                 "next_auto_wait_sec": round(next_auto_wait_sec, 1),
             }
 

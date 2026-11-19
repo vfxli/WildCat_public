@@ -660,9 +660,13 @@ def validate_and_save_paired_dataset(
     src_cs, eff_work_cs = _require_explicit_colorspace(input_colorspace, working_colorspace)
     src_role = i18n.t("server.roleSource")
     tgt_role = i18n.t("server.roleTarget")
+    eval_role = i18n.t("server.roleEvalSeq")
     with contextlib.ExitStack() as stack:
         src_entries = _collect_upload_readers(source_tuples, src_role, stack, restricted=restricted)
         tgt_entries = _collect_upload_readers(target_tuples, tgt_role, stack, restricted=restricted)
+        seq_entries = _collect_upload_readers(seq_tuples or [], eval_role, stack, restricted=restricted)
+        if len(seq_entries) < 2:
+            raise ValueError(i18n.t("server.evalSeqMinFrames", count=len(seq_entries)))
 
         src_fnums = [_extract_frame_num(bn) for bn, _ in src_entries]
         tgt_fnums = [_extract_frame_num(bn) for bn, _ in tgt_entries]

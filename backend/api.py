@@ -427,6 +427,8 @@ async def api_upload_paired_dataset(
                 raise ValueError(i18n.t("server.uploadNoValidImages", role=i18n.t("server.roleSource")))
             if not target_files:
                 raise ValueError(i18n.t("server.uploadNoValidImages", role=i18n.t("server.roleTarget")))
+            if not seq_files:
+                raise ValueError(i18n.t("server.uploadNoValidImages", role=i18n.t("server.roleEvalSeq")))
 
             total_files = len(source_files) + len(target_files) + len(seq_files)
             if restricted and total_files > security.MAX_UPLOAD_FILES_TOTAL * 3:
@@ -1233,6 +1235,7 @@ class InferSequenceStartRequest(BaseModel):
     output_format: str = "exr_float"
     infer_mode: str = "sequence"  # sequence | single
     frame_index: Optional[int] = None
+    preferred_gpu: str = "auto"
 
 
 @router.post("/infer-seq")
@@ -1253,6 +1256,7 @@ def api_start_infer_seq(
             output_format=req.output_format,
             infer_mode=req.infer_mode,
             frame_index=req.frame_index,
+            preferred_gpu=req.preferred_gpu,
         )
         return {"status": "ok", "job": job, "infer_dir": storage.get_infer_dir()}
     except PermissionError as e:
@@ -1263,6 +1267,12 @@ def api_start_infer_seq(
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=_log_api_exc("infer-seq/start", e))
+
+
+@router.get("/infer-seq/jobs")
+def api_list_infer_seq_jobs(user: dict = Depends(get_current_user)):
+    jobs = infer_runner.list_infer_jobs(user["id"], bool(user.get("is_admin")))
+    return {"status": "ok", "jobs": jobs, "infer_dir": storage.get_infer_dir()}
 
 
 @router.get("/infer-seq/jobs/{job_id}")

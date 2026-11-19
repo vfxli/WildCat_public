@@ -166,6 +166,41 @@ def init_db():
                     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS main.infer_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    username TEXT NOT NULL DEFAULT '',
+                    task_id INTEGER NOT NULL,
+                    node_name TEXT NOT NULL,
+                    depends_on_task_id INTEGER DEFAULT NULL,
+                    auto_on_finish INTEGER NOT NULL DEFAULT 0,
+                    asset_id INTEGER DEFAULT NULL,
+                    asset_name TEXT NOT NULL DEFAULT '',
+                    seq_rel TEXT NOT NULL DEFAULT '',
+                    req_step INTEGER DEFAULT NULL,
+                    resolved_step INTEGER NOT NULL DEFAULT 0,
+                    infer_mode TEXT NOT NULL DEFAULT 'sequence',
+                    frame_index INTEGER DEFAULT NULL,
+                    output_format TEXT NOT NULL DEFAULT 'exr_float',
+                    out_id TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    preferred_gpu TEXT NOT NULL DEFAULT 'auto',
+                    assigned_gpu TEXT DEFAULT NULL,
+                    pid INTEGER DEFAULT NULL,
+                    done_frames INTEGER NOT NULL DEFAULT 0,
+                    total_frames INTEGER NOT NULL DEFAULT 0,
+                    fps REAL NOT NULL DEFAULT 0.0,
+                    device TEXT NOT NULL DEFAULT '',
+                    error_msg TEXT NOT NULL DEFAULT '',
+                    output_json TEXT NOT NULL DEFAULT '',
+                    eval_key TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    ready_at REAL DEFAULT NULL,
+                    started_at REAL DEFAULT NULL,
+                    finished_at REAL DEFAULT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS main.identity_bindings (
                     bind_key TEXT PRIMARY KEY,
                     user_id INTEGER NOT NULL,
@@ -480,6 +515,9 @@ def init_db():
             conn.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS main.idx_tasks_user_status ON tasks(user_id, status);
+                CREATE INDEX IF NOT EXISTS main.idx_infer_jobs_status ON infer_jobs(status, ready_at, created_at);
+                CREATE INDEX IF NOT EXISTS main.idx_infer_jobs_dep ON infer_jobs(depends_on_task_id, status);
+                CREATE INDEX IF NOT EXISTS main.idx_infer_jobs_user ON infer_jobs(user_id, created_at);
                 CREATE INDEX IF NOT EXISTS main.idx_tasks_user_batch ON tasks(user_id, batch_id, sort_order);
                 CREATE INDEX IF NOT EXISTS main.idx_tasks_user_dataset ON tasks(user_id, dataset_id);
                 CREATE INDEX IF NOT EXISTS main.idx_tasks_user_psnr ON tasks(user_id, best_psnr_srgb);
@@ -800,6 +838,10 @@ def delete_task_experiment_data(task_id: int):
     """Cascade-clean attached `experiments.db` rows when a task is deleted from `wildcat.db`."""
     tid = int(task_id)
     with transaction() as conn:
+        conn.execute(
+            "DELETE FROM main.infer_jobs WHERE task_id = ? OR depends_on_task_id = ?",
+            (tid, tid),
+        )
         conn.execute(
             "DELETE FROM exp.experiment_eval_frames WHERE eval_id IN (SELECT id FROM exp.experiment_evals WHERE task_id = ?)",
             (tid,),

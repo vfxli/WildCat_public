@@ -9,7 +9,7 @@
   "header": {
     "versionTip": "Server version",
     "navStudio": "Studio",
-    "navLab": "Experiments",
+    "navLab": "Compare",
     "navDatasets": "Datasets ({count})",
     "navTools": "Tools",
     "navHelp": "Help",
@@ -21,6 +21,7 @@
     "gpuDisabled": "Disabled",
     "gpuRolePrimaryShort": "Pri",
     "gpuRoleSecondaryShort": "Sec",
+    "gpuInferTag": "Infer",
     "allGpusDisabledBadge": "All GPUs disabled",
     "machineLabel": "🖥️ Machine:",
     "machinePlaceholder": "Auto-detect machine",
@@ -159,7 +160,11 @@
     "modelWildCatLargeV1Opt": "WildCatLargeV1",
     "globalAttnToggle": "Global Light Attention",
     "globalAttnOnBadge": "On",
-    "globalAttnOffBadge": "Off"
+    "globalAttnOffBadge": "Off",
+    "inferOnFinishTitle": "Infer validation sequence when training finishes",
+    "inferOnFinishDesc": "Runs the final checkpoint over the validation sequence to write lossless EXRs, comparison metrics and frame-change heat maps before the next queued task starts",
+    "inferOnFinishOnBadge": "On (Default)",
+    "inferOnFinishOffBadge": "Off"
   },
   "adv": {
     "headerTitle": "Advanced settings",
@@ -375,6 +380,10 @@
     "openInferSeqBtn": "▶ Infer Validation Sequence",
     "openInferSeqTip": "Run this task's saved model on a validation sequence",
     "openInferSeqUntrainedTip": "This task has no saved checkpoints yet and cannot be used for inference",
+    "boundInferWaiting": "Post-train auto-inference bound (High priority: runs right after training completes)",
+    "boundInferQueued": "Post-train auto-inference queued (#{pos} high priority · ahead of training · ~{eta})",
+    "boundInferRunning": "Auto-inferring validation sequence: {done} / {total} frames ({pct}%) · {device}",
+    "cancelBoundInferBtn": "Cancel Auto-Infer",
     "liveLogTitle": "Training Log (train.log)",
     "liveLogSub": "Includes the full Python traceback when an error occurs",
     "autoScrollLabel": "Auto-scroll",
@@ -492,7 +501,7 @@
   },
   "datasets": {
     "title": "Datasets",
-    "subtitleHtml": "A dataset consists of keyframes (<strong class=\"text-indigo-300\">Input</strong> + <strong class=\"text-emerald-300\">Ground Truth</strong>) and can carry a <strong class=\"text-amber-300\">validation sequence</strong>, the complete plate of the shot. Drag the slider to scrub through the frames.",
+    "subtitleHtml": "A dataset consists of keyframes (<strong class=\"text-indigo-300\">Input</strong> + <strong class=\"text-emerald-300\">Ground Truth</strong>) and the complete <strong class=\"text-amber-300\">validation sequence</strong> of the shot. Drag the slider to scrub through the frames.",
     "restoreDemosBtn": "Restore Demo Datasets",
     "newDatasetBtn": "+ New Dataset",
     "evalSeqBadge": "Evaluation sequence (Input only)",
@@ -514,7 +523,7 @@
     "pickerAutoFollowDesc": "Use the dataset and validation sequence of each selected task (default)",
     "pickerEmptyMatch": "No dataset matches the filter",
     "useForTrainBtn": "Use for Training",
-    "useForEvalBtn": "Evaluate in Experiments",
+    "useForEvalBtn": "Open in Compare",
     "attachEvalSeqBtn": "+ Add Validation Sequence",
     "replaceEvalSeqBtn": "Replace Validation Sequence",
     "removeEvalSeqBtn": "Remove Validation Sequence",
@@ -553,8 +562,8 @@
     "sourceHintHtml": "Select Input images, an entire folder, or a <code class=\"text-indigo-300\">.zip</code> archive; original frame numbers are preserved in numeric order.",
     "targetTitle": "Keyframe Ground Truth · EXR / PNG / TIFF / JPG",
     "targetHintHtml": "Select matching Ground Truth images, a folder, or a <code class=\"text-emerald-300\">.zip</code> archive; paired by numeric frame order.",
-    "optSeqTitle": "Validation sequence (optional) · EXR / PNG / TIFF / JPG / ZIP",
-    "optSeqHintHtml": "Complete original plate at the keyframe resolution, at least 2 frames; can also be attached later.",
+    "optSeqTitle": "Validation sequence (required, at least 2 frames) · EXR / PNG / TIFF / JPG / ZIP",
+    "optSeqHintHtml": "Complete original plate at the keyframe resolution, at least 2 frames. Select images, an entire folder, or a <code class=\"text-amber-300\">.zip</code> archive.",
     "pickFilesBtn": "Select Files",
     "pickFolderBtn": "Select Folder",
     "dropFolderHint": "Or drag a folder or images here",
@@ -633,11 +642,28 @@
     "fmtShortHalf": "16-bit Half EXR",
     "runBtn": "▶ Run Sequence Inference",
     "runSingleBtn": "⚡ Infer Selected Frame",
+    "queueRunBtn": "▶ Queue Sequence Inference (High Priority)",
+    "queueSingleBtn": "⚡ Queue Frame Inference (High Priority)",
+    "submittingBtn": "Queueing…",
     "runningBtn": "Inferring…",
     "cancelBtn": "Cancel",
     "progQueued": "Starting inference process…",
     "progRunning": "Inferring: {done} / {total} frames ({pct}%) · {fps} fps · {device}",
-    "cancelledNote": "Inference cancelled; temporary files cleaned up.",
+    "gpuStatusIdleHint": "Idle GPUs: {idle} / {enabled} · Starts immediately on an idle GPU",
+    "gpuStatusBusyHint": "All GPUs busy · Enters the high-priority inference queue ahead of all queued training tasks (~{eta} wait)",
+    "gpuStatusDisabledHint": "All GPUs disabled · Enters the high-priority inference queue until a GPU is enabled",
+    "queuedToast": "Added to high-priority inference queue (#{pos}, ahead of all queued training tasks)",
+    "startedToast": "Started inference on idle {device}",
+    "queuePanelTitle": "Inference Queue & Live Progress ({count})",
+    "queuePriorityNote": "Inference jobs always take priority over queued training tasks; multiple inference jobs run in FIFO order",
+    "stateRunningBadge": "Running · {device}",
+    "stateQueuedBadge": "Queued #{pos} (High Priority)",
+    "stateWaitingTrainBadge": "Waiting for Training",
+    "autoOnFinishTag": "Auto on Finish",
+    "jobMetaTarget": "{model} (Step {step}) → {dataset}",
+    "jobQueuedWait": "Ahead of queued training · Est. wait {eta}",
+    "jobWaitingTrainDesc": "Starts with top priority right after training finishes ({total} frames)",
+    "cancelledNote": "Inference job cancelled; temporary files cleaned up.",
     "doneToast": "Sequence inference finished: {frames} frames exported ({sec} s)",
     "doneSingleToast": "Single-frame inference finished ({sec} s)",
     "viewerTitle": "Rendered Output Preview",
@@ -705,7 +731,7 @@
     "docGroup_train": "Training basics",
     "docGroup_adv": "Advanced settings",
     "docGroup_presets": "Scene presets",
-    "docGroup_lab": "Experiments",
+    "docGroup_lab": "Task comparison",
     "docGroup_datasets": "Datasets",
     "docGroup_monitor": "Task monitor",
     "docGroup_tools": "Tools",
@@ -815,7 +841,7 @@
     "exportAllJsonBtn": "⬇ Export JSON",
     "backToStudioBtn": "← Back to Training",
     "tempControlTitle": "Temporary Users and Default Quotas",
-    "tempControlDesc": "With restrictions on, accounts without granted permissions are temporary users: limited in tasks, Epochs and uploads (512 MB per upload, 128 MB per file, 300 frames per group, 2 GB total), and without Experiments or the API. With restrictions off, every user can use all features without task quotas or upload size and frame-count limits (recommended for in-house VFX plates).",
+    "tempControlDesc": "With restrictions on, accounts without granted permissions are temporary users: limited in tasks, Epochs and uploads (512 MB per upload, 128 MB per file, 300 frames per group, 2 GB total), and without Compare or the API. With restrictions off, every user can use all features without task quotas or upload size and frame-count limits (recommended for in-house VFX plates).",
     "modeRestrictedBadge": "● Restrictions on",
     "modeUnrestrictedBadge": "✓ Restrictions off",
     "oneClickDisableRestrictBtn": "Turn Off Restrictions",
@@ -834,7 +860,7 @@
     "colTaskQuota": "Tasks in progress (now / limit)",
     "colMaxEpochs": "Epochs limit",
     "colPerms": "Permissions",
-    "permLabLabel": "Experiments",
+    "permLabLabel": "Compare",
     "permApiLabel": "API",
     "copyRoamTip": "Copy recovery code",
     "regenRoamTip": "Regenerate recovery code",
@@ -844,7 +870,12 @@
     "unrestrictedOverrideHint": "Restrictions off"
   },
   "lab": {
-    "tempUserLockedBanner": "🔒 Temporary users cannot use the Experiments page.",
+    "tempUserLockedBanner": "🔒 Temporary users cannot use the Compare page.",
+    "workbenchTitle": "Multi-Task Comparison",
+    "cardNotEvalHint": "Sequence frames and frame-change heat map not generated yet",
+    "firstFrameNoDiffBadge": "Frame 1 has no previous frame · change map starts at frame 2",
+    "bgFullFrameTip": "Full-frame edit (no untouched background region)",
+    "staticFullMotionTip": "Full-frame motion or grain (no static pixels)",
     "subPlan": "① Plan & Submit",
     "subAnalyze": "② Compare & Analyze",
     "notePlaceholder": "Note (optional), e.g. control, 1 px crop grid + gradient term",
@@ -1027,6 +1058,7 @@
     "noLogsToCopyToast": "No log to copy yet.",
     "copiedLogsToast": "Full log copied.",
     "errSelectBothSeq": "Select both the keyframe Input and the Ground Truth images.",
+    "errSelectAllThreeSeq": "Select Keyframe Input, Keyframe Ground Truth, and a Validation Sequence (at least 2 frames).",
     "errSelectSourceSeq": "Select the image files or a .zip file of the validation sequence.",
     "datasetCreatedToast": "Dataset [{name}] created: {frames} keyframes, mean Input–Ground Truth difference {mae}%.",
     "datasetCreatedWithSeqToast": "Dataset [{name}] created: {frames} keyframes, {seqFrames}-frame validation sequence, mean Input–Ground Truth difference {mae}%.",
@@ -1166,7 +1198,7 @@
     "invalidApiKey": "Invalid or revoked API key",
     "cannotDisableAdmin": "The administrator account cannot be disabled",
     "cannotDeleteAdmin": "The administrator account cannot be deleted",
-    "tempUserLabLocked": "Experiments are not available to temporary users.",
+    "tempUserLabLocked": "Compare is not available to temporary users.",
     "tempUserApiLocked": "The API key is not available to temporary users.",
     "tempUserConverterLocked": "Model format conversion is not available to temporary users.",
     "convertInvalidPath": "Invalid model file path (only model files inside your workspace)",
@@ -1190,8 +1222,8 @@
     },
     "dataset": {
       "title": "Dataset",
-      "summary": "The dataset to train on: keyframe pairs (Input and Ground Truth), optionally with the shot's validation sequence.",
-      "body": "## In Nuke CopyCat\nThe image pairs connected to the Input and Ground Truth inputs of the CopyCat node.\n\n## What it does\nClick the field to open the dataset list. The selected dataset is previewed below: Input on the left, Ground Truth on the right; when the dataset has a validation sequence, the preview can switch to the whole sequence. The dataset's channels decide which [[doc:channels]] options are available, and the number of keyframes enters the total step count (see [[doc:epochs]]).\n\n## Requirements\nDatasets are created on the Datasets page, see [[doc:dataset_keyframes]]. The validation sequence is optional (see [[doc:dataset_validation_sequence]]); keyframe commonality and the training-quality measures need it."
+      "summary": "The dataset to train on: keyframe pairs (Input and Ground Truth) together with the shot's complete validation sequence.",
+      "body": "## In Nuke CopyCat\nThe image pairs connected to the Input and Ground Truth inputs of the CopyCat node.\n\n## What it does\nClick the field to open the dataset list. The selected dataset is previewed below: Input on the left, Ground Truth on the right, with a toggle to scrub the validation sequence. The dataset's channels decide which [[doc:channels]] options are available, and the number of keyframes enters the total step count (see [[doc:epochs]]).\n\n## Requirements\nDatasets are created on the Datasets page; creating a dataset requires Keyframe Input, Keyframe Ground Truth, and a validation sequence of at least 2 frames (see [[doc:dataset_keyframes]] and [[doc:dataset_validation_sequence]])."
     },
     "device": {
       "title": "Use Device",
@@ -1312,6 +1344,11 @@
       "title": "Preview / validation GPU (preview_gpu)",
       "summary": "Where the full-frame preview and the keyframe validation are computed: auto uses a second GPU, same uses the training GPU, off turns the preview off.",
       "body": "## What it does\n- **auto** (default): with a second GPU, preview and validation run asynchronously on it and the training GPU only trains; with one GPU it behaves like same.\n- **same**: runs asynchronously on the training GPU.\n- **off**: no full-frame previews or contact sheets; the keyframe validation is not affected.\n\nPreview and validation compute in FP32, the default of Nuke's Inference node."
+    },
+    "infer_on_finish": {
+      "title": "Infer validation sequence when training finishes",
+      "summary": "Creates a bound high-priority inference job when training is submitted: as soon as training finishes, it immediately takes the freed GPU ahead of queued training tasks to write lossless EXR frames and Compare heat maps. On by default.",
+      "body": "## What it does\nWhen on (default), submitting a training task also places a bound inference job into the unified GPU queue (`Waiting for Training`, consuming no GPU while training runs):\n- **Runs with top priority on completion**: the instant the final checkpoint is saved (using averaged weights when [[doc:adv_ema]] is enabled), the bound inference job becomes ready. Because inference jobs always outrank queued training tasks, the freed GPU immediately runs full FP32 inference across the validation sequence, writing both `infer/<task_name>/` 32-bit float lossless EXR frames (preserving original frame numbers) and the sequence metrics plus ×12 frame-change heat maps for **Compare**, before handing the GPU to the next queued training task.\n- **Linked cancellation**: if the training task is cancelled, stopped early, or fails, the bound inference job is cancelled automatically; you can also cancel auto-inference independently at any time.\n\n## When to turn it off\nTurn it off when the validation sequence is very long and you want the GPU handed immediately to the next queued training task; you can still queue inference manually later in **Tools → Model Inference**."
     },
     "eta_estimate": {
       "title": "Estimated training time",
@@ -1464,34 +1501,14 @@
       "body": "## When to use\n\nFace shots where only a few frames were painted by hand and the painted keyframes do not fully agree: a region painted weaker or stronger, a few pixels off, or with its texture redrawn.\n\n## What it does\n\n- **Model Size WildCatLargeV1** ([[doc:arch_wildcat_large_v1]]): single-pass 4-scale `64`-channel detail architecture + `1×1` FFN + input residual skip; outperforms both Medium and stock Large on consistent and hand-painted inconsistent keyframes while cutting unedited background changes by `50%–84%`. Switch to Medium when ~55% training time is preferred.\n- [[doc:adv_kf_common|Keyframe commonality]]: before training, regions of single keyframes that disagree with the other keyframes are changed to match, so the in-between frames no longer swim between versions.\n- [[doc:adv_crop_grid|Crop grid]] 1 px.\n- [[doc:adv_loss_charbonnier|Charbonnier]] 0.25 (no gradient term, no highlight damping): more accurate unseen frames and edited areas, and clearly fewer changes to the unedited area.\n- [[doc:adv_ema|Averaged weights]]: steadier results when stopping early or using a mid-run checkpoint.\n- Channels RGB → RGB.\n\n## Requirements\n\nThe dataset needs a [[doc:dataset_validation_sequence|validation sequence]] and at least 3 keyframes. If a requirement is not met, the task can still be submitted; keyframe commonality then has no effect and the task page states the reason.\n\n## Limitations\n\nDetail repainted differently on every keyframe cannot be corrected. When the effect is meant to change over the shot (for example a wound that darkens), switch off [[doc:adv_kf_common_overall|overall look to consensus]] in keyframe commonality.\n\nEvidence: [[ev:arch_wildcat_large_v1]] · [[ev:preset_face_edit]] · [[ev:adv_kf_common]] · [[ev:adv_crop_grid]] · [[ev:adv_ema]]"
     },
     "lab_overview": {
-      "title": "Experiments",
-      "summary": "Train several settings on the same dataset in one batch and compare their curves, evaluation metrics and images.",
-      "body": "## What it does\n**① Plan & Submit**: configure tasks in the training form and add them to a staged experiment group on the left, adjust group Epochs if needed, then submit the whole group to the training queue.\n**② Compare & Analyze**: select existing training tasks to overlay their Loss and Val MSE curves, measure evaluation metrics on the keyframes and the validation sequence, and play their results back in sync.\n\n## When to use\nTo settle the settings for a shot, for example to compare a scene preset with the Nuke CopyCat defaults, to compare two Model Sizes, or to see what an advanced setting does on this shot.\n\n## Limitations\nTasks compared with each other should use the same dataset and the same Epochs; otherwise the differences do not come only from the setting being compared. Temporary users cannot use the Experiments page."
-    },
-    "lab_group_name": {
-      "title": "Experiment group name",
-      "summary": "Name of a staged experiment group; shown under the same group name in Compare & Analyze after submission.",
-      "body": "After submission the tasks appear under this group name in **Compare & Analyze**, where the whole group can be selected at once. The name can be edited in the pending list before submission and renamed afterwards."
-    },
-    "lab_native_baseline": {
-      "title": "Nuke defaults control",
-      "summary": "Adds a training task with exactly the Nuke CopyCat defaults to the current experiment group, as the reference for comparison.",
-      "body": "The task uses the current dataset with Model Size Medium, Multi-Resolution on, Batch Size 8, Crop Size 256, Mixed Precision Adaptive, no initial weights, and no advanced settings; Epochs, channels, Learning Rate and Seed are taken from the form."
-    },
-    "lab_note": {
-      "title": "Note",
-      "summary": "A short description attached to a task when it is added to an experiment group; shown in the pending list and in the task list of Compare & Analyze.",
-      "body": "Use it to record how this task differs from the others, for example \"control\" or \"1 px crop grid + gradient 0.05\"."
-    },
-    "lab_staged_groups": {
-      "title": "Pending experiment groups",
-      "summary": "Training tasks that have not been submitted yet, arranged in experiment groups; each group can be submitted on its own, or all groups at once.",
-      "body": "## What it does\n- **Add current settings to list** adds the current settings of the training form to the current group; **Add Nuke defaults control** adds a task with the Nuke CopyCat defaults.\n- Each task can be renamed, reordered, moved to another group, or loaded back into the form with **Load into form** for changes.\n- **Submit to** decides whether the submitted tasks form a new experiment group or are appended to an existing one.\n- Submitted tasks enter the training queue and start as GPUs become free; their progress is shown below the list.\n\n## Limitations\nThe pending list is stored in this browser only; it is not available in another browser or after the browser data is cleared."
+      "title": "Multi-Task Comparison",
+      "summary": "Select multiple existing training tasks to overlay training and per-frame curves, compare keyframe and validation-sequence metrics, and play synchronized sequence renders and frame-change heat maps.",
+      "body": "## What it does\nSelect any training tasks on the left to inspect them side by side:\n- **Curve overlay**: overlays Loss, Val MSE, and per-frame HFI and edit-layer change (ΔR) across the validation sequence.\n- **Evaluation metrics**: compares keyframe accuracy and validation-sequence stability with automatic deltas (Δ) against a chosen reference task.\n- **Synchronized sequence viewer**: plays sRGB outputs and ×12 frame-change heat maps across all selected tasks with synchronized zoom, pan and frame scrubbing.\n\nTasks trained with [[doc:infer_on_finish]] enabled already carry sequence evaluations as soon as training finishes; use **Evaluate** or **Re-measure** to evaluate another checkpoint or dataset.\n\n## When to use\nTo compare architectures, scene presets, advanced settings or training lengths on the same shot.\n\n## Limitations\nTasks compared with each other should use the same dataset and Epochs; otherwise differences do not come only from the setting being compared. Temporary users cannot use the Compare page."
     },
     "lab_compare_tasks": {
       "title": "Tasks to compare",
-      "summary": "Select the training tasks to compare; tasks are listed by experiment group and can be selected across groups or a whole group at once.",
-      "body": "## What it does\n- Selected tasks appear in the curves, the metrics table and the sequence viewer on the right, each in its own colour.\n- **This group only** selects just this group and uses its task with the Nuke CopyCat defaults as the comparison reference (or the first task if there is none).\n- Tasks submitted from the Experiments page are listed by experiment group; individually created training tasks are listed under **Ungrouped** and can be selected as well.\n- Tasks can be moved to another group or reordered within it; groups can be created, renamed, reordered or dissolved (their tasks become ungrouped).\n- The list can be sorted manually or by keyframe PSNR, HFI or Val MSE."
+      "summary": "Select the training tasks to compare; tasks can be organised into groups and selected across groups or a whole group at once.",
+      "body": "## What it does\n- Selected tasks appear in the curves, the metrics table and the sequence viewer on the right, each in its own colour.\n- **This group only** selects just this group and uses its task with the Nuke CopyCat defaults as the comparison reference (or the first task if there is none).\n- Newly created training tasks appear under **Ungrouped** and can be moved into named groups at any time; groups can be created, renamed, reordered or dissolved (their tasks are kept and become ungrouped).\n- The list can be sorted manually or by keyframe PSNR, HFI or Val MSE."
     },
     "lab_compare_baseline": {
       "title": "Comparison reference (Δ)",
@@ -1505,18 +1522,18 @@
     },
     "lab_eval": {
       "title": "Keyframe and validation-sequence evaluation",
-      "summary": "Runs each selected task's checkpoint on the keyframes and the validation sequence, measures the values of the metrics table and renders the frames of the sequence viewer.",
-      "body": "## What it does\n- **Keyframe metrics**: each task's training keyframes are inferred and compared with their Ground Truth: keyframe PSNR, edge gradient error, unedited-area drift and P99 error.\n- **Validation-sequence metrics**: when there is a validation sequence, every frame of it is inferred: edit-layer frame-to-frame change, HFI and static-area boiling; the result and a heat map of every frame are saved. The validation sequence has no ground truth, so these metrics describe temporal stability, not accuracy.\n\nTasks that were measured before show their stored results; **Re-measure** measures them again.\n\n## Requirements\nEach task needs at least one saved checkpoint. Without a validation sequence only the keyframe metrics are measured, and the per-frame curves, validation-sequence metrics and viewer are unavailable; attach a validation sequence to the dataset, or choose another dataset with one under **Evaluation dataset and sequence**.\n\n## Limitations\nThe keyframes are the frames the model was trained on, so keyframe metrics describe the fit, not the result on in-between frames. Tasks trained with keyframe commonality are measured against the original keyframes, so the parts rewritten before training count as error."
+      "summary": "Runs each selected task's checkpoint on the keyframes and the validation sequence, computes the metrics table values, and renders sRGB outputs and frame-change heat maps for the viewer.",
+      "body": "## What it does\n- **Keyframe metrics**: each task's training keyframes are inferred and compared with their Ground Truth: keyframe PSNR, edge gradient error, unedited-area drift and P99 error.\n- **Validation-sequence metrics**: every frame of the validation sequence is inferred to measure edit-layer frame-to-frame change, HFI and static-area boiling, while saving each frame's sRGB result and ×12 frame-change heat map. The validation sequence has no ground truth, so these metrics describe temporal stability.\n\nTasks that were already evaluated (including tasks completed with [[doc:infer_on_finish]] on) show their stored results immediately; **Re-measure** recomputes them.\n\n## Requirements\nEach task needs at least one saved checkpoint.\n\n## Limitations\nThe keyframes are the frames the model was trained on, so keyframe metrics describe the fit, not the result on in-between frames. Tasks trained with keyframe commonality are measured against the original keyframes, so the parts rewritten before training count as error."
     },
     "lab_eval_dataset": {
       "title": "Evaluation dataset and sequence",
-      "summary": "Chooses the validation sequence the selected tasks are evaluated on; by default it follows the selected tasks' training dataset. Keyframe metrics are always measured on each task's own keyframes.",
-      "body": "- **Follow the selected tasks' dataset** (recommended): uses the validation sequence of the dataset the selected tasks were trained on; if they come from different datasets, the first one that can be identified is used.\n- **A specific dataset**: every selected task is run on this dataset's validation sequence. Datasets with a validation sequence and separately uploaded evaluation sequences (plate frames only, no keyframes) can be chosen.\n\nThe choice does not affect the keyframe metrics."
+      "summary": "Chooses the validation sequence the selected tasks are evaluated on; by default each task follows its own training dataset. Keyframe metrics are always measured on each task's own keyframes.",
+      "body": "- **Follow the selected tasks' dataset** (recommended): each selected task uses the validation sequence of the dataset it was trained on, so tasks across different datasets keep their full sequence metrics.\n- **A specific dataset**: every selected task is run on the chosen dataset's validation sequence.\n\nThe choice does not affect the keyframe metrics."
     },
     "lab_eval_weights": {
       "title": "Evaluated checkpoint",
-      "summary": "Which checkpoint of each task is evaluated: the one with the lowest Val MSE, or the latest saved one.",
-      "body": "- **Lowest Val MSE**: the step with the lowest [[doc:metric_val_mse]] during training (default).\n- **Latest**: the last saved checkpoint; for a task that trained to the end, the final step.\n\nFor a task that trained to the end, the final step is usually the best checkpoint; choose **Latest** to compare the models that will be delivered. The **Checkpoint step** column of the metrics table shows the step that was used."
+      "summary": "Which checkpoint of each task is evaluated: the latest saved checkpoint (default), or the one with the lowest Val MSE.",
+      "body": "- **Latest** (default): the last saved checkpoint; for a completed run, the final step, matching the checkpoint inferred by [[doc:infer_on_finish]].\n- **Lowest Val MSE**: the step with the lowest [[doc:metric_val_mse]] during training.\n\nFor a task that trained to the end, the final step is normally the model to deliver. The **Checkpoint step** column of the metrics table shows the step used."
     },
     "lab_chart": {
       "title": "Curve overlay",
@@ -1585,8 +1602,8 @@
     },
     "dataset_overview": {
       "title": "Dataset",
-      "summary": "The set of keyframes a model is trained on. Each keyframe is an Input image and the artist's Ground Truth for it; a validation sequence of the shot can be attached.",
-      "body": "## In Nuke CopyCat\nThe image pairs connected to the **Input** and **Ground Truth** inputs of the CopyCat node.\n\n## What it does\nA dataset contains:\n- **Keyframe Input**: original frames picked from the shot.\n- **Keyframe Ground Truth**: the finished version of the same frames, one per Input and at the same resolution. See [[doc:dataset_keyframes]].\n- **Validation sequence (optional)**: the complete original plate of the shot; it is not used for training. See [[doc:dataset_validation_sequence]].\n\nAll uploaded images are converted from their explicitly specified input colour space and stored as linear ACEScg, 16-bit half-float EXR, preserving original frame numbers. The Datasets page lets you scrub through keyframes and the validation sequence.\n\n## When to use\nEvery training task uses one dataset; the same dataset can be used for any number of trainings and experiment comparisons."
+      "summary": "The keyframes and validation sequence a model is trained and evaluated on: Input and Ground Truth pairs together with the complete validation sequence of the shot.",
+      "body": "## In Nuke CopyCat\nThe keyframe pairs correspond to the **Input** and **Ground Truth** inputs of the CopyCat node; the validation sequence corresponds to the full shot plate connected to Inference.\n\n## What it does\nCreating a new dataset requires all three parts:\n- **Keyframe Input**: original frames picked from the shot.\n- **Keyframe Ground Truth**: the finished version of the same frames, one per Input and at the same resolution. See [[doc:dataset_keyframes]].\n- **Validation sequence (required, at least 2 frames)**: the complete original plate of the shot; it is not used for training, and drives in-between quality monitoring, post-training inference and sequence comparison. See [[doc:dataset_validation_sequence]].\n\nAll uploaded images are converted from their explicitly specified input colour space and stored as linear ACEScg, 16-bit half-float EXR, preserving original frame numbers. The Datasets page lets you scrub through keyframes and the validation sequence.\n\n## When to use\nEvery training task uses one dataset; the same dataset can be used for any number of trainings and comparisons."
     },
     "dataset_keyframes": {
       "title": "Keyframes (Input / Ground Truth)",
@@ -1595,8 +1612,8 @@
     },
     "dataset_validation_sequence": {
       "title": "Validation sequence",
-      "summary": "The complete original plate of the shot, stored with the dataset. It is not used for training; it enables quality monitoring of the in-between frames, keyframe commonality and sequence evaluation in Experiments.",
-      "body": "## What it does\nA dataset with a validation sequence enables:\n- the training quality (in-between frames) card on the task page;\n- the advanced setting Keyframe commonality;\n- full-sequence inference and sequence metrics in Experiments.\n\n## Requirements\n- Same resolution as the keyframes, at least 2 frames, ordered by file name.\n- Keyframe commonality also needs every keyframe Input to be a frame of the validation sequence, and an RGB → RGB model.\n\n## When to use\nUpload it whenever the full plate is available. It can be added when the dataset is created, or later on the Datasets page, where it can also be replaced or removed; the keyframes are not affected.\n\n## Limitations\nThe validation sequence is not used for training and does not change the trained model."
+      "summary": "The complete original plate of the shot stored with the dataset, required when creating a dataset (at least 2 frames). Not used for training; drives in-between quality monitoring, keyframe commonality, post-training inference and sequence comparison.",
+      "body": "## What it does\nThe validation sequence drives:\n- automatic post-training lossless EXR inference, comparison metrics and frame-change heat maps on the final checkpoint (see [[doc:infer_on_finish]]);\n- the training quality (in-between frames) card on the task page;\n- the advanced setting Keyframe commonality and Keyframe Inspection in Tools;\n- per-frame curves and the synchronized sequence viewer in Compare.\n\n## Requirements\n- Required when creating a new dataset: same resolution as the keyframes, at least 2 frames, preserving original frame numbers.\n- Can be replaced at any time on the Datasets page without affecting the keyframes.\n- Keyframe commonality and Keyframe Inspection also require every keyframe Input to be a frame of the validation sequence, and an RGB → RGB model.\n\n## Limitations\nThe validation sequence is never used for training gradient updates and does not change the training trajectory."
     },
     "dataset_input_colorspace": {
       "title": "Input colour space",
@@ -1645,8 +1662,8 @@
     },
     "admin_temp_restrictions": {
       "title": "Temporary-user restrictions",
-      "summary": "When on, accounts without granted permissions are temporary users: limited in tasks, Epochs and upload size/count, and without Experiments or the API. When off, no user is restricted.",
-      "body": "## What it does\nVisitors need no registration: a workspace is created when the page is first opened. With restrictions on, every user except administrators and users holding both the Experiments and the API permission is a temporary user:\n- the number of tasks in progress (queued + training) and the Epochs per task are limited, see [[doc:admin_default_quotas]];\n- uploads and storage are capped: at most 512 MB per upload, 128 MB per file and 300 frames per group, plus a limit on uploaded datasets (twice the limit of tasks in progress, at least 4) and their total size (2 GB), see [[doc:dataset_files]];\n- Experiments and the API key are unavailable unless granted in the user list.\n\nWith restrictions on, every user except administrators also has a cap on the tasks training at the same time, see [[doc:admin_max_running_per_user]].\n\nTurning restrictions off gives every user full access and lifts the 512 MB per-upload cap, per-file size cap, frame-count cap, task quotas and concurrent training caps.\n\n## When to use\nTurn it on when the service is open to the public; turn it off for in-house studio production."
+      "summary": "When on, accounts without granted permissions are temporary users: limited in tasks, Epochs and upload size/count, and without Compare or the API. When off, no user is restricted.",
+      "body": "## What it does\nVisitors need no registration: a workspace is created when the page is first opened. With restrictions on, every user except administrators and users holding both the Compare and the API permission is a temporary user:\n- the number of tasks in progress (queued + training) and the Epochs per task are limited, see [[doc:admin_default_quotas]];\n- uploads and storage are capped: at most 512 MB per upload, 128 MB per file and 300 frames per group, plus a limit on uploaded datasets (twice the limit of tasks in progress, at least 4) and their total size (2 GB), see [[doc:dataset_files]];\n- Compare and the API key are unavailable unless granted in the user list.\n\nWith restrictions on, every user except administrators also has a cap on the tasks training at the same time, see [[doc:admin_max_running_per_user]].\n\nTurning restrictions off gives every user full access and lifts the 512 MB per-upload cap, per-file size cap, frame-count cap, task quotas and concurrent training caps.\n\n## When to use\nTurn it on when the service is open to the public; turn it off for in-house studio production."
     },
     "admin_default_quotas": {
       "title": "Default quotas for temporary users",
@@ -1680,13 +1697,13 @@
     },
     "admin_user_permissions": {
       "title": "Permissions",
-      "summary": "Grants a user the Experiments and API features. Users holding both permissions are not restricted as temporary users.",
-      "body": "## What it does\n- **Experiments**: use the Experiments page, including comparison sets, batch training and result comparison.\n- **API**: use the API key with the /api/v1 interface, see [[doc:api_key]].\n\nWhile temporary-user restrictions are off, every user can use every feature and the list shows Restrictions off."
+      "summary": "Grants a user the Compare and API features. Users holding both permissions are not restricted as temporary users.",
+      "body": "## What it does\n- **Compare**: use the Compare page to overlay curves, compare metrics and scrub synchronized sequence renders across multiple tasks.\n- **API**: use the API key with the /api/v1 interface, see [[doc:api_key]].\n\nWhile temporary-user restrictions are off, every user can use every feature and the list shows Restrictions off."
     },
     "tool_infer_seq": {
       "title": "Single-frame and sequence inference",
-      "summary": "Runs a trained task checkpoint on a single frame for quick checking or frame by frame across a validation sequence, saving results under infer/ in your cache directory.",
-      "body": "## What it does\nSelect a trained model that has saved checkpoints to either test a single frame immediately or render a full validation sequence in an isolated subprocess. Rendered EXR outputs are stored under `infer/<task_name>/` in your configured data and cache directory, with side-by-side comparison, single-frame download, and ZIP archive download.\n\n## Requirements\n- **Model must be trained**: any task without saved checkpoints is disabled in the selector and rejected by the backend API.\n- **Dataset input**: full-sequence inference requires a validation sequence; single-frame inference works on either a validation sequence or keyframe inputs.\n\n## Related settings\n- [[doc:tool_infer_dataset]], [[doc:tool_infer_model]], [[doc:tool_infer_step]], [[doc:tool_infer_format]]."
+      "summary": "Runs a trained task checkpoint on a single frame or across a validation sequence; shares the unified GPU queue where inference always takes priority over queued training tasks.",
+      "body": "## What it does\nSelect a trained model that has saved checkpoints to either test a single frame or render a full validation sequence (which also updates sequence metrics and frame-change heat maps for **Compare**). Rendered EXR outputs are stored under `infer/<task_name>/` in your configured data and cache directory, with side-by-side comparison, single-frame download, and ZIP archive download.\n\n## GPU & Queue Priority\n- **Idle GPU check (no VRAM collision)**: submitting inference checks for an idle GPU first; if all GPUs are busy training or inferring, the job enters the queue instead of colliding on an occupied GPU.\n- **Higher priority than training**: ready inference jobs always run ahead of queued training tasks; multiple inference jobs execute in FIFO order.\n\n## Requirements\n- **Model must be trained**: any task without saved checkpoints is disabled in the selector and rejected by the backend API.\n- **Dataset input**: full-sequence inference requires a validation sequence; single-frame inference works on either a validation sequence or keyframe inputs.\n\n## Related settings\n- [[doc:tool_infer_dataset]], [[doc:tool_infer_model]], [[doc:tool_infer_step]], [[doc:tool_infer_format]], [[doc:infer_on_finish]]."
     },
     "tool_infer_dataset": {
       "title": "Inference dataset (validation sequence)",

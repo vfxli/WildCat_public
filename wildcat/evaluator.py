@@ -504,6 +504,196 @@ def run_evaluation(spec: dict) -> dict:
     return result
 
 
+class SequenceEvalCollector:
+    """Zero-duplication Compare metric & preview/heatmap collector fed in-flight by `infer.py --spec`."""
+
+    def __init__(
+        self,
+        eval_out_dir: str,
+        eval_key: str,
+        ckpt_step: int,
+        ckpt_file: str,
+        c_in: int,
+        c_out: int,
+        working_cs: str = "ACEScg",
+        ocio_cfg: str = "",
+        eval_asset_id: int | None = None,
+        eval_asset_name: str = "",
+        ckpt_mode: str = "latest",
+        device_label: str = "cuda:0",
+    ):
+        self.eval_out_dir = eval_out_dir
+        self.eval_key = eval_key
+        self.ckpt_step = int(ckpt_step)
+        self.ckpt_file = ckpt_file
+        self.c_in = int(c_in)
+        self.c_out = int(c_out)
+        self.working_cs = working_cs
+        self.ocio_cfg = ocio_cfg
+        self.eval_asset_id = eval_asset_id
+        self.eval_asset_name = eval_asset_name
+        self.ckpt_mode = ckpt_mode
+        self.device_label = device_label
+        self.t0 = time.time()
+
+        self.out_jpg_dir = os.path.join(eval_out_dir, "out")
+        self.flk_jpg_dir = os.path.join(eval_out_dir, "flicker")
+        os.makedirs(self.out_jpg_dir, exist_ok=True)
+        os.makedirs(self.flk_jpg_dir, exist_ok=True)
+
+        self.per_frame: list[dict] = []
+        self.prev_src_srgb = None
+        self.prev_out_srgb = None
+        self.prev_delta = None
+        self.prev2_delta = None
+        self.delta_jitters: list[float] = []
+        self.hf_chatters: list[float] = []
+        self.static_boils: list[float] = []
+        self.edit_mags: list[float] = []
+        self.peak_flicker_idx = 0
+        self.peak_flicker_val = -1.0
+
+    def add_frame(self, idx: int, s_path: str, s_im_raw: np.ndarray, p_im_raw: np.ndarray) -> None:
+        s_im = _match_channels(s_im_raw, self.c_in)
+        p_im = _match_channels(p_im_raw, self.c_out)
+
+        s_srgb = color.acescg_to_display_srgb(s_im, src_space=self.working_cs, ocio_config_path=self.ocio_cfg)
+        p_srgb = color.acescg_to_display_srgb(p_im, src_space=self.working_cs, ocio_config_path=self.ocio_cfg)
+        p_disp_srgb = _render_rgba_checker_srgb(p_srgb, p_im[..., 3:4]) if self.c_out == 4 else p_srgb
+        out_sig = np.concatenate([p_srgb, np.clip(p_im[..., 3:4], 0.0, 1.0)], axis=2) if self.c_out == 4 else p_srgb
+
+        if self.c_in == self.c_out:
+            if self.c_out == 4:
+                a_diff = np.clip(p_im[..., 3:4], 0.0, 1.0) - np.clip(s_im[..., 3:4], 0.0, 1.0)
+                cur_delta = np.concatenate([p_srgb - s_srgb, a_diff], axis=2)
+            else:
+                cur_delta = p_srgb - s_srgb
+        elif self.c_out == 1:
+            cur_delta = np.clip(p_im[..., :1], 0.0, 1.0)
+        elif self.c_in == 3 and self.c_out == 4:
+            cur_delta = np.concatenate([p_srgb - s_srgb, np.clip(p_im[..., 3:4], 0.0, 1.0)], axis=2)
+        else:
+            cur_delta = p_srgb
+
+        edit_l1 = float(np.mean(np.abs(cur_delta)))
+        self.edit_mags.append(edit_l1)
+
+        flk_delta = None
+        flk_hf = None
+        flk_static = None
+        if self.prev_delta is not None:
+            dd = np.abs(cur_delta - self.prev_delta)
+            flk_delta = float(np.mean(dd))
+            self.delta_jitters.append(flk_delta)
+            if flk_delta > self.peak_flicker_val:
+                self.peak_flicker_val = flk_delta
+                self.peak_flicker_idx = idx
+            flk_map_01 = np.max(dd, axis=2)
+
+            plate_motion = np.max(np.abs(s_srgb - self.prev_src_srgb), axis=2)
+            static_mask = plate_motion < 0.005
+            if float(np.mean(static_mask)) >= 0.02:
+                out_diff = np.mean(np.abs(out_sig - self.prev_out_srgb), axis=2)
+                flk_static = float(np.mean(out_diff[static_mask]))
+                self.static_boils.append(flk_static)
+        else:
+            flk_map_01 = np.zeros((p_srgb.shape[0], p_srgb.shape[1]), dtype=np.float32)
+
+        if self.prev2_delta is not None and self.prev_delta is not None:
+            acc = np.abs(cur_delta - 2.0 * self.prev_delta + self.prev2_delta)
+            flk_hf = float(np.mean(acc))
+            self.hf_chatters.append(flk_hf)
+
+        fname_jpg = f"frame_{idx:04d}.jpg"
+        out_bgr = _resize_preview_u8(
+            np.clip(p_disp_srgb[..., ::-1] * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8),
+            max_side=1280,
+        )
+        color.imwrite_unicode(os.path.join(self.out_jpg_dir, fname_jpg), out_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        flk_bgr = _resize_preview_u8(_render_heatmap_bgr(flk_map_01, s_srgb, gain=12.0), max_side=1280)
+        color.imwrite_unicode(os.path.join(self.flk_jpg_dir, fname_jpg), flk_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+
+        self.per_frame.append(
+            {
+                "idx": idx,
+                "name": os.path.basename(s_path),
+                "file": fname_jpg,
+                "edit_l1": edit_l1,
+                "flicker_delta": flk_delta,
+                "flicker_hf": flk_hf,
+                "flicker_static": flk_static,
+            }
+        )
+        self.prev2_delta = self.prev_delta
+        self.prev_delta = cur_delta
+        self.prev_src_srgb = s_srgb
+        self.prev_out_srgb = out_sig
+
+    def finalize(self, sup_source_dir: str = "", sup_target_dir: str = "", source_cs: str = "", target_cs: str = "", infer_fn=None) -> dict:
+        sup_summary = None
+        if sup_source_dir and sup_target_dir and infer_fn is not None:
+            src_files = expand_pattern(sup_source_dir)
+            tgt_files = expand_pattern(sup_target_dir)
+            n_sup = min(len(src_files), len(tgt_files))
+            if n_sup > 0:
+                eff_s_cs = source_cs or self.working_cs
+                eff_t_cs = target_cs or self.working_cs
+                sup_rows = []
+                for idx in range(n_sup):
+                    s_im = _match_channels(
+                        _read(src_files[idx], eff_s_cs, self.working_cs, self.ocio_cfg, is_data_pass=(self.c_in == 1)),
+                        self.c_in,
+                    )
+                    t_im = _match_channels(
+                        _read(tgt_files[idx], eff_t_cs, self.working_cs, self.ocio_cfg, is_data_pass=(self.c_out == 1)),
+                        self.c_out,
+                    )
+                    p_im = _match_channels(infer_fn(s_im), self.c_out)
+                    s_srgb = color.acescg_to_display_srgb(s_im, src_space=self.working_cs, ocio_config_path=self.ocio_cfg)
+                    t_srgb = color.acescg_to_display_srgb(t_im, src_space=self.working_cs, ocio_config_path=self.ocio_cfg)
+                    p_srgb = color.acescg_to_display_srgb(p_im, src_space=self.working_cs, ocio_config_path=self.ocio_cfg)
+                    sup_rows.append(_compute_pair_metrics(s_im, t_im, p_im, s_srgb, t_srgb, p_srgb))
+                bg_vals = [r["bg_drift_mae"] for r in sup_rows if r["bg_drift_mae"] is not None]
+                sup_summary = {
+                    "frame_count": n_sup,
+                    "mse": float(np.mean([r["mse"] for r in sup_rows])),
+                    "mae": float(np.mean([r["mae"] for r in sup_rows])),
+                    "psnr_aces": float(np.mean([r["psnr_aces"] for r in sup_rows])),
+                    "psnr_srgb": float(np.mean([r["psnr_srgb"] for r in sup_rows])),
+                    "edge_l1": float(np.mean([r["edge_l1"] for r in sup_rows])),
+                    "p99_err": float(np.mean([r["p99_err"] for r in sup_rows])),
+                    "bg_drift_mae": float(np.mean(bg_vals)) if bg_vals else None,
+                }
+
+        seq_summary = {
+            "frame_count": len(self.per_frame),
+            "is_paired": False,
+            "edit_l1": float(np.mean(self.edit_mags)) if self.edit_mags else 0.0,
+            "flicker_delta": float(np.mean(self.delta_jitters)) if self.delta_jitters else None,
+            "flicker_delta_max": float(np.max(self.delta_jitters)) if self.delta_jitters else None,
+            "flicker_hf": float(np.mean(self.hf_chatters)) if self.hf_chatters else None,
+            "flicker_static": float(np.mean(self.static_boils)) if self.static_boils else None,
+            "peak_flicker_idx": int(self.peak_flicker_idx) if self.delta_jitters else 0,
+            "peak_flicker_val": float(self.peak_flicker_val) if self.delta_jitters else None,
+            "per_frame": self.per_frame,
+        }
+        eval_result = {
+            "eval_key": self.eval_key,
+            "eval_asset_id": self.eval_asset_id,
+            "eval_asset_name": self.eval_asset_name,
+            "ckpt_mode": self.ckpt_mode,
+            "ckpt_step": self.ckpt_step,
+            "ckpt_file": self.ckpt_file,
+            "device": self.device_label,
+            "elapsed_sec": round(time.time() - self.t0, 2),
+            "evaluated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "supervised": sup_summary,
+            "sequence": seq_summary,
+        }
+        _atomic_write_json(os.path.join(self.eval_out_dir, "metrics.json"), eval_result)
+        return eval_result
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit("Usage: python -m wildcat.evaluator <spec_json_path>")

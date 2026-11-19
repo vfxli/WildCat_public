@@ -1,89 +1,107 @@
 # -*- coding: utf-8 -*-
 """
-Validation Sequence Inference Runner (`backend/infer_runner.py`).
+Unified Priority Validation Sequence & Single-Frame Inference Runner (`backend/infer_runner.py`).
 
-Executes full-frame inference of a trained task checkpoint over a dataset's validation sequence (`eval/` or
-standalone `eval_sequence`) inside an isolated `infer.py --spec` subprocess (0 persistent FastAPI VRAM, O(1) RAM).
-Untrained tasks (without saved checkpoints) are strictly rejected.
+All manual inference jobs (single-frame or full-sequence) and post-training auto-inference jobs (`auto_on_finish`)
+share the single GPU queue and slot allocator in `backend/scheduler.py`:
+  - Ready inference jobs (`status = 'queued'`) have strictly higher dispatch priority than queued training tasks,
+    and multiple inference jobs queue in FIFO order without ever colliding on a busy GPU.
+  - Post-training auto-inference jobs are created when a training task is submitted (`status = 'waiting_train'`,
+    `depends_on_task_id = task.id`), automatically promote to `'queued'` the instant the parent training task
+    completes, and automatically cancel if the parent training task is cancelled, stopped, failed, or deleted.
 """
+import collections
 import glob
+import hashlib
 import json
 import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-import traceback
 import zipfile
 
 from wildcat import color
 
-from . import db, i18n, scheduler, service, storage, telemetry
+from . import analytics_db, db, i18n, scheduler, service, storage, telemetry
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INFER_SUBDIR = "infer_seq"
 META_FILE = "infer_meta.json"
 VALID_FORMATS = ("exr_float", "exr_half")
 _SAFE_OUT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,180}$")
-
-_INFER_LOCK = threading.Lock()
-_INFER_RUN_LOCK = threading.Lock()
-_INFER_JOBS: dict[str, dict] = {}
 _JOB_KEEP_SEC = 3600.0
 
 
 class InferBusyError(RuntimeError):
-    """The user already has a validation-sequence inference job queued or running."""
+    """Kept for API exception compatibility; inference jobs now queue cleanly."""
 
 
 class InferNotFoundError(LookupError):
     """Requested asset, task, job or inference output was not found."""
 
 
-def _pick_infer_device() -> str:
-    try:
-        q = scheduler.SCHEDULER.queue_status()
-        gpus = [g for g in (q.get("gpus") or []) if g.get("enabled", True)]
-        if not gpus:
-            return "cpu"
-        has_running = int(q.get("running_count") or 0) > 0
-        idle = [g for g in gpus if not g.get("busy")]
-        if idle:
-            if has_running:
-                best = min(
-                    idle,
-                    key=lambda g: (
-                        0 if g.get("is_secondary") else (2 if g.get("is_primary") else 1),
-                        -int(g.get("vram_mb") or scheduler._GPU_VRAM_MB.get(str(g["gpu_id"]), 0)),
-                        int(g["gpu_id"]) if str(g["gpu_id"]).isdigit() else 0,
-                    ),
-                )
-            else:
-                best = min(
-                    idle,
-                    key=lambda g: (
-                        0 if g.get("is_primary") else (1 if g.get("is_secondary") else 2),
-                        -int(g.get("vram_mb") or scheduler._GPU_VRAM_MB.get(str(g["gpu_id"]), 0)),
-                        int(g["gpu_id"]) if str(g["gpu_id"]).isdigit() else 0,
-                    ),
-                )
-            return f"cuda:{best['gpu_id']}"
-        best = min(
-            gpus,
-            key=lambda g: (
-                0 if g.get("is_secondary") else (2 if g.get("is_primary") else 1),
-                int(g.get("active_count") or 0),
-                -int(g.get("vram_mb") or scheduler._GPU_VRAM_MB.get(str(g["gpu_id"]), 0)),
-            ),
-        )
-        return f"cuda:{best['gpu_id']}"
-    except Exception:
-        pass
-    return "cuda:0"
+class ActiveInferSubproc:
+    """In-memory handle for a currently running `infer.py --spec` subprocess on an assigned GPU."""
+
+    def __init__(
+        self,
+        job_id: str,
+        task_id: int,
+        node_name: str,
+        gpu: str,
+        gpu_label: str,
+        proc: subprocess.Popen,
+        tmp_dir: str,
+        final_dir: str,
+        prog_path: str,
+        cancel_path: str,
+        eval_out_dir: str = "",
+        eval_key: str = "",
+    ):
+        self.job_id = job_id
+        self.task_id = int(task_id)
+        self.node_name = node_name
+        self.gpu = str(gpu)
+        self.gpu_label = gpu_label
+        self.proc = proc
+        self.tmp_dir = tmp_dir
+        self.final_dir = final_dir
+        self.prog_path = prog_path
+        self.cancel_path = cancel_path
+        self.eval_out_dir = eval_out_dir
+        self.eval_key = eval_key
+        self.stop_requested = False
+        self.tail = collections.deque(maxlen=120)
+        self._reader = threading.Thread(target=self._read_stdout, daemon=True)
+        self._reader.start()
+
+    def _read_stdout(self):
+        try:
+            for line in self.proc.stdout:
+                self.tail.append(line.rstrip("\n"))
+        except Exception:
+            pass
+
+    @property
+    def alive(self) -> bool:
+        return self.proc.poll() is None
+
+
+def estimate_infer_seconds(total_frames: int, infer_mode: str = "sequence", done_frames: int = 0, fps: float = 0.0) -> float:
+    rem = max(0, int(total_frames or 0) - int(done_frames or 0))
+    if rem <= 0:
+        return 0.5
+    if fps and float(fps) > 0.05:
+        return max(0.5, rem / float(fps))
+    if infer_mode == "single":
+        return 1.5
+    return max(2.0, 1.5 + rem * 0.08)
 
 
 def resolve_task_checkpoint(task_row: dict, step: int | None = None) -> tuple[str | None, int]:
@@ -129,8 +147,14 @@ def resolve_task_checkpoint(task_row: dict, step: int | None = None) -> tuple[st
         if st > 0:
             return step_pts[-1], st
 
+    cfg_obj = task_row.get("config")
+    if not isinstance(cfg_obj, dict):
+        try:
+            cfg_obj = json.loads(task_row.get("config_json") or "{}")
+        except Exception:
+            cfg_obj = {}
     parsed = telemetry.parse_train_log_full_cached(os.path.join(rdir_abs, "train.log"))
-    inv = telemetry.list_task_models(run_dir_rel, task_row.get("config") or {}, parsed_log=parsed)
+    inv = telemetry.list_task_models(run_dir_rel, cfg_obj or {}, parsed_log=parsed)
     for it in inv.get("items") or []:
         st = int(it.get("step") or 0)
         if st <= 0:
@@ -208,28 +232,16 @@ def _format_short_tag(output_format: str) -> str:
     return "exr32f"
 
 
-def _public_job(job: dict) -> dict:
-    return {
-        "job_id": job["job_id"],
-        "user_id": job["user_id"],
-        "task_id": job["task_id"],
-        "node_name": job["node_name"],
-        "asset_id": job["asset_id"],
-        "asset_name": job["asset_name"],
-        "step": job["step"],
-        "infer_mode": job.get("infer_mode", "sequence"),
-        "frame_index": job.get("frame_index"),
-        "output_format": job["output_format"],
-        "state": job["state"],
-        "done": job["done"],
-        "total": job["total"],
-        "progress": round(job["done"] / float(max(1, job["total"])), 4) if job["total"] > 0 else 0.0,
-        "fps": job["fps"],
-        "device": job["device"],
-        "seconds": round((job["finished_at"] or time.time()) - job["started_at"], 1) if job["started_at"] else 0.0,
-        "error": job["error"],
-        "output": job["output"],
-    }
+def _compute_seq_eval_key(step: int, asset_id: int | None, seq_rel: str, seq_files: list[str]) -> str:
+    if not seq_files:
+        return f"step{int(step)}_sup_only"
+    try:
+        mt = int(os.path.getmtime(seq_files[0]))
+    except OSError:
+        mt = 0
+    sig = hashlib.sha1(f"{seq_rel}|{len(seq_files)}|{mt}".encode("utf-8")).hexdigest()[:8]
+    aid = int(asset_id) if asset_id is not None else 0
+    return f"step{int(step)}_seq{aid}_{sig}"
 
 
 def _read_output_meta(task_row: dict, out_id: str) -> dict | None:
@@ -272,166 +284,561 @@ def _read_output_meta(task_row: dict, out_id: str) -> dict | None:
     }
 
 
-def _worker(job_id: str) -> None:
-    job = _INFER_JOBS[job_id]
-    lang_tok = i18n.set_current_lang(job.get("lang"))
-    tmp_dir = job["tmp_dir"]
+def _public_job_from_row(row: dict, q_lookup: dict | None = None) -> dict:
+    done = int(row.get("done_frames") or 0)
+    tot = int(row.get("total_frames") or 0)
+    st = str(row.get("status") or "queued")
+    started = row.get("started_at")
+    finished = row.get("finished_at")
+    out_obj = None
+    raw_out = str(row.get("output_json") or "").strip()
+    if raw_out:
+        try:
+            out_obj = json.loads(raw_out)
+        except Exception:
+            out_obj = None
+    if out_obj is None and st == "done" and row.get("out_id") and row.get("task_id"):
+        t_row = db.query_one("SELECT * FROM tasks WHERE id = ?", (int(row["task_id"]),))
+        if t_row:
+            out_obj = _read_output_meta(t_row, str(row["out_id"]))
+
+    q_meta = (q_lookup or {}).get(str(row["job_id"])) or {}
+    fps_val = float(row.get("fps") or 0.0)
+    rem_sec = (
+        round(estimate_infer_seconds(tot, str(row.get("infer_mode") or "sequence"), done_frames=done, fps=fps_val), 1)
+        if st == "running"
+        else None
+    )
+    return {
+        "job_id": row["job_id"],
+        "user_id": int(row["user_id"]),
+        "username": str(row.get("username") or ""),
+        "task_id": int(row["task_id"]),
+        "node_name": str(row["node_name"]),
+        "depends_on_task_id": row.get("depends_on_task_id"),
+        "auto_on_finish": bool(row.get("auto_on_finish")),
+        "asset_id": row.get("asset_id"),
+        "asset_name": str(row.get("asset_name") or ""),
+        "step": int(row.get("resolved_step") or row.get("req_step") or 0),
+        "infer_mode": str(row.get("infer_mode") or "sequence"),
+        "frame_index": row.get("frame_index"),
+        "output_format": str(row.get("output_format") or "exr_float"),
+        "state": st,
+        "done": done,
+        "total": tot,
+        "progress": round(done / float(max(1, tot)), 4) if tot > 0 else 0.0,
+        "fps": round(fps_val, 2),
+        "device": str(row.get("device") or (f"CUDA:{row['assigned_gpu']}" if row.get("assigned_gpu") is not None else "")),
+        "assigned_gpu": row.get("assigned_gpu"),
+        "preferred_gpu": str(row.get("preferred_gpu") or "auto"),
+        "queue_position": q_meta.get("queue_position"),
+        "ahead_count": q_meta.get("ahead_count", 0),
+        "target_gpu": q_meta.get("target_gpu"),
+        "estimated_wait_sec": q_meta.get("estimated_wait_sec", 0.0),
+        "estimated_remaining_sec": rem_sec,
+        "seconds": round((float(finished) if finished else time.time()) - float(started), 1) if started else 0.0,
+        "created_at": row.get("created_at"),
+        "error": str(row.get("error_msg") or ""),
+        "output": out_obj,
+    }
+
+
+def _prune_old_finished_jobs(now: float | None = None) -> None:
+    ts = float(now if now is not None else time.time())
+    db.execute(
+        "DELETE FROM infer_jobs WHERE status IN ('done', 'cancelled', 'error') AND finished_at IS NOT NULL AND (? - finished_at) > ?",
+        (ts, _JOB_KEEP_SEC),
+    )
+
+
+def enqueue_auto_infer_for_task(
+    task_id: int,
+    user_id: int,
+    username: str,
+    node_name: str,
+    cfg: dict,
+    matched_ds: dict | None,
+    eval_seq_rel: str,
+    tot_steps: int,
+    preferred_gpu: str = "auto",
+    now: float | None = None,
+) -> dict | None:
+    """Bind or cancel a `'waiting_train'` post-training sequence inference job when submitting a training task."""
+    ts = float(now if now is not None else time.time())
+    tid = int(task_id)
+    # Cancel any stale waiting_train auto-infer job previously bound to this task
+    db.execute(
+        "UPDATE infer_jobs SET status = 'cancelled', finished_at = ? WHERE depends_on_task_id = ? AND status = 'waiting_train'",
+        (ts, tid),
+    )
+
+    io_cfg = (cfg or {}).get("io") or {}
+    if io_cfg.get("infer_on_finish", True) in (False, "false", "0", "off", 0):
+        return None
+    seq_rel = str(eval_seq_rel or "").strip()
+    if not seq_rel:
+        return None
+    seq_files = storage.expand_sequence_files(seq_rel)
+    if len(seq_files) < 2:
+        return None
+
+    exp_meta = (cfg or {}).get("experiment") or {}
+    asset_id = None
+    asset_name = ""
+    if matched_ds:
+        asset_id = int(matched_ds["id"])
+        asset_name = str(matched_ds.get("name") or "")
+    else:
+        raw_aid = exp_meta.get("eval_asset_id") or exp_meta.get("dataset_id")
+        if raw_aid is not None and str(raw_aid).strip() != "":
+            try:
+                asset_id = int(raw_aid)
+            except (TypeError, ValueError):
+                asset_id = None
+        asset_name = str(exp_meta.get("dataset_name") or "").strip()
+    if not asset_name:
+        parent_dir = os.path.basename(os.path.dirname(seq_rel.rstrip("/\\")))
+        asset_name = f"{parent_dir}_dataset" if parent_dir and not parent_dir.endswith("_dataset") else (parent_dir or "seq")
+
+    clean_asset = storage.sanitize_name(asset_name, "seq")[:80]
+    est_step = max(1, int(tot_steps or 1))
+    out_id = f"{clean_asset}_step{est_step}_exr32f"
+    job_id = secrets.token_hex(8)
+    pref = str(preferred_gpu or "auto")
+
+    db.execute(
+        """
+        INSERT INTO infer_jobs (
+            job_id, user_id, username, task_id, node_name, depends_on_task_id, auto_on_finish,
+            asset_id, asset_name, seq_rel, req_step, resolved_step, infer_mode, frame_index,
+            output_format, out_id, status, preferred_gpu, total_frames, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL, ?, 'sequence', NULL, 'exr_float', ?, 'waiting_train', ?, ?, ?)
+        """,
+        (
+            job_id,
+            int(user_id),
+            str(username or ""),
+            tid,
+            str(node_name),
+            tid,
+            asset_id,
+            asset_name,
+            seq_rel,
+            est_step,
+            out_id,
+            pref,
+            len(seq_files),
+            ts,
+        ),
+    )
+    row = db.query_one("SELECT * FROM infer_jobs WHERE job_id = ?", (job_id,))
+    return _public_job_from_row(row) if row else None
+
+
+def on_train_task_terminal(task_id: int, final_status: str, now: float | None = None) -> None:
+    """Promote bound `'waiting_train'` inference jobs to `'queued'` on completion, or cancel on stop/fail/cancel."""
+    ts = float(now if now is not None else time.time())
+    tid = int(task_id)
+    waiting_rows = db.query_all(
+        "SELECT * FROM infer_jobs WHERE depends_on_task_id = ? AND status = 'waiting_train'",
+        (tid,),
+    )
+    if not waiting_rows:
+        return
+
+    if final_status != "completed":
+        db.execute(
+            "UPDATE infer_jobs SET status = 'cancelled', finished_at = ? WHERE depends_on_task_id = ? AND status = 'waiting_train'",
+            (ts, tid),
+        )
+        return
+
+    task_row = db.query_one("SELECT * FROM tasks WHERE id = ?", (tid,))
+    if not task_row:
+        db.execute(
+            "UPDATE infer_jobs SET status = 'cancelled', finished_at = ? WHERE depends_on_task_id = ? AND status = 'waiting_train'",
+            (ts, tid),
+        )
+        return
+
+    ckpt_abs, actual_step = resolve_task_checkpoint(task_row, step=None)
+    if not ckpt_abs or actual_step <= 0:
+        err = i18n.t("server.inferModelUntrained", name=task_row.get("node_name", str(tid)))
+        db.execute(
+            "UPDATE infer_jobs SET status = 'error', error_msg = ?, finished_at = ? WHERE depends_on_task_id = ? AND status = 'waiting_train'",
+            (err, ts, tid),
+        )
+        return
+
+    for w in waiting_rows:
+        clean_asset = storage.sanitize_name(w.get("asset_name") or "seq", "seq")[:80]
+        fmt_tag = _format_short_tag(str(w.get("output_format") or "exr_float"))
+        out_id = f"{clean_asset}_step{actual_step}_{fmt_tag}"
+        db.execute(
+            """
+            UPDATE infer_jobs
+            SET status = 'queued', ready_at = ?, resolved_step = ?, out_id = ?
+            WHERE job_id = ?
+            """,
+            (ts, int(actual_step), out_id, w["job_id"]),
+        )
+
+
+def reconcile_infer_jobs_on_startup(now: float | None = None) -> None:
+    """Reset interrupted `'running'` inference jobs back to `'queued'` and reconcile `'waiting_train'` dependencies."""
+    ts = float(now if now is not None else time.time())
+    # 1. Interrupted running inference jobs -> clean tmp dir and re-queue
+    running_rows = db.query_all("SELECT * FROM infer_jobs WHERE status = 'running'")
+    for r in running_rows:
+        if not scheduler._is_pid_alive(r.get("pid")):
+            t_row = db.query_one("SELECT * FROM tasks WHERE id = ?", (int(r["task_id"]),))
+            if t_row:
+                tmp_dir = os.path.join(_task_infer_primary_root(t_row), f".tmp_{r['job_id']}")
+                if os.path.exists(tmp_dir):
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            db.execute(
+                """
+                UPDATE infer_jobs
+                SET status = 'queued', assigned_gpu = NULL, pid = NULL, device = '',
+                    done_frames = 0, fps = 0.0, started_at = NULL, ready_at = COALESCE(ready_at, ?)
+                WHERE job_id = ?
+                """,
+                (ts, r["job_id"]),
+            )
+
+    # 2. Reconcile waiting_train rows whose parent training task already finished while offline
+    waiting_rows = db.query_all("SELECT DISTINCT depends_on_task_id FROM infer_jobs WHERE status = 'waiting_train' AND depends_on_task_id IS NOT NULL")
+    for w in waiting_rows:
+        dep_tid = int(w["depends_on_task_id"])
+        dep_task = db.query_one("SELECT status FROM tasks WHERE id = ?", (dep_tid,))
+        if not dep_task:
+            on_train_task_terminal(dep_tid, "cancelled", now=ts)
+        elif dep_task["status"] not in ("queued", "running"):
+            on_train_task_terminal(dep_tid, str(dep_task["status"]), now=ts)
+
+
+def spawn_queued_infer_job(job_row: dict, gpu_id: str) -> ActiveInferSubproc:
+    """Spawn `infer.py --spec` on `gpu_id` (isolated via `CUDA_VISIBLE_DEVICES`) for a `'queued'` inference job."""
+    job_id = str(job_row["job_id"])
+    tid = int(job_row["task_id"])
+    task_row = db.query_one("SELECT * FROM tasks WHERE id = ?", (tid,))
+    if not task_row:
+        raise RuntimeError(i18n.t("server.taskNotFound"))
+
+    try:
+        task_cfg = json.loads(task_row.get("config_json") or "{}")
+    except Exception:
+        task_cfg = {}
+
+    req_step = job_row.get("req_step")
+    ckpt_abs, actual_step = resolve_task_checkpoint(task_row, step=req_step)
+    if not ckpt_abs or actual_step <= 0:
+        raise RuntimeError(i18n.t("server.inferModelUntrained", name=task_row["node_name"]))
+
+    seq_rel = str(job_row.get("seq_rel") or "").strip()
+    seq_files = storage.expand_sequence_files(seq_rel)
+    if not seq_files:
+        raise RuntimeError(i18n.t("server.inferNoEvalSeq", name=job_row.get("asset_name") or seq_rel))
+
+    mode = str(job_row.get("infer_mode") or "sequence")
+    fmt = str(job_row.get("output_format") or "exr_float")
+    fidx = job_row.get("frame_index")
+    clean_asset = storage.sanitize_name(job_row.get("asset_name") or "seq", "seq")[:80]
+    if mode == "single":
+        idx_clamped = 0 if fidx is None else max(0, min(len(seq_files) - 1, int(fidx)))
+        real_fnum = storage._extract_frame_num(os.path.basename(seq_files[idx_clamped]))
+        ftag = f"f{real_fnum:04d}" if real_fnum is not None else f"f{idx_clamped + 1:04d}"
+        out_id = f"{clean_asset}_step{actual_step}_single_{ftag}_{_format_short_tag(fmt)}"
+        total_frames = 1
+    else:
+        idx_clamped = None
+        out_id = f"{clean_asset}_step{actual_step}_{_format_short_tag(fmt)}"
+        total_frames = len(seq_files)
+
+    infer_root = _task_infer_primary_root(task_row)
+    os.makedirs(infer_root, exist_ok=True)
+    tmp_dir = os.path.join(infer_root, f".tmp_{job_id}")
+    final_dir = os.path.join(infer_root, out_id)
+    if os.path.exists(tmp_dir):
+        shutil.rmtree(tmp_dir, ignore_errors=True)
     frames_tmp = os.path.join(tmp_dir, "frames")
+    os.makedirs(frames_tmp, exist_ok=True)
+
     prog_path = os.path.join(tmp_dir, "progress.json")
     cancel_path = os.path.join(tmp_dir, ".cancel")
     spec_path = os.path.join(tmp_dir, "spec.json")
-    proc = None
-    try:
-        with _INFER_RUN_LOCK:
-            if job["cancel"].is_set():
-                job["state"] = "cancelled"
-                return
-            os.makedirs(frames_tmp, exist_ok=True)
-            dev = _pick_infer_device()
-            job["device"] = dev
-            job["state"] = "running"
-            job["started_at"] = time.time()
 
-            spec = {
-                "ckpt_path": job["ckpt_path"],
-                "ckpt_step": job["step"],
-                "task_config": job["task_cfg"],
-                "input_dir": storage.abs_from_root(job["seq_rel"]),
-                "output_dir": frames_tmp,
-                "output_format": job["output_format"],
-                "device": dev,
-                "progress_path": prog_path,
-                "cancel_path": cancel_path,
-            }
-            if job.get("infer_mode") == "single" and job.get("frame_index") is not None:
-                spec["frame_index"] = int(job["frame_index"])
-            with open(spec_path, "w", encoding="utf-8") as fh:
-                json.dump(spec, fh, ensure_ascii=False, indent=2)
+    is_cpu = str(gpu_id).lower() == "cpu"
+    gpu_label = "CPU" if is_cpu else f"CUDA:{gpu_id}"
+    subproc_dev = "cpu" if is_cpu else "cuda:0"
 
-            py_bin = scheduler._resolve_python_bin()
-            cmd = [py_bin, os.path.join(ROOT, "infer.py"), "--spec", spec_path]
-            env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", OPENCV_IO_ENABLE_OPENEXR="1")
-            popen_kw = {
-                "cwd": ROOT,
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.STDOUT,
-                "text": True,
-                "encoding": "utf-8",
-                "errors": "replace",
-                "env": env,
-            }
-            if os.name == "nt":
-                popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            proc = subprocess.Popen(cmd, **popen_kw)
+    asset_work_cs = ""
+    if job_row.get("asset_id") is not None:
+        arow = db.query_one("SELECT working_colorspace FROM assets WHERE id = ?", (int(job_row["asset_id"]),))
+        if arow and arow.get("working_colorspace"):
+            asset_work_cs = str(arow["working_colorspace"])
 
-            while proc.poll() is None:
-                if job["cancel"].is_set():
-                    try:
-                        with open(cancel_path, "w", encoding="utf-8") as cf:
-                            cf.write("1")
-                    except OSError:
-                        pass
-                    time.sleep(0.3)
-                    if proc.poll() is None:
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=5.0)
-                        except Exception:
-                            proc.kill()
-                    break
-                if os.path.isfile(prog_path):
-                    try:
-                        with open(prog_path, "r", encoding="utf-8") as pf:
-                            pr = json.load(pf)
-                        job["done"] = int(pr.get("done") or job["done"])
-                        job["total"] = int(pr.get("total") or job["total"])
-                        job["fps"] = float(pr.get("fps") or job["fps"])
-                        job["device"] = str(pr.get("device") or job["device"])
-                    except Exception:
-                        pass
-                time.sleep(0.25)
+    eval_out_dir = ""
+    eval_key = ""
+    eval_spec = None
+    if mode == "sequence" and total_frames >= 2:
+        eval_key = _compute_seq_eval_key(actual_step, job_row.get("asset_id"), seq_rel, seq_files)
+        rdir_abs = storage.abs_from_root(task_row["run_dir"], for_write=True)
+        eval_out_dir = os.path.join(rdir_abs, "eval", eval_key)
+        paths_cfg = task_cfg.get("paths") or {}
+        src_rel = str(paths_cfg.get("source") or "").strip()
+        tgt_rel = str(paths_cfg.get("target") or "").strip()
+        eval_spec = {
+            "eval_out_dir": eval_out_dir,
+            "eval_key": eval_key,
+            "eval_asset_id": job_row.get("asset_id"),
+            "eval_asset_name": str(job_row.get("asset_name") or ""),
+            "ckpt_mode": "latest",
+            "sup_source_dir": storage.abs_from_root(src_rel) if src_rel else "",
+            "sup_target_dir": storage.abs_from_root(tgt_rel) if tgt_rel else "",
+        }
 
-            out_txt = ""
+    spec = {
+        "ckpt_path": ckpt_abs,
+        "ckpt_step": int(actual_step),
+        "task_config": task_cfg,
+        "input_dir": storage.abs_from_root(seq_rel),
+        "input_colorspace": asset_work_cs,
+        "output_dir": frames_tmp,
+        "output_format": fmt,
+        "device": subproc_dev,
+        "gpu_label": gpu_label,
+        "progress_path": prog_path,
+        "cancel_path": cancel_path,
+    }
+    if mode == "single" and idx_clamped is not None:
+        spec["frame_index"] = int(idx_clamped)
+    if eval_spec is not None:
+        spec["eval_spec"] = eval_spec
+
+    with open(spec_path, "w", encoding="utf-8") as fh:
+        json.dump(spec, fh, ensure_ascii=False, indent=2)
+
+    py_bin = scheduler._resolve_python_bin()
+    cmd = [py_bin, os.path.join(ROOT, "infer.py"), "--spec", spec_path]
+    env = storage.apply_subprocess_storage_env(os.environ.copy())
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    env["OPENCV_IO_ENABLE_OPENEXR"] = "1"
+    env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    if is_cpu:
+        env["CUDA_VISIBLE_DEVICES"] = ""
+    else:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+
+    popen_kw = {
+        "cwd": ROOT,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "env": env,
+    }
+    if os.name == "nt":
+        popen_kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(cmd, **popen_kw)
+
+    now = time.time()
+    db.execute(
+        """
+        UPDATE infer_jobs
+        SET status = 'running', assigned_gpu = ?, pid = ?, device = ?,
+            resolved_step = ?, out_id = ?, eval_key = ?, total_frames = ?,
+            done_frames = 0, fps = 0.0, started_at = ?, finished_at = NULL, error_msg = ''
+        WHERE job_id = ?
+        """,
+        (
+            None if is_cpu else str(gpu_id),
+            int(proc.pid),
+            gpu_label,
+            int(actual_step),
+            out_id,
+            eval_key,
+            int(total_frames),
+            now,
+            job_id,
+        ),
+    )
+
+    return ActiveInferSubproc(
+        job_id=job_id,
+        task_id=tid,
+        node_name=task_row["node_name"],
+        gpu=str(gpu_id),
+        gpu_label=gpu_label,
+        proc=proc,
+        tmp_dir=tmp_dir,
+        final_dir=final_dir,
+        prog_path=prog_path,
+        cancel_path=cancel_path,
+        eval_out_dir=eval_out_dir,
+        eval_key=eval_key,
+    )
+
+
+def poll_or_finalize_active_infer(active: ActiveInferSubproc, now: float | None = None) -> bool:
+    """Update live progress if still running; finalize EXR output & Compare eval DB if exited. Returns True if finished."""
+    ts = float(now if now is not None else time.time())
+    job_id = active.job_id
+
+    if active.alive:
+        if os.path.isfile(active.prog_path):
             try:
-                out_txt = proc.stdout.read() if proc.stdout else ""
+                with open(active.prog_path, "r", encoding="utf-8") as pf:
+                    pr = json.load(pf)
+                db.execute(
+                    """
+                    UPDATE infer_jobs
+                    SET done_frames = COALESCE(?, done_frames),
+                        total_frames = COALESCE(?, total_frames),
+                        fps = COALESCE(?, fps),
+                        device = COALESCE(?, device)
+                    WHERE job_id = ?
+                    """,
+                    (
+                        int(pr["done"]) if pr.get("done") is not None else None,
+                        int(pr["total"]) if pr.get("total") is not None else None,
+                        float(pr["fps"]) if pr.get("fps") is not None else None,
+                        str(pr["device"]) if pr.get("device") else None,
+                        job_id,
+                    ),
+                )
+            except Exception:
+                pass
+        return False
+
+    try:
+        active._reader.join(timeout=2.0)
+    except Exception:
+        pass
+    rc = active.proc.poll()
+    row = db.query_one("SELECT * FROM infer_jobs WHERE job_id = ?", (job_id,))
+    if not row:
+        if os.path.exists(active.tmp_dir):
+            shutil.rmtree(active.tmp_dir, ignore_errors=True)
+        return True
+
+    if active.stop_requested or rc == 130 or rc == -getattr(signal, "SIGINT", 2) or rc == -getattr(signal, "SIGTERM", 15):
+        if os.path.exists(active.tmp_dir):
+            shutil.rmtree(active.tmp_dir, ignore_errors=True)
+        db.execute(
+            "UPDATE infer_jobs SET status = 'cancelled', assigned_gpu = NULL, pid = NULL, finished_at = ? WHERE job_id = ?",
+            (ts, job_id),
+        )
+        return True
+
+    if rc != 0:
+        tail = "\n".join([ln for ln in list(active.tail) if ln.strip()][-8:])
+        sys.stderr.write(f"[WildCat InferSeq ERROR] job={job_id} rc={rc}\n" + "\n".join(active.tail) + "\n")
+        sys.stderr.flush()
+        if os.path.exists(active.tmp_dir):
+            shutil.rmtree(active.tmp_dir, ignore_errors=True)
+        db.execute(
+            """
+            UPDATE infer_jobs
+            SET status = 'error', assigned_gpu = NULL, pid = NULL, finished_at = ?, error_msg = ?
+            WHERE job_id = ?
+            """,
+            (ts, tail or i18n.t("server.requestFailed"), job_id),
+        )
+        return True
+
+    # Completed cleanly (rc == 0): write infer_meta.json, move tmp_dir -> final_dir, sync Compare eval metrics
+    pr_final = {}
+    if os.path.isfile(active.prog_path):
+        try:
+            with open(active.prog_path, "r", encoding="utf-8") as pf:
+                pr_final = json.load(pf)
+        except Exception:
+            pr_final = {}
+
+    task_row = db.query_one("SELECT * FROM tasks WHERE id = ?", (int(row["task_id"]),))
+    task_cfg = {}
+    if task_row:
+        try:
+            task_cfg = json.loads(task_row.get("config_json") or "{}")
+        except Exception:
+            task_cfg = {}
+    mo_meta = task_cfg.get("model") or {}
+    ms_meta = str(mo_meta.get("model_size") or "Medium")
+    if ms_meta == "WildCatLargeV1" and bool(mo_meta.get("global_attention", False)):
+        ms_meta = "WildCatLargeV1+GlobalAttn"
+
+    started_at = float(row.get("started_at") or ts)
+    meta = {
+        "out_id": row["out_id"],
+        "task_id": int(row["task_id"]),
+        "node_name": row["node_name"],
+        "model_size": ms_meta,
+        "in_channels": int(mo_meta.get("in_channels") or 3),
+        "out_channels": int(pr_final.get("out_channels") or mo_meta.get("out_channels") or 3),
+        "step": int(row["resolved_step"]),
+        "infer_mode": str(row.get("infer_mode") or "sequence"),
+        "frame_index": row.get("frame_index"),
+        "asset_id": row.get("asset_id"),
+        "asset_name": str(row.get("asset_name") or ""),
+        "input_rel": str(row.get("seq_rel") or ""),
+        "output_format": str(row.get("output_format") or "exr_float"),
+        "width": int(pr_final.get("width") or 0),
+        "height": int(pr_final.get("height") or 0),
+        "seconds": round(float(pr_final.get("seconds") or max(0.01, ts - started_at)), 2),
+        "fps": round(float(pr_final.get("fps") or 0.0), 2),
+        "auto_on_finish": bool(row.get("auto_on_finish")),
+        "created_at": ts,
+    }
+    for aux in (active.prog_path, active.cancel_path, os.path.join(active.tmp_dir, "spec.json")):
+        if os.path.exists(aux):
+            try:
+                os.remove(aux)
+            except OSError:
+                pass
+    try:
+        with open(os.path.join(active.tmp_dir, META_FILE), "w", encoding="utf-8") as mf:
+            json.dump(meta, mf, ensure_ascii=False, indent=2)
+        os.makedirs(os.path.dirname(active.final_dir), exist_ok=True)
+        if os.path.exists(active.final_dir):
+            shutil.rmtree(active.final_dir, ignore_errors=True)
+        os.replace(active.tmp_dir, active.final_dir)
+    except Exception as exc:
+        if os.path.exists(active.tmp_dir):
+            shutil.rmtree(active.tmp_dir, ignore_errors=True)
+        db.execute(
+            "UPDATE infer_jobs SET status = 'error', assigned_gpu = NULL, pid = NULL, finished_at = ?, error_msg = ? WHERE job_id = ?",
+            (ts, str(exc), job_id),
+        )
+        return True
+
+    # Sync Compare evaluation metrics written by infer.py into SQLite
+    if active.eval_out_dir and active.eval_key:
+        m_path = os.path.join(active.eval_out_dir, "metrics.json")
+        if os.path.isfile(m_path):
+            try:
+                mt = round(os.path.getmtime(m_path), 3)
+                with open(m_path, "r", encoding="utf-8") as mfh:
+                    m_data = json.load(mfh)
+                analytics_db.sync_eval_result_to_db(
+                    int(row["task_id"]), int(row["user_id"]), str(active.eval_key), m_data, file_mtime=mt
+                )
             except Exception:
                 pass
 
-            if job["cancel"].is_set() or proc.returncode == 130:
-                job["state"] = "cancelled"
-                return
-
-            if proc.returncode != 0:
-                tail = "\n".join([ln for ln in out_txt.splitlines() if ln.strip()][-8:])
-                sys.stderr.write(f"[WildCat InferSeq ERROR] job={job_id} rc={proc.returncode}\n{out_txt}\n")
-                sys.stderr.flush()
-                job["error"] = tail or i18n.t("server.requestFailed")
-                job["state"] = "error"
-                return
-
-            pr_final = {}
-            if os.path.isfile(prog_path):
-                try:
-                    with open(prog_path, "r", encoding="utf-8") as pf:
-                        pr_final = json.load(pf)
-                except Exception:
-                    pr_final = {}
-
-            mo_meta = job["task_cfg"].get("model") or {}
-            ms_meta = str(mo_meta.get("model_size") or "Medium")
-            if ms_meta == "WildCatLargeV1" and bool(mo_meta.get("global_attention", False)):
-                ms_meta = "WildCatLargeV1+GlobalAttn"
-            meta = {
-                "out_id": job["out_id"],
-                "task_id": job["task_id"],
-                "node_name": job["node_name"],
-                "model_size": ms_meta,
-                "in_channels": int((job["task_cfg"].get("model") or {}).get("in_channels") or 3),
-                "out_channels": int(pr_final.get("out_channels") or (job["task_cfg"].get("model") or {}).get("out_channels") or 3),
-                "step": job["step"],
-                "infer_mode": job.get("infer_mode", "sequence"),
-                "frame_index": job.get("frame_index"),
-                "asset_id": job["asset_id"],
-                "asset_name": job["asset_name"],
-                "input_rel": job["seq_rel"],
-                "output_format": job["output_format"],
-                "width": int(pr_final.get("width") or 0),
-                "height": int(pr_final.get("height") or 0),
-                "seconds": round(float(pr_final.get("seconds") or (time.time() - job["started_at"])), 2),
-                "fps": round(float(pr_final.get("fps") or 0.0), 2),
-                "created_at": time.time(),
-            }
-            for aux in (prog_path, cancel_path, spec_path):
-                if os.path.exists(aux):
-                    try:
-                        os.remove(aux)
-                    except OSError:
-                        pass
-            with open(os.path.join(tmp_dir, META_FILE), "w", encoding="utf-8") as mf:
-                json.dump(meta, mf, ensure_ascii=False, indent=2)
-
-            final_dir = job["final_dir"]
-            os.makedirs(os.path.dirname(final_dir), exist_ok=True)
-            if os.path.exists(final_dir):
-                shutil.rmtree(final_dir, ignore_errors=True)
-            os.replace(tmp_dir, final_dir)
-
-            job["done"] = job["total"]
-            job["fps"] = meta["fps"]
-            job["output"] = _read_output_meta(job["task_row"], job["out_id"])
-            job["state"] = "done"
-    except BaseException as exc:
-        sys.stderr.write(f"[WildCat InferSeq EXCEPTION] job={job_id}: {exc}\n{traceback.format_exc()}\n")
-        sys.stderr.flush()
-        job["error"] = str(exc)
-        job["state"] = "error"
-    finally:
-        i18n.reset_current_lang(lang_tok)
-        if os.path.exists(tmp_dir):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        job["finished_at"] = time.time()
-        for k in ("task_row", "task_cfg", "ckpt_path"):
-            job.pop(k, None)
+    out_meta = _read_output_meta(task_row, str(row["out_id"])) if task_row else None
+    db.execute(
+        """
+        UPDATE infer_jobs
+        SET status = 'done', assigned_gpu = NULL, pid = NULL,
+            done_frames = total_frames, fps = ?, output_json = ?, finished_at = ?
+        WHERE job_id = ?
+        """,
+        (meta["fps"], json.dumps(out_meta, ensure_ascii=False) if out_meta else "", ts, job_id),
+    )
+    return True
 
 
 def start_infer_job(
@@ -444,6 +851,7 @@ def start_infer_job(
     output_format: str = "exr_float",
     infer_mode: str = "sequence",
     frame_index: int | None = None,
+    preferred_gpu: str = "auto",
 ) -> dict:
     fmt = str(output_format or "exr_float").strip().lower()
     if fmt not in VALID_FORMATS:
@@ -490,8 +898,6 @@ def start_infer_job(
 
     now = time.time()
     job_id = secrets.token_hex(8)
-    infer_root = _task_infer_primary_root(task_row)
-    os.makedirs(infer_root, exist_ok=True)
     clean_asset = storage.sanitize_name(asset_row["name"], "seq")[:80]
     if mode == "single":
         real_fnum = storage._extract_frame_num(os.path.basename(probe_file))
@@ -499,67 +905,177 @@ def start_infer_job(
         out_id = f"{clean_asset}_step{resolved_step}_single_{ftag}_{_format_short_tag(fmt)}"
     else:
         out_id = f"{clean_asset}_step{resolved_step}_{_format_short_tag(fmt)}"
-    tmp_dir = os.path.join(infer_root, f".tmp_{job_id}")
-    final_dir = os.path.join(infer_root, out_id)
 
-    job = {
-        "job_id": job_id,
-        "user_id": int(user_id),
-        "task_id": int(task_row["id"]),
-        "node_name": task_row["node_name"],
-        "asset_id": int(asset_row["id"]),
-        "asset_name": asset_row["name"],
-        "seq_rel": seq_rel,
-        "step": int(resolved_step),
-        "infer_mode": mode,
-        "frame_index": fidx,
-        "output_format": fmt,
-        "out_id": out_id,
-        "tmp_dir": tmp_dir,
-        "final_dir": final_dir,
-        "ckpt_path": ckpt_abs,
-        "task_row": task_row,
-        "task_cfg": task_cfg,
-        "state": "queued",
-        "done": 0,
-        "total": total_frames,
-        "fps": 0.0,
-        "device": "",
-        "error": "",
-        "output": None,
-        "created_at": now,
-        "started_at": None,
-        "finished_at": None,
-        "lang": i18n.get_current_lang(),
-        "cancel": threading.Event(),
-    }
+    req_step_db = int(step) if (step is not None and int(step) > 0) else None
+    pref_gpu = str(preferred_gpu or "auto")
 
-    with _INFER_LOCK:
-        for jid in [k for k, v in _INFER_JOBS.items() if v["finished_at"] and (now - v["finished_at"]) > _JOB_KEEP_SEC]:
-            _INFER_JOBS.pop(jid, None)
-        if any(v["user_id"] == int(user_id) and v["state"] in ("queued", "running") for v in _INFER_JOBS.values()):
-            raise InferBusyError(i18n.t("server.inferBusy"))
-        _INFER_JOBS[job_id] = job
-
-    threading.Thread(target=_worker, args=(job_id,), name="wc-infer-" + job_id, daemon=True).start()
-    return _public_job(job)
+    with scheduler.SCHEDULER._lock:
+        _prune_old_finished_jobs(now)
+        db.execute(
+            """
+            INSERT INTO infer_jobs (
+                job_id, user_id, username, task_id, node_name, depends_on_task_id, auto_on_finish,
+                asset_id, asset_name, seq_rel, req_step, resolved_step, infer_mode, frame_index,
+                output_format, out_id, status, preferred_gpu, total_frames, created_at, ready_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                int(user_id),
+                str(username or ""),
+                int(task_row["id"]),
+                str(task_row["node_name"]),
+                int(asset_row["id"]),
+                str(asset_row["name"]),
+                seq_rel,
+                req_step_db,
+                int(resolved_step),
+                mode,
+                fidx,
+                fmt,
+                out_id,
+                pref_gpu,
+                int(total_frames),
+                now,
+                now,
+            ),
+        )
+        scheduler.SCHEDULER.tick()
+        qstat = scheduler.SCHEDULER.queue_status()
+        q_lookup = {j["job_id"]: j for j in (qstat.get("infer_jobs") or [])}
+        row = db.query_one("SELECT * FROM infer_jobs WHERE job_id = ?", (job_id,))
+        return _public_job_from_row(row, q_lookup=q_lookup)
 
 
 def get_infer_job(user_id: int, is_admin: bool, job_id: str) -> dict:
-    with _INFER_LOCK:
-        job = _INFER_JOBS.get(str(job_id or ""))
-        if not job or (not is_admin and job["user_id"] != int(user_id)):
+    with scheduler.SCHEDULER._lock:
+        row = db.query_one("SELECT * FROM infer_jobs WHERE job_id = ?", (str(job_id or ""),))
+        if not row or (not is_admin and int(row["user_id"]) != int(user_id)):
             raise InferNotFoundError(i18n.t("server.inferJobNotFound"))
-        return _public_job(job)
+        qstat = scheduler.SCHEDULER.queue_status()
+        q_lookup = {j["job_id"]: j for j in (qstat.get("infer_jobs") or [])}
+        return _public_job_from_row(row, q_lookup=q_lookup)
+
+
+def list_infer_jobs(user_id: int, is_admin: bool) -> list[dict]:
+    with scheduler.SCHEDULER._lock:
+        _prune_old_finished_jobs()
+        qstat = scheduler.SCHEDULER.queue_status()
+        q_lookup = {j["job_id"]: j for j in (qstat.get("infer_jobs") or [])}
+        if is_admin:
+            rows = db.query_all(
+                """
+                SELECT * FROM infer_jobs
+                ORDER BY
+                    CASE status
+                        WHEN 'running' THEN 0
+                        WHEN 'queued' THEN 1
+                        WHEN 'waiting_train' THEN 2
+                        ELSE 3
+                    END ASC,
+                    COALESCE(ready_at, created_at) ASC,
+                    created_at DESC
+                LIMIT 60
+                """
+            )
+        else:
+            rows = db.query_all(
+                """
+                SELECT * FROM infer_jobs
+                WHERE user_id = ?
+                ORDER BY
+                    CASE status
+                        WHEN 'running' THEN 0
+                        WHEN 'queued' THEN 1
+                        WHEN 'waiting_train' THEN 2
+                        ELSE 3
+                    END ASC,
+                    COALESCE(ready_at, created_at) ASC,
+                    created_at DESC
+                LIMIT 40
+                """,
+                (int(user_id),),
+            )
+        return [_public_job_from_row(r, q_lookup=q_lookup) for r in rows]
 
 
 def cancel_infer_job(user_id: int, is_admin: bool, job_id: str) -> dict:
-    with _INFER_LOCK:
-        job = _INFER_JOBS.get(str(job_id or ""))
-        if not job or (not is_admin and job["user_id"] != int(user_id)):
+    clean_id = str(job_id or "")
+    wait_proc = None
+    with scheduler.SCHEDULER._lock:
+        row = db.query_one("SELECT * FROM infer_jobs WHERE job_id = ?", (clean_id,))
+        if not row or (not is_admin and int(row["user_id"]) != int(user_id)):
             raise InferNotFoundError(i18n.t("server.inferJobNotFound"))
-        job["cancel"].set()
-        return _public_job(job)
+
+        if row["status"] in ("waiting_train", "queued"):
+            db.execute(
+                "UPDATE infer_jobs SET status = 'cancelled', finished_at = ? WHERE job_id = ?",
+                (time.time(), clean_id),
+            )
+            qstat = scheduler.SCHEDULER.queue_status()
+            q_lookup = {j["job_id"]: j for j in (qstat.get("infer_jobs") or [])}
+            updated = db.query_one("SELECT * FROM infer_jobs WHERE job_id = ?", (clean_id,))
+            return _public_job_from_row(updated, q_lookup=q_lookup)
+
+        if row["status"] == "running":
+            act = scheduler.SCHEDULER._active_infer.get(clean_id)
+            if act is not None and act.alive:
+                act.stop_requested = True
+                wait_proc = act.proc
+                try:
+                    with open(act.cancel_path, "w", encoding="utf-8") as cf:
+                        cf.write("1")
+                except OSError:
+                    pass
+                try:
+                    act.proc.terminate()
+                except Exception:
+                    pass
+            elif row.get("pid"):
+                try:
+                    os.kill(int(row["pid"]), getattr(signal, "SIGTERM", 15))
+                except OSError:
+                    pass
+
+    if wait_proc is not None:
+        try:
+            wait_proc.wait(timeout=4.0)
+        except Exception:
+            try:
+                wait_proc.kill()
+            except Exception:
+                pass
+
+    with scheduler.SCHEDULER._lock:
+        scheduler.SCHEDULER.tick()
+        qstat = scheduler.SCHEDULER.queue_status()
+        q_lookup = {j["job_id"]: j for j in (qstat.get("infer_jobs") or [])}
+        updated = db.query_one("SELECT * FROM infer_jobs WHERE job_id = ?", (clean_id,))
+        if not updated:
+            raise InferNotFoundError(i18n.t("server.inferJobNotFound"))
+        return _public_job_from_row(updated, q_lookup=q_lookup)
+
+
+def cancel_infer_jobs_for_task(task_id: int) -> None:
+    """Force-cancel all active/waiting inference jobs associated with `task_id` (used when deleting a task)."""
+    tid = int(task_id)
+    rows = db.query_all(
+        "SELECT job_id FROM infer_jobs WHERE (task_id = ? OR depends_on_task_id = ?) AND status IN ('waiting_train', 'queued', 'running')",
+        (tid, tid),
+    )
+    for r in rows:
+        jid = r["job_id"]
+        act = scheduler.SCHEDULER._active_infer.pop(jid, None)
+        if act and act.alive:
+            act.stop_requested = True
+            try:
+                act.proc.kill()
+                act.proc.wait(timeout=2.0)
+            except Exception:
+                pass
+            if os.path.exists(act.tmp_dir):
+                shutil.rmtree(act.tmp_dir, ignore_errors=True)
+    db.execute("DELETE FROM infer_jobs WHERE task_id = ? OR depends_on_task_id = ?", (tid, tid))
 
 
 def list_infer_outputs(user_id: int, is_admin: bool, task_id: int | None = None) -> list[dict]:

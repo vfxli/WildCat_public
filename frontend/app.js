@@ -200,10 +200,10 @@ const PRESET_SPECS = Object.freeze({
 // "- " lines = list; "|a|b|" lines = table (first row header, "|---|" row skipped); inline **bold**, `code`,
 // [[doc:id]] / [[ev:id]] (optional "|label") = link to another entry. Raw HTML is escaped.
 const DOC_GROUPS = [
-  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'global_attention', 'arch_wildcat_large_v1', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'eta_estimate'] },
+  { id: 'train', ids: ['task_name', 'dataset', 'device', 'init_weights', 'model_size', 'global_attention', 'arch_wildcat_large_v1', 'epochs', 'batch_size', 'crop_size', 'multi_resolution', 'mixed_precision', 'channels', 'checkpoint_interval', 'contact_sheet_interval', 'learning_rate', 'seed', 'log_interval', 'color_pipeline', 'model_files', 'speed_options', 'speed_gpu_resident', 'speed_cuda_graph', 'speed_fused_adam', 'speed_channels_last', 'speed_cudnn_benchmark', 'speed_async_io', 'preview_gpu', 'infer_on_finish', 'eta_estimate'] },
   { id: 'adv', ids: ['adv_overview', 'adv_crop_grid', 'adv_crop_grid_step', 'adv_crop_grid_anchor', 'adv_loss', 'adv_loss_charbonnier', 'adv_loss_grad', 'adv_loss_hdr', 'adv_loss_eps', 'adv_stages', 'adv_stages_ratio', 'adv_stages_warmup', 'adv_ema', 'adv_ema_decay', 'adv_augment', 'adv_augment_flip', 'adv_augment_exposure', 'adv_kf_common', 'adv_kf_common_threshold', 'adv_kf_common_span', 'adv_kf_common_overall'] },
   { id: 'presets', ids: ['presets_overview', 'preset_nuke', 'preset_cleanup_grain', 'preset_keying_despill', 'preset_bokeh_focus', 'preset_degrain_clean', 'preset_roto_matte', 'preset_face_edit'] },
-  { id: 'lab', ids: ['lab_overview', 'lab_group_name', 'lab_native_baseline', 'lab_note', 'lab_staged_groups', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
+  { id: 'lab', ids: ['lab_overview', 'lab_compare_tasks', 'lab_compare_baseline', 'lab_param_tags', 'lab_eval', 'lab_eval_dataset', 'lab_eval_weights', 'lab_chart', 'lab_viewer', 'lab_db', 'lab_archive', 'metric_psnr_srgb', 'metric_edge', 'metric_bg_drift', 'metric_p99', 'metric_seq_delta', 'metric_hfi', 'metric_static_boil', 'metric_seq_psnr'] },
   { id: 'datasets', ids: ['dataset_overview', 'dataset_keyframes', 'dataset_validation_sequence', 'dataset_input_colorspace', 'dataset_check', 'dataset_tolerance', 'dataset_files', 'dataset_name', 'dataset_eval_sequence', 'dataset_demo'] },
   { id: 'monitor', ids: ['monitor_pause_resume', 'monitor_extend', 'monitor_download', 'monitor_delete', 'monitor_progress', 'monitor_stage', 'monitor_speed', 'monitor_eta', 'monitor_queue', 'metric_loss', 'metric_val_mse', 'monitor_failed', 'monitor_kfc', 'metric_kfc_rewritten', 'metric_kfc_common', 'monitor_preview', 'monitor_preview_keyframe', 'monitor_playback', 'monitor_contact_sheet', 'monitor_cs_overlay', 'monitor_cs_pixelated', 'monitor_loss_chart', 'monitor_loss_log', 'monitor_loss_smooth', 'monitor_quality', 'metric_kf_fit', 'metric_q_strength', 'metric_q_detail', 'metric_q_texture', 'metric_q_look_drift', 'metric_q_tex_drift', 'metric_q_bg', 'monitor_quality_chart', 'monitor_quality_strip', 'monitor_quality_table', 'monitor_models', 'monitor_model_file', 'monitor_model_tags', 'monitor_log'] },
   { id: 'tools', ids: ['tool_infer_seq', 'tool_infer_dataset', 'tool_infer_model', 'tool_infer_step', 'tool_infer_format', 'api_key'] },
@@ -777,7 +777,7 @@ async function mountWildCatApp() {
             drawLossChart();
             drawQualityChart();
           }
-          if (topNav.value === 'lab' && labMode.value === 'analyze') {
+          if (topNav.value === 'lab') {
             drawLabCompareChart();
           }
         }
@@ -895,7 +895,7 @@ async function mountWildCatApp() {
       );
       const workspaceReady = ref(false);
       const studioMode = ref('create'); // 'create' | 'monitor'
-      const labMode = ref('plan'); // 'plan' | 'analyze'
+      const labMode = ref('analyze'); // Multi-task comparison workbench
       const editingStagedUid = ref('');
       const initCategory = ref('scratch'); // 'scratch' | 'checkpoint'
 
@@ -903,6 +903,10 @@ async function mountWildCatApp() {
         gpus: [],
         running: [],
         queued: [],
+        infer_jobs: [],
+        infer_running_count: 0,
+        infer_queued_count: 0,
+        infer_waiting_count: 0,
         queued_count: 0,
         running_count: 0,
         total_gpu_count: 1,
@@ -912,6 +916,7 @@ async function mountWildCatApp() {
         secondary_gpu: null,
         idle_gpu_count: 1,
         max_jobs_per_gpu: 1,
+        next_infer_wait_sec: 0,
         next_auto_wait_sec: 0,
       });
       const tasks = ref([]);
@@ -1250,6 +1255,7 @@ async function mountWildCatApp() {
         opt_cudnn_benchmark: true,
         opt_async_io: true,
         preview_gpu: 'auto',
+        infer_on_finish: true,
       });
 
       const channelPreset = ref('3->3');
@@ -2533,12 +2539,13 @@ async function mountWildCatApp() {
       let _lastTasksFetchAt = 0;
       let _lastTasksSig = '';
       let _lastTasksRef = null;
+      let _prevLiveInferIds = new Set();
       function _computeTasksSig(list) {
         if (!Array.isArray(list) || !list.length) return '0';
         return list
           .map(
             (t) =>
-              `${t.id}:${t.status}:${t.last_step || 0}:${t.total_steps || 0}:${t.last_loss ?? ''}:${t.assigned_gpu ?? ''}:${t.queue_position ?? ''}:${t.estimated_remaining_sec ?? ''}:${t.estimated_wait_sec ?? ''}:${t.has_ckpt ? 1 : 0}:${t.batch_id || ''}:${t.sort_order ?? ''}`
+              `${t.id}:${t.status}:${t.last_step || 0}:${t.total_steps || 0}:${t.last_loss ?? ''}:${t.assigned_gpu ?? ''}:${t.queue_position ?? ''}:${t.estimated_remaining_sec ?? ''}:${t.estimated_wait_sec ?? ''}:${t.has_ckpt ? 1 : 0}:${t.batch_id || ''}:${t.sort_order ?? ''}:${t.bound_infer_job ? t.bound_infer_job.state : ''}`
           )
           .join(';');
       }
@@ -2557,7 +2564,22 @@ async function mountWildCatApp() {
           if (reqEpoch !== _sessionEpoch) return;
           let tSettled = tSettledInit;
           if (qSettled.status === 'fulfilled' && qSettled.value && qSettled.value.queue) {
+            const nextInfIds = new Set(
+              ((qSettled.value.queue && qSettled.value.queue.infer_jobs) || [])
+                .filter((j) => j && (j.state === 'running' || j.state === 'queued'))
+                .map((j) => j.job_id)
+            );
+            const anyInfFinished = Array.from(_prevLiveInferIds).some((jid) => !nextInfIds.has(jid));
+            _prevLiveInferIds = nextInfIds;
             Object.assign(queue, qSettled.value.queue);
+            if (anyInfFinished) {
+              if (topNav.value === 'tools') {
+                loadInferOutputs(true);
+              }
+              if (topNav.value === 'lab' && labSelectedTaskIds.value.length) {
+                fetchLabCompare(true);
+              }
+            }
             if (form.preferred_gpu && form.preferred_gpu !== 'auto') {
               const selGpu = (queue.gpus || []).find((g) => String(g.gpu_id) === String(form.preferred_gpu));
               if (selGpu && selGpu.enabled === false) {
@@ -3022,7 +3044,9 @@ async function mountWildCatApp() {
           sec = tot / b1;
         }
         const ckpts = Math.max(1, Math.floor(tot / Math.max(10, Number(io.checkpoint_interval) || 1000)));
-        return Math.max(2, Math.round(sec + ckpts * 0.12 + warmupSec));
+        const seqFrames = Number(cfg._seq_frames || 0);
+        const finishInferSec = io.infer_on_finish !== false && seqFrames >= 2 ? seqFrames * 0.05 : 0;
+        return Math.max(2, Math.round(sec + ckpts * 0.12 + warmupSec + finishInferSec));
       }
 
       const estimatedNewTaskDurationSec = computed(() => {
@@ -3049,7 +3073,8 @@ async function mountWildCatApp() {
             },
           },
           optimizations: { engine: accelAny.value ? 'fast' : 'reference' },
-          io: { checkpoint_interval: form.checkpoint_interval },
+          io: { checkpoint_interval: form.checkpoint_interval, infer_on_finish: !!form.infer_on_finish },
+          _seq_frames: (selectedDataset.value && selectedDataset.value.seq_frame_count) || 0,
         });
       });
 
@@ -3132,6 +3157,7 @@ async function mountWildCatApp() {
             preview_interval: Math.max(10, Number(form.preview_interval || 100)),
             preview_size: 0,
             log_interval: Math.max(1, Number(form.log_interval || 10)),
+            infer_on_finish: !!form.infer_on_finish,
           },
         };
         if (advActiveCount.value > 0) {
@@ -3392,6 +3418,7 @@ async function mountWildCatApp() {
         if (ioCfg.checkpoint_interval) form.checkpoint_interval = Number(ioCfg.checkpoint_interval);
         if (ioCfg.preview_interval) form.preview_interval = Number(ioCfg.preview_interval);
         if (ioCfg.log_interval) form.log_interval = Number(ioCfg.log_interval);
+        form.infer_on_finish = ioCfg.infer_on_finish !== false;
         resetAdvToNukeNative(true);
         if (cfg.advanced && typeof cfg.advanced === 'object') {
           for (const k of ADV_KEYS) {
@@ -4580,6 +4607,7 @@ async function mountWildCatApp() {
         latestStep: 0,
         loadingSteps: false,
         outputFormat: 'exr_float',
+        submitting: false,
         busy: false,
         jobId: '',
         jobState: '',
@@ -4656,7 +4684,7 @@ async function mountWildCatApp() {
       });
 
       function setInferMode(mode) {
-        if (inferUi.busy) return;
+        if (inferUi.submitting) return;
         inferUi.mode = mode === 'single' ? 'single' : 'sequence';
         inferUi.error = '';
         inferUi.note = '';
@@ -4716,7 +4744,28 @@ async function mountWildCatApp() {
       const inferCanRun = computed(() => {
         const ds = inferPickedDataset.value;
         const tk = inferPickedTask.value;
-        return !!(!inferUi.busy && ds && tk && tk.has_ckpt && !inferChannelMismatch.value);
+        return !!(!inferUi.submitting && ds && tk && tk.has_ckpt && !inferChannelMismatch.value);
+      });
+
+      const inferWillQueue = computed(() => {
+        if (queue.all_gpus_disabled) return true;
+        return Number(queue.idle_gpu_count ?? 1) <= 0 && (queue.gpus || []).length > 0;
+      });
+
+      const inferQueueJobs = computed(() => {
+        const all = Array.isArray(queue.infer_jobs) ? queue.infer_jobs : [];
+        if (!user.value) return [];
+        if (isPrivilegedUser.value) return all;
+        return all.filter((j) => Number(j.user_id) === Number(user.value.id));
+      });
+
+      const activeTaskBoundInfer = computed(() => {
+        const at = activeTask.value;
+        if (!at) return null;
+        const fromQueue = (queue.infer_jobs || []).find(
+          (j) => j && j.auto_on_finish && Number(j.task_id) === Number(at.id) && ['waiting_train', 'queued', 'running'].includes(j.state)
+        );
+        return fromQueue || at.bound_infer_job || null;
       });
 
       const inferCurrentFrame = computed(() => {
@@ -4889,6 +4938,62 @@ async function mountWildCatApp() {
         loadInferOutputs(true);
       }
 
+      const _watchedInferJobs = new Map();
+      let _inferPollTimer = null;
+
+      function _ensureInferJobPoller() {
+        if (_inferPollTimer || !_watchedInferJobs.size) return;
+        _inferPollTimer = setInterval(async () => {
+          if (!_watchedInferJobs.size) {
+            clearInterval(_inferPollTimer);
+            _inferPollTimer = null;
+            return;
+          }
+          await fetchQueueAndTasks(false, false);
+          for (const [jid, meta] of Array.from(_watchedInferJobs.entries())) {
+            try {
+              const poll = await apiFetch(`/api/v1/infer-seq/jobs/${encodeURIComponent(jid)}`);
+              const jb = (poll && poll.job) || {};
+              if (jb.state === 'done') {
+                _watchedInferJobs.delete(jid);
+                await loadInferOutputs(false);
+                if (jb.output) {
+                  await openInferOutput(jb.output);
+                  if (meta.isSingle || jb.output.infer_mode === 'single') {
+                    notify(
+                      t('inferSeq.doneSingleToast', {
+                        sec: jb.output.seconds || jb.seconds || 0,
+                      }),
+                      'success'
+                    );
+                  } else {
+                    notify(
+                      t('inferSeq.doneToast', {
+                        frames: jb.output.frame_count || jb.total,
+                        sec: jb.output.seconds || jb.seconds || 0,
+                      }),
+                      'success'
+                    );
+                  }
+                }
+              } else if (jb.state === 'cancelled') {
+                _watchedInferJobs.delete(jid);
+                inferUi.note = t('inferSeq.cancelledNote');
+              } else if (jb.state === 'error') {
+                _watchedInferJobs.delete(jid);
+                inferUi.error = jb.error || t('server.requestFailed');
+              }
+            } catch (_) {
+              _watchedInferJobs.delete(jid);
+            }
+          }
+          if (!_watchedInferJobs.size && _inferPollTimer) {
+            clearInterval(_inferPollTimer);
+            _inferPollTimer = null;
+          }
+        }, 450);
+      }
+
       async function startInferSeqJob() {
         inferUi.error = '';
         inferUi.note = '';
@@ -4903,18 +5008,10 @@ async function mountWildCatApp() {
           inferUi.error = t('inferSeq.channelMismatchBanner', inferChannelMismatch.value);
           return;
         }
-        if (inferUi.busy) return;
+        if (inferUi.submitting) return;
 
         const isSingle = inferUi.mode === 'single';
-        inferUi.busy = true;
-        inferUi.jobState = 'queued';
-        inferUi.done = 0;
-        inferUi.total = isSingle
-          ? 1
-          : (Number(ds.kind === 'eval_sequence' ? ds.frame_count : ds.seq_frame_count) || 0);
-        inferUi.progress = 0;
-        inferUi.fps = 0;
-        inferUi.device = '';
+        inferUi.submitting = true;
         try {
           const startRes = await apiFetch('/api/v1/infer-seq', {
             method: 'POST',
@@ -4930,64 +5027,41 @@ async function mountWildCatApp() {
           if (startRes && startRes.infer_dir) inferUi.inferDir = String(startRes.infer_dir);
           const j0 = startRes && startRes.job;
           if (!j0 || !j0.job_id) throw new Error(t('server.requestFailed'));
-          inferUi.jobId = j0.job_id;
-          inferUi.total = Number(j0.total || inferUi.total);
 
-          const pollMs = isSingle ? 220 : 450;
-          while (true) {
-            await new Promise((r) => setTimeout(r, pollMs));
-            const poll = await apiFetch(`/api/v1/infer-seq/jobs/${encodeURIComponent(inferUi.jobId)}`);
-            const jb = (poll && poll.job) || {};
-            inferUi.jobState = jb.state || '';
-            inferUi.done = Number(jb.done || 0);
-            inferUi.total = Number(jb.total || inferUi.total);
-            inferUi.progress = Number(jb.progress || 0);
-            inferUi.fps = Number(jb.fps || 0);
-            inferUi.device = jb.device || '';
-            if (jb.state === 'done') {
-              await loadInferOutputs(false);
-              if (jb.output) {
-                await openInferOutput(jb.output);
-                if (isSingle || jb.output.infer_mode === 'single') {
-                  notify(
-                    t('inferSeq.doneSingleToast', {
-                      sec: jb.output.seconds || jb.seconds || 0,
-                    }),
-                    'success'
-                  );
-                } else {
-                  notify(
-                    t('inferSeq.doneToast', {
-                      frames: jb.output.frame_count || jb.total,
-                      sec: jb.output.seconds || jb.seconds || 0,
-                    }),
-                    'success'
-                  );
-                }
-              }
-              break;
+          await fetchQueueAndTasks(false, false);
+          if (j0.state === 'done' && j0.output) {
+            await loadInferOutputs(false);
+            await openInferOutput(j0.output);
+            notify(
+              isSingle
+                ? t('inferSeq.doneSingleToast', { sec: j0.output.seconds || j0.seconds || 0 })
+                : t('inferSeq.doneToast', { frames: j0.output.frame_count || j0.total, sec: j0.output.seconds || j0.seconds || 0 }),
+              'success'
+            );
+          } else {
+            if (j0.state === 'running' && j0.device) {
+              notify(t('inferSeq.startedToast', { device: j0.device }), 'info');
+            } else {
+              notify(t('inferSeq.queuedToast', { pos: j0.queue_position || 1 }), 'info');
             }
-            if (jb.state === 'cancelled') {
-              inferUi.note = t('inferSeq.cancelledNote');
-              break;
-            }
-            if (jb.state === 'error') {
-              inferUi.error = jb.error || t('server.requestFailed');
-              break;
-            }
+            _watchedInferJobs.set(j0.job_id, { isSingle });
+            _ensureInferJobPoller();
           }
         } catch (e) {
           inferUi.error = e.message || String(e);
         } finally {
-          inferUi.busy = false;
-          inferUi.jobId = '';
+          inferUi.submitting = false;
         }
       }
 
-      async function cancelInferSeqJob() {
-        if (!inferUi.busy || !inferUi.jobId) return;
+      async function cancelInferSeqJob(jobId) {
+        const targetId = typeof jobId === 'string' && jobId ? jobId : inferUi.jobId;
+        if (!targetId) return;
         try {
-          await apiFetch(`/api/v1/infer-seq/jobs/${encodeURIComponent(inferUi.jobId)}/cancel`, { method: 'POST' });
+          await apiFetch(`/api/v1/infer-seq/jobs/${encodeURIComponent(targetId)}/cancel`, { method: 'POST' });
+          _watchedInferJobs.delete(targetId);
+          inferUi.note = t('inferSeq.cancelledNote');
+          await fetchQueueAndTasks(true);
         } catch (e) {
           notify(e.message, 'error');
         }
@@ -5091,7 +5165,7 @@ async function mountWildCatApp() {
 
       function openDatasetPicker(mode = 'train', toolId = '') {
         if (mode === 'infer') {
-          if (inferUi.busy) return;
+          if (inferUi.submitting) return;
           datasetPickerModal.mode = 'infer';
         } else {
           datasetPickerModal.mode = mode === 'lab_eval' ? 'lab_eval' : 'train';
@@ -5114,7 +5188,7 @@ async function mountWildCatApp() {
 
       function pickDatasetItem(assetOrNull) {
         if (datasetPickerModal.mode === 'infer') {
-          if (assetOrNull && !inferUi.busy) inferUi.assetId = assetOrNull.id;
+          if (assetOrNull && !inferUi.submitting) inferUi.assetId = assetOrNull.id;
           datasetPickerModal.open = false;
           return;
         }
@@ -5470,6 +5544,10 @@ async function mountWildCatApp() {
             uploadModal.errorMsg = t('msg.errSelectSourceSeq');
             return;
           }
+          if (uploadModal.seqFiles.length === 1 && !/\.zip$/i.test(uploadModal.seqFiles[0].name || '')) {
+            uploadModal.errorMsg = t('server.evalSeqMinFrames', { count: 1 });
+            return;
+          }
           uploadModal.uploading = true;
           try {
             const aid = uploadModal.targetAsset.id;
@@ -5484,7 +5562,7 @@ async function mountWildCatApp() {
             delete assetFramesCache[aid];
             await fetchAssets();
             ensureAssetFrames(aid, true);
-            if (topNav.value === 'lab' && labMode.value === 'analyze') {
+            if (topNav.value === 'lab') {
               await fetchLabCompare(true);
             }
             notify(
@@ -5503,8 +5581,12 @@ async function mountWildCatApp() {
           return;
         }
 
-        if (!uploadModal.sourceFiles.length || !uploadModal.targetFiles.length) {
-          uploadModal.errorMsg = t('msg.errSelectBothSeq');
+        if (!uploadModal.sourceFiles.length || !uploadModal.targetFiles.length || !uploadModal.seqFiles.length) {
+          uploadModal.errorMsg = t('msg.errSelectAllThreeSeq');
+          return;
+        }
+        if (uploadModal.seqFiles.length === 1 && !/\.zip$/i.test(uploadModal.seqFiles[0].name || '')) {
+          uploadModal.errorMsg = t('server.evalSeqMinFrames', { count: 1 });
           return;
         }
         uploadModal.uploading = true;
@@ -5569,7 +5651,7 @@ async function mountWildCatApp() {
           delete assetFramesCache[a.id];
           await fetchAssets();
           ensureAssetFrames(a.id, true);
-          if (topNav.value === 'lab' && labMode.value === 'analyze') {
+          if (topNav.value === 'lab') {
             await fetchLabCompare(true);
           }
           notify(t('msg.evalSeqRemovedToast', { name: a.name }), 'info');
@@ -6253,7 +6335,7 @@ async function mountWildCatApp() {
       const labRenamingGroupName = ref('');
 
       const labEvalAssetId = ref(null);
-      const labCkptMode = ref('best'); // 'best' | 'latest'
+      const labCkptMode = ref('latest'); // 'latest' | 'best'
       const labCompare = reactive({
         loading: false,
         runs: [],
@@ -7427,7 +7509,7 @@ async function mountWildCatApp() {
           });
           if (res.db_summary) Object.assign(labDbSummary, res.db_summary);
           await Promise.all([fetchQueueAndTasks(true), fetchCheckpoints()]);
-          if (topNav.value === 'lab' && labMode.value === 'analyze') {
+          if (topNav.value === 'lab') {
             await fetchLabCompare(true);
           }
           notify(
@@ -7578,7 +7660,7 @@ async function mountWildCatApp() {
             body: JSON.stringify({
               task_ids: labSelectedTaskIds.value,
               eval_asset_id: labEvalAssetId.value || null,
-              ckpt_mode: labCkptMode.value || 'best',
+              ckpt_mode: labCkptMode.value || 'latest',
             }),
           });
           if (reqSeq !== _labCompareReqSeq) return;
@@ -7622,7 +7704,7 @@ async function mountWildCatApp() {
             body: JSON.stringify({
               task_ids: ids,
               eval_asset_id: labEvalAssetId.value || null,
-              ckpt_mode: labCkptMode.value || 'best',
+              ckpt_mode: labCkptMode.value || 'latest',
               force: !!force,
             }),
           });
@@ -7998,14 +8080,26 @@ async function mountWildCatApp() {
       );
 
       const labSeqFrameCount = computed(() => {
-        if (labEvaluatedSeqRuns.value.length) {
-          return labEvaluatedSeqRuns.value[0].eval.sequence.per_frame.length;
+        let maxN = 0;
+        for (const r of labEvaluatedSeqRuns.value) {
+          const n = r.eval && r.eval.sequence && Array.isArray(r.eval.sequence.per_frame) ? r.eval.sequence.per_frame.length : 0;
+          if (n > maxN) maxN = n;
         }
         if (labCompare.eval_asset && Array.isArray(labCompare.eval_asset.source_frames)) {
-          return labCompare.eval_asset.source_frames.length;
+          if (labCompare.eval_asset.source_frames.length > maxN) {
+            maxN = labCompare.eval_asset.source_frames.length;
+          }
         }
-        return 0;
+        return maxN;
       });
+
+      function setLabViewerMode(m) {
+        labViewer.mode = m;
+        if (m === 'flicker' && labViewer.index === 0 && labSeqFrameCount.value > 1) {
+          labViewer.index = labGlobalPeakIdx.value > 0 ? labGlobalPeakIdx.value : 1;
+          if (isLabPerFrameChart.value) drawLabCompareChart();
+        }
+      }
 
       const labGlobalPeakIdx = computed(() => {
         let bestIdx = 0;
@@ -8148,14 +8242,14 @@ async function mountWildCatApp() {
       watch(
         [() => labSelectedTaskIds.value.join(','), labEvalAssetId, labCkptMode],
         () => {
-          if (topNav.value === 'lab' && labMode.value === 'analyze') {
+          if (topNav.value === 'lab') {
             fetchLabCompare();
           }
         }
       );
 
       watch([labChartTab, () => labChartCfg.logScale, () => labChartCfg.smooth], () => {
-        if (topNav.value === 'lab' && labMode.value === 'analyze') {
+        if (topNav.value === 'lab') {
           nextTick(() => drawLabCompareChart());
         }
       });
@@ -8173,7 +8267,7 @@ async function mountWildCatApp() {
         }
       );
 
-      watch([topNav, studioMode, labMode], ([nNav, nMode, nLabMode]) => {
+      watch([topNav, studioMode], ([nNav, nMode]) => {
         if (nNav === 'studio' && nMode === 'monitor') {
           const needReset = !viewer.frames.length && !contactViewer.frames.length;
           nextTick(() => {
@@ -8185,7 +8279,7 @@ async function mountWildCatApp() {
         if (nNav === 'help') loadHelpStaticData();
         if (nNav === 'tools') enterInferToolsTab();
         if (nNav === 'admin' && adminToken.value) loadAdminData();
-        if (nNav === 'lab' && nLabMode === 'analyze') {
+        if (nNav === 'lab') {
           if (!labSelectedTaskIds.value.length && tasks.value.length) {
             selectFirstReadyLabGroup();
           } else {
@@ -8221,7 +8315,7 @@ async function mountWildCatApp() {
               if (topNav.value === 'studio' && studioMode.value === 'monitor') {
                 drawLossChart();
                 drawQualityChart();
-              } else if (topNav.value === 'lab' && labMode.value === 'analyze') {
+              } else if (topNav.value === 'lab') {
                 drawLabCompareChart();
               }
             });
@@ -8249,7 +8343,7 @@ async function mountWildCatApp() {
               fetchTelemetry(false);
             }
           }
-          if (topNav.value === 'lab' && labMode.value === 'analyze' && labSelectedTaskIds.value.length) {
+          if (topNav.value === 'lab' && labSelectedTaskIds.value.length) {
             const selSet = new Set(labSelectedTaskIds.value);
             const anyRunning =
               labCompare.runs.some((r) => isLiveStatus(r.status)) ||
@@ -8302,7 +8396,7 @@ async function mountWildCatApp() {
               }
             }
           }
-          if (topNav.value === 'lab' && labMode.value === 'analyze') {
+          if (topNav.value === 'lab') {
             const tot = labSeqFrameCount.value;
             if (labViewer.playing && tot > 1) {
               const intervalMs = 1000 / Math.min(60, Math.max(1, Number(labViewer.fps) || 12));
@@ -8689,6 +8783,7 @@ async function mountWildCatApp() {
         labEvaluatedSeqRuns,
         labSeqHasPairedErr,
         labSeqFrameCount,
+        setLabViewerMode,
         labGlobalPeakIdx,
         labCurrentSourceFrame,
         getLabRunFrame,
@@ -8718,6 +8813,9 @@ async function mountWildCatApp() {
         inferTaskOutCh,
         inferChannelMismatch,
         inferCanRun,
+        inferWillQueue,
+        inferQueueJobs,
+        activeTaskBoundInfer,
         inferCurrentFrame,
         inferFormatShort,
         openInferOutput,
